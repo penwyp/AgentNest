@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "id": "openai.codex",
+  "displayName": "Codex",
+  "homeDiscovery": {
+    "defaultPaths": ["~/.codex"],
+    "environmentVariables": ["CODEX_HOME"],
+    "allowDeepDiscovery": true
+  },
+  "fingerprints": {
+    "required": [
+      { "kind": "jsonFile", "relativePath": "version.json" }
+    ],
+    "optional": [],
+    "negative": []
+  },
+  "skills": [],
+  "artifacts": [],
+  "capabilities": {
+    "space": true,
+    "skills": false,
+    "activity": false,
+    "cleanup": false
+  }
+}
