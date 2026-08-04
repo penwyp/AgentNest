@@ -9,6 +9,7 @@ struct AgentNestApplication: App {
         WindowGroup("AgentNest") {
             ContentView(model: model)
                 .frame(minWidth: 900, minHeight: 620)
+                .environment(\.locale, model.appLocale)
         }
         .defaultSize(width: 1080, height: 720)
 
@@ -25,6 +26,17 @@ struct AgentNestApplication: App {
             }
             Divider()
             Button("退出") { NSApplication.shared.terminate(nil) }
+        }
+        .commands {
+            CommandMenu("AgentNest") {
+                Button("开始扫描") { model.startScan() }
+                    .keyboardShortcut("s", modifiers: [.command, .shift])
+                Button("停止扫描") { model.stopScan() }
+                    .disabled(!model.isScanning)
+                Divider()
+                Button("检查更新") { model.checkForUpdates() }
+                    .disabled(!model.updateAvailable || model.isMutatingEnvironment)
+            }
         }
     }
 }

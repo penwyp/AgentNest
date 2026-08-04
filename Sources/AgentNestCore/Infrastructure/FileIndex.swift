@@ -7,19 +7,22 @@ public struct IndexedNode: Sendable {
     public let logicalBytes: UInt64
     public let physicalBytes: UInt64
     public let isSymbolicLink: Bool
+    public let modifiedAt: Date?
 
     public init(
         path: String,
         identity: PhysicalResourceIdentity,
         logicalBytes: UInt64,
         physicalBytes: UInt64,
-        isSymbolicLink: Bool
+        isSymbolicLink: Bool,
+        modifiedAt: Date?
     ) {
         self.path = path
         self.identity = identity
         self.logicalBytes = logicalBytes
         self.physicalBytes = physicalBytes
         self.isSymbolicLink = isSymbolicLink
+        self.modifiedAt = modifiedAt
     }
 }
 
@@ -53,9 +56,14 @@ public struct FileIndexer: Sendable {
 
     public func index(
         root inputRoot: URL,
+        ignoredLocations: [URL] = [],
         progress: @Sendable (String, Int, UInt64) async -> Void
     ) async throws -> DirectoryIndex {
         let root = inputRoot.resolvingSymlinksInPath().standardizedFileURL
+        let ignoredPaths = ignoredLocations.map { $0.resolvingSymlinksInPath().standardizedFileURL.path }
+        if ignoredPaths.contains(where: { CanonicalPath.isEqualOrDescendant(root.path, of: $0) }) {
+            return DirectoryIndex(root: root, nodes: [], jsonAnchorParents: [], suspiciousDirectoryPaths: [], unreadablePaths: [])
+        }
         let rootIdentity: FileMetadata.Value
         do {
             rootIdentity = try FileMetadata.read(root)
@@ -107,6 +115,7 @@ public struct FileIndexer: Sendable {
             }
             for url in children {
                 if Task.isCancelled { wasCancelled = true; break scanLoop }
+                if ignoredPaths.contains(where: { CanonicalPath.isEqualOrDescendant(url.standardizedFileURL.path, of: $0) }) { continue }
                 do {
                     let metadata = try FileMetadata.read(url)
                     let node = metadata.node
@@ -158,6 +167,7 @@ public struct FileIndexer: Sendable {
         let components = url.pathComponents
         return components.count >= 2 && components.suffix(2) == [".git", "objects"]
     }
+
 }
 
 enum FileMetadata {
@@ -186,7 +196,8 @@ enum FileMetadata {
             ),
             logicalBytes: value.st_size > 0 ? UInt64(value.st_size) : 0,
             physicalBytes: value.st_blocks > 0 ? UInt64(value.st_blocks) * 512 : 0,
-            isSymbolicLink: fileType == S_IFLNK
+            isSymbolicLink: fileType == S_IFLNK,
+            modifiedAt: Date(timeIntervalSince1970: TimeInterval(value.st_mtimespec.tv_sec) + TimeInterval(value.st_mtimespec.tv_nsec) / 1_000_000_000)
         ))
     }
 }

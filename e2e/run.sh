@@ -39,11 +39,19 @@ if [[ "$CONFIRMED_COUNT" -ne 2 || "$POSSIBLE_COUNT" -ne 1 ]]; then
   exit 1
 fi
 
+IGNORED_SCAN_OUTPUT="$E2E_DIR/scan-ignored.json"
+"$CLI_PATH" scan --root "$HOME_FIXTURE" --codex-home "$DEEP_HOME" --ignore "$DEEP_HOME" > "$IGNORED_SCAN_OUTPUT"
+if [[ $(grep -c '"confidence" : "confirmed"' "$IGNORED_SCAN_OUTPUT" || true) -ne 1 ]]; then
+  echo "ignored scan location was still discovered" >&2
+  exit 1
+fi
+
 PORT=$((20000 + ($$ % 20000)))
 SERVER_URL="http://127.0.0.1:$PORT"
 SERVER_DATA="$E2E_DIR/server-data"
 start_server() {
   AGENTNEST_DEVELOPMENT_LICENSE_KEY="E2E-FULL-LICENSE" \
+    AGENTNEST_ADMIN_TOKEN="E2E-ADMIN-TOKEN" \
     "$SERVER_PATH" --listen "127.0.0.1:$PORT" --data "$SERVER_DATA" \
     > "$E2E_DIR/server.stdout" 2> "$E2E_DIR/server.stderr" &
   SERVER_PID=$!
@@ -94,15 +102,32 @@ if [[ $(plutil -extract entitlement.plan raw -o - "$ACTIVATION") != "developer" 
 fi
 plutil -extract receipt json -o "$E2E_DIR/receipt.json" "$ACTIVATION"
 "$CLI_PATH" license-verify --receipt "$E2E_DIR/receipt.json" --machine-id "e2e-device-one" --public-key "$PUBLIC_KEY" >/dev/null
+if "$CLI_PATH" license-verify --receipt "$E2E_DIR/receipt.json" --machine-id "e2e-device-one" \
+  --public-key "$PUBLIC_KEY" --now "2100-01-01T00:00:00Z" >/dev/null 2>&1; then
+  echo "expired offline receipt unexpectedly verified" >&2
+  exit 1
+fi
+
+REFRESH_TOKEN_ONE=$(plutil -extract refreshToken raw -o - "$ACTIVATION")
+REFRESH_ONE="$E2E_DIR/refresh-one.json"
+"$CLI_PATH" license-refresh --server "$SERVER_URL" --machine-id "e2e-device-one" \
+  --public-key "$PUBLIC_KEY" --refresh-token "$REFRESH_TOKEN_ONE" > "$REFRESH_ONE"
+plutil -extract receipt json -o "$E2E_DIR/refreshed-receipt.json" "$REFRESH_ONE"
+if "$CLI_PATH" license-verify --receipt "$E2E_DIR/receipt.json" --current-receipt "$E2E_DIR/refreshed-receipt.json" \
+  --machine-id "e2e-device-one" --public-key "$PUBLIC_KEY" >/dev/null 2>&1; then
+  echo "older signed receipt unexpectedly replaced a newer receipt" >&2
+  exit 1
+fi
 
 if "$CLI_PATH" license-verify --receipt "$E2E_DIR/receipt.json" --machine-id "e2e-device-two" --public-key "$PUBLIC_KEY" >/dev/null 2>&1; then
   echo "cross-device receipt unexpectedly verified" >&2
   exit 1
 fi
 
-PAYLOAD=$(plutil -extract payload raw -o - "$E2E_DIR/receipt.json")
-plutil -replace payload -string "${PAYLOAD}A" "$E2E_DIR/receipt.json"
-if "$CLI_PATH" license-verify --receipt "$E2E_DIR/receipt.json" --machine-id "e2e-device-one" --public-key "$PUBLIC_KEY" >/dev/null 2>&1; then
+cp "$E2E_DIR/receipt.json" "$E2E_DIR/tampered-receipt.json"
+PAYLOAD=$(plutil -extract payload raw -o - "$E2E_DIR/tampered-receipt.json")
+plutil -replace payload -string "${PAYLOAD}A" "$E2E_DIR/tampered-receipt.json"
+if "$CLI_PATH" license-verify --receipt "$E2E_DIR/tampered-receipt.json" --machine-id "e2e-device-one" --public-key "$PUBLIC_KEY" >/dev/null 2>&1; then
   echo "tampered receipt unexpectedly verified" >&2
   exit 1
 fi
@@ -113,4 +138,31 @@ if "$CLI_PATH" license-activate --server "$SERVER_URL" --machine-id "e2e-device-
   exit 1
 fi
 
-echo "E2E passed: multi-home scan, persistent trial, signed activation, tamper/device binding, device limit"
+kill "$SERVER_PID"
+wait "$SERVER_PID" || true
+SERVER_PID=""
+"$CLI_PATH" license-verify --receipt "$E2E_DIR/receipt.json" --machine-id "e2e-device-one" --public-key "$PUBLIC_KEY" >/dev/null 2>&1 || {
+  echo "valid offline receipt was rejected while server was unavailable" >&2
+  exit 1
+}
+start_server
+
+"$CLI_PATH" license-deactivate --server "$SERVER_URL" --machine-id "e2e-device-one" --refresh-token "$REFRESH_TOKEN_ONE"
+ACTIVATION_TWO="$E2E_DIR/activation-two.json"
+"$CLI_PATH" license-activate --server "$SERVER_URL" --machine-id "e2e-device-two" \
+  --public-key "$PUBLIC_KEY" --license-key "E2E-FULL-LICENSE" > "$ACTIVATION_TWO"
+LICENSE_ID=$(plutil -extract entitlement.licenseId raw -o - "$ACTIVATION_TWO")
+REFRESH_TOKEN_TWO=$(plutil -extract refreshToken raw -o - "$ACTIVATION_TWO")
+
+curl --fail --silent --request PATCH \
+  --header "Authorization: Bearer E2E-ADMIN-TOKEN" \
+  --header "Content-Type: application/json" \
+  --data '{"status":"revoked"}' \
+  "$SERVER_URL/v1/admin/licenses/$LICENSE_ID" >/dev/null
+if "$CLI_PATH" license-refresh --server "$SERVER_URL" --machine-id "e2e-device-two" \
+  --public-key "$PUBLIC_KEY" --refresh-token "$REFRESH_TOKEN_TWO" >/dev/null 2>&1; then
+  echo "revoked license unexpectedly refreshed" >&2
+  exit 1
+fi
+
+echo "E2E passed: scan/ignore, persistent trial, offline expiry, anti-replay, activation, tamper/device binding, seat release, revocation"

@@ -56,7 +56,10 @@ func run(address, dataDirectory string, logger *slog.Logger) error {
 	}
 
 	httpServer := &http.Server{
-		Addr: address, Handler: api.New(fileStore, signer, logger, os.Getenv("AGENTNEST_PAYMENT_WEBHOOK_SECRET")).Handler(),
+		Addr: address, Handler: api.New(fileStore, signer, logger, api.Config{
+			WebhookSecret: os.Getenv("AGENTNEST_PAYMENT_WEBHOOK_SECRET"),
+			AdminToken:    os.Getenv("AGENTNEST_ADMIN_TOKEN"),
+		}).Handler(),
 		ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second,
 	}
 	interruptContext, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)

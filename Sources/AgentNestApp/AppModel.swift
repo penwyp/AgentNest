@@ -1,7 +1,18 @@
 import AgentNestCore
 import AppKit
 import Foundation
+import Network
 import Observation
+import ServiceManagement
+
+struct SkillWriteTarget: Identifiable, Hashable {
+    let homeID: PhysicalResourceIdentity
+    let homePath: String
+    let rootPath: String
+    let format: String
+
+    var id: String { rootPath }
+}
 
 @MainActor
 @Observable
@@ -40,23 +51,49 @@ final class AppModel {
     private(set) var activitySnapshot: ActivitySnapshot?
     private(set) var historyPoints: [HistoryPoint] = []
     private(set) var skillIndex: SkillIndex?
+    private(set) var skillOperationMessage: String?
+    private(set) var cleanupOperationMessage: String?
+    private(set) var isMutatingEnvironment = false
+    private(set) var customScanPaths: [String] = UserDefaults.standard.stringArray(forKey: "customScanPaths") ?? []
+    private(set) var ignoredScanPaths: [String] = UserDefaults.standard.stringArray(forKey: "ignoredScanPaths") ?? []
+    private(set) var userConfirmedHomes: [String: String] = UserDefaults.standard.dictionary(forKey: "userConfirmedHomes") as? [String: String] ?? [:]
+    private(set) var uninstallReport: String?
     var historyEnabled = UserDefaults.standard.bool(forKey: "historyEnabled")
+    var historyRetentionDays: Int
+    var hideSensitivePaths = UserDefaults.standard.bool(forKey: "hideSensitivePaths")
     var licenseKey = ""
+    var selectedLanguage = UserDefaults.standard.string(forKey: "selectedLanguage") ?? "system"
 
     private var scanTask: Task<Void, Never>?
     private var activityTask: Task<Void, Never>?
     private var licenseTask: Task<Void, Never>?
+    private var licenseRefreshSchedule = LicenseRefreshSchedule()
+    private let pathMonitor = NWPathMonitor()
+    private let pathMonitorQueue = DispatchQueue(label: "com.agentnest.network-monitor")
+    private var networkAvailable = false
+    private var lastHistoryPersistedAt: Date?
     private var lastProgressPublishedAt = Date.distantPast
+    private let catalog: AgentDefinitionCatalog?
     private let coordinator: ScanCoordinator?
     private let activitySampler = SystemActivitySampler()
-    private let historyStore = HistoryStore(
-        fileURL: FileManager.default.homeDirectoryForCurrentUser
-            .appending(path: "Library/Application Support/AgentNest/History/history.sqlite")
-    )
+    private let snapshotStore = SnapshotStore()
+    private let updateController = UpdateController()
+    private let historyStore: HistoryStore
     private var licenseManager: LicenseManager?
 
     init() {
-        coordinator = try? ScanCoordinator(useCase: ScanUseCase(catalog: AgentDefinitionCatalog.bundled()))
+        let configuredRetention = UserDefaults.standard.integer(forKey: "historyRetentionDays")
+        let effectiveRetention = [7, 30, 90, 365].contains(configuredRetention) ? configuredRetention : 365
+        historyRetentionDays = effectiveRetention
+        historyStore = HistoryStore(
+            fileURL: FileManager.default.homeDirectoryForCurrentUser
+                .appending(path: "Library/Application Support/AgentNest/History/history.sqlite"),
+            retentionDays: effectiveRetention
+        )
+        let loadedCatalog = try? AgentDefinitionCatalog.bundled()
+        catalog = loadedCatalog
+        coordinator = loadedCatalog.map { ScanCoordinator(useCase: ScanUseCase(catalog: $0)) }
+        snapshot = try? snapshotStore.load()
         var urlString = Bundle.main.object(forInfoDictionaryKey: "AgentNestLicenseServerURL") as? String
         var encodedKey = Bundle.main.object(forInfoDictionaryKey: "AgentNestLicensePublicKey") as? String
         #if DEBUG
@@ -80,6 +117,7 @@ final class AppModel {
             licenseConfigurationAvailable = true
             Task { await loadLicense() }
         }
+        startNetworkMonitoring()
     }
 
     var menuStatus: String {
@@ -89,6 +127,25 @@ final class AppModel {
             return String(format: localize("已发现 %d 个 Agent Home"), snapshot.homes.filter { $0.confidence == .confirmed }.count)
         }
         return localize("等待扫描")
+    }
+
+    var appLocale: Locale {
+        selectedLanguage == "system" ? .autoupdatingCurrent : Locale(identifier: selectedLanguage)
+    }
+
+    func setLanguage(_ language: String) {
+        guard ["system", "zh-Hans", "en"].contains(language) else { return }
+        selectedLanguage = language
+        UserDefaults.standard.set(language, forKey: "selectedLanguage")
+    }
+
+    func setHideSensitivePaths(_ hidden: Bool) {
+        hideSensitivePaths = hidden
+        UserDefaults.standard.set(hidden, forKey: "hideSensitivePaths")
+    }
+
+    func displayPath(_ path: String) -> String {
+        hideSensitivePaths ? localize("路径已隐藏") : path
     }
 
     var hasCoreAccess: Bool {
@@ -111,6 +168,14 @@ final class AppModel {
         case .invalid(let error): String(format: localize("本地授权无效：%@"), error.rawValue)
         case .rejected(let code): String(format: localize("授权被服务端拒绝：%@"), code)
         case .serviceUnavailable(let payload): payload == nil ? localize("授权服务暂时不可用") : localize("离线可用，授权服务暂时不可用")
+        }
+    }
+
+    var canDeactivateLicense: Bool {
+        switch licenseState {
+        case .valid(let payload), .needsRefresh(let payload): payload.plan != "trial"
+        case .serviceUnavailable(let payload): payload?.plan != nil && payload?.plan != "trial"
+        default: false
         }
     }
 
@@ -140,7 +205,13 @@ final class AppModel {
         scanTask = Task {
             do {
                 let result = try await coordinator.scan(
-                    request: ScanRequest(root: root, environment: ProcessInfo.processInfo.environment)
+                    request: ScanRequest(
+                        root: root,
+                        customLocations: customScanPaths.map { URL(fileURLWithPath: $0, isDirectory: true) },
+                        ignoredLocations: ignoredScanPaths.map { URL(fileURLWithPath: $0, isDirectory: true) },
+                        userConfirmedHomes: userConfirmedHomes,
+                        environment: ProcessInfo.processInfo.environment
+                    )
                 ) { [weak self] value in
                     await MainActor.run {
                         guard let self else { return }
@@ -152,9 +223,8 @@ final class AppModel {
                     }
                 }
                 snapshot = result
-                if let catalog = try? AgentDefinitionCatalog.bundled() {
-                    skillIndex = await SkillIndexUseCase(catalog: catalog).execute(homes: result.homes)
-                }
+                try? snapshotStore.save(result)
+                await refreshSkillIndex()
             } catch is CancellationError {
                 errorMessage = localize("扫描已停止；上一次完整快照仍保留。")
             } catch {
@@ -169,10 +239,348 @@ final class AppModel {
         Task { await coordinator?.cancel() }
     }
 
+    func addCustomScanLocations() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = true
+        panel.prompt = localize("加入扫描范围")
+        guard panel.runModal() == .OK else { return }
+        var seen = Set(customScanPaths)
+        for url in panel.urls.map({ $0.resolvingSymlinksInPath().standardizedFileURL }) {
+            if seen.insert(url.path).inserted { customScanPaths.append(url.path) }
+        }
+        customScanPaths.sort { $0.localizedStandardCompare($1) == .orderedAscending }
+        UserDefaults.standard.set(customScanPaths, forKey: "customScanPaths")
+    }
+
+    func removeCustomScanLocation(_ path: String) {
+        customScanPaths.removeAll { $0 == path }
+        UserDefaults.standard.set(customScanPaths, forKey: "customScanPaths")
+    }
+
+    func addIgnoredScanLocations() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = true
+        panel.prompt = localize("加入忽略位置")
+        guard panel.runModal() == .OK else { return }
+        var seen = Set(ignoredScanPaths)
+        for url in panel.urls.map({ $0.resolvingSymlinksInPath().standardizedFileURL }) {
+            if seen.insert(url.path).inserted { ignoredScanPaths.append(url.path) }
+        }
+        ignoredScanPaths.sort { $0.localizedStandardCompare($1) == .orderedAscending }
+        UserDefaults.standard.set(ignoredScanPaths, forKey: "ignoredScanPaths")
+    }
+
+    func removeIgnoredScanLocation(_ path: String) {
+        ignoredScanPaths.removeAll { $0 == path }
+        UserDefaults.standard.set(ignoredScanPaths, forKey: "ignoredScanPaths")
+    }
+
+    func confirmCandidate(_ home: AgentHome) {
+        guard home.confidence == .possible else { return }
+        let path = URL(fileURLWithPath: home.path).resolvingSymlinksInPath().standardizedFileURL.path
+        userConfirmedHomes[path] = home.productID
+        UserDefaults.standard.set(userConfirmedHomes, forKey: "userConfirmedHomes")
+        startScan()
+    }
+
+    func ignoreCandidate(_ home: AgentHome) {
+        let path = URL(fileURLWithPath: home.path).resolvingSymlinksInPath().standardizedFileURL.path
+        userConfirmedHomes.removeValue(forKey: path)
+        UserDefaults.standard.set(userConfirmedHomes, forKey: "userConfirmedHomes")
+        if !ignoredScanPaths.contains(path) {
+            ignoredScanPaths.append(path)
+            ignoredScanPaths.sort { $0.localizedStandardCompare($1) == .orderedAscending }
+            UserDefaults.standard.set(ignoredScanPaths, forKey: "ignoredScanPaths")
+        }
+        startScan()
+    }
+
+    func revokeCandidateConfirmation(_ home: AgentHome) {
+        let path = URL(fileURLWithPath: home.path).resolvingSymlinksInPath().standardizedFileURL.path
+        userConfirmedHomes.removeValue(forKey: path)
+        UserDefaults.standard.set(userConfirmedHomes, forKey: "userConfirmedHomes")
+        startScan()
+    }
+
+    var loginItemStatusText: String {
+        switch SMAppService.mainApp.status {
+        case .enabled: localize("已启用")
+        case .requiresApproval: localize("等待系统批准")
+        case .notRegistered: localize("未启用")
+        case .notFound: localize("当前构建不可用")
+        @unknown default: localize("状态未知")
+        }
+    }
+
+    func setLoginItemEnabled(_ enabled: Bool) {
+        do {
+            if enabled {
+                try SMAppService.mainApp.register()
+            } else {
+                try SMAppService.mainApp.unregister()
+            }
+        } catch {
+            errorMessage = "登录项更新失败：\(String(describing: error))"
+        }
+    }
+
+    func openFullDiskAccessSettings() {
+        guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles") else { return }
+        NSWorkspace.shared.open(url)
+    }
+
+    var skillWriteTargets: [SkillWriteTarget] {
+        guard let snapshot, let catalog else { return [] }
+        return snapshot.homes.flatMap { home -> [SkillWriteTarget] in
+            guard home.confidence == .confirmed,
+                  let definition = catalog.definitions.first(where: { $0.id == home.productID }),
+                  definition.capabilities.skills else { return [] }
+            return definition.skills.compactMap { location in
+                let root = URL(fileURLWithPath: home.path).appending(path: location.relativePath).standardizedFileURL
+                var isDirectory: ObjCBool = false
+                guard FileManager.default.fileExists(atPath: root.path, isDirectory: &isDirectory), isDirectory.boolValue else {
+                    return nil
+                }
+                return SkillWriteTarget(homeID: home.id, homePath: home.path, rootPath: root.path, format: location.format)
+            }
+        }.sorted { $0.rootPath.localizedStandardCompare($1.rootPath) == .orderedAscending }
+    }
+
+    var cleanupUnits: [CleanupUnit] {
+        guard let snapshot, let catalog else { return [] }
+        return CleanupInventoryUseCase(catalog: catalog).execute(snapshot: snapshot, activity: activitySnapshot)
+    }
+
+    func executeCleanup(_ unit: CleanupUnit) {
+        guard allows(.cleanup), let generation = snapshot?.generation else {
+            cleanupOperationMessage = localize("当前 License 不包含清理。")
+            return
+        }
+        guard !updateController.sessionInProgress else {
+            cleanupOperationMessage = localize("更新进行中，暂不能修改 Agent 环境。")
+            return
+        }
+        let plan = CleanupPolicy().plan(generation: generation, selected: [unit])
+        guard !plan.units.isEmpty else {
+            cleanupOperationMessage = localize("目标受风险或活动保护，未执行。")
+            return
+        }
+        Task {
+            isMutatingEnvironment = true
+            defer { isMutatingEnvironment = false }
+            let results = await CleanupExecutor().execute(plan, currentGeneration: generation)
+            cleanupOperationMessage = results.first?.status == .succeeded
+                ? localize("已移到废纸篓，正在重新扫描。")
+                : "清理未完成：\(results.first?.code ?? "cleanup.unknown")"
+            if results.contains(where: { $0.status == .succeeded }) { rescanHome(at: unit.homePath) }
+        }
+    }
+
+    private func rescanHome(at homePath: String) {
+        guard !isScanning, let coordinator, let baseline = snapshot else { return }
+        isScanning = true
+        errorMessage = nil
+        let root = URL(fileURLWithPath: homePath, isDirectory: true)
+        scanTask = Task {
+            do {
+                let result = try await coordinator.rescanHome(
+                    at: homePath,
+                    baseline: baseline,
+                    request: ScanRequest(
+                        root: root,
+                        customLocations: [root],
+                        ignoredLocations: ignoredScanPaths.map { URL(fileURLWithPath: $0, isDirectory: true) },
+                        userConfirmedHomes: userConfirmedHomes,
+                        environment: ProcessInfo.processInfo.environment
+                    )
+                )
+                snapshot = result
+                try? snapshotStore.save(result)
+                await refreshSkillIndex()
+            } catch is CancellationError {
+                errorMessage = localize("扫描已停止；上一次完整快照仍保留。")
+            } catch {
+                errorMessage = String(format: localize("扫描失败：%@"), error.localizedDescription)
+            }
+            isScanning = false
+            scanTask = nil
+        }
+    }
+
+    func loadSkillMainDocument(_ installation: SkillInstallation) throws -> String {
+        let url = URL(fileURLWithPath: installation.path).appending(path: "SKILL.md")
+        let data = try Data(contentsOf: url, options: [.mappedIfSafe])
+        guard data.count <= 1_048_576, let text = String(data: data, encoding: .utf8) else {
+            throw SkillWriteError.invalidSkill
+        }
+        return text
+    }
+
+    func createSkill(target: SkillWriteTarget, name: String, description: String) {
+        guard allows(.skillWrite), let generation = snapshot?.generation else {
+            skillOperationMessage = localize("当前 License 不包含 Skill 写入。")
+            return
+        }
+        runSkillOperation { writer in
+            let plan = try await writer.planCreate(
+                generation: generation,
+                skillRoot: URL(fileURLWithPath: target.rootPath),
+                name: name,
+                description: description
+            )
+            try await writer.execute(plan, currentGeneration: generation)
+        }
+    }
+
+    func editSkill(_ installation: SkillInstallation, mainDocument: String) {
+        guard allows(.skillWrite), let generation = snapshot?.generation else {
+            skillOperationMessage = localize("当前 License 不包含 Skill 写入。")
+            return
+        }
+        runSkillOperation { writer in
+            let skillURL = URL(fileURLWithPath: installation.path)
+            let plan = try await writer.planEdit(
+                generation: generation,
+                skillRoot: skillURL.deletingLastPathComponent(),
+                skillName: skillURL.lastPathComponent,
+                expectedIdentity: installation.id,
+                mainDocument: mainDocument
+            )
+            try await writer.execute(plan, currentGeneration: generation)
+        }
+    }
+
+    func renameSkillInstallation(_ installation: SkillInstallation, destinationName: String) {
+        guard allows(.skillWrite), let generation = snapshot?.generation else {
+            skillOperationMessage = localize("当前 License 不包含 Skill 写入。")
+            return
+        }
+        runSkillOperation { writer in
+            let skillURL = URL(fileURLWithPath: installation.path)
+            let plan = try await writer.planRename(
+                generation: generation,
+                skillRoot: skillURL.deletingLastPathComponent(),
+                sourceName: skillURL.lastPathComponent,
+                expectedIdentity: installation.id,
+                destinationName: destinationName
+            )
+            try await writer.execute(plan, currentGeneration: generation)
+        }
+    }
+
+    func deleteSkillInstallation(_ installation: SkillInstallation) {
+        guard allows(.skillWrite), let generation = snapshot?.generation else {
+            skillOperationMessage = localize("当前 License 不包含 Skill 写入。")
+            return
+        }
+        runSkillOperation { writer in
+            let skillURL = URL(fileURLWithPath: installation.path)
+            let plan = try await writer.planDelete(
+                generation: generation,
+                skillRoot: skillURL.deletingLastPathComponent(),
+                skillName: skillURL.lastPathComponent,
+                expectedIdentity: installation.id
+            )
+            try await writer.execute(plan, currentGeneration: generation)
+        }
+    }
+
+    func patchSkillToMissingHomes(_ skill: LogicalSkill) {
+        guard allows(.patch), let generation = snapshot?.generation,
+              let source = skill.variants.flatMap(\.installations).first(where: { $0.state == .valid }) else {
+            skillOperationMessage = localize("当前 License 不包含补齐，或没有可用来源 Variant。")
+            return
+        }
+        guard !updateController.sessionInProgress else {
+            skillOperationMessage = localize("更新进行中，暂不能修改 Agent 环境。")
+            return
+        }
+        let targets = skillWriteTargets.filter { skill.missingHomeIDs.contains($0.homeID) }
+        guard !targets.isEmpty else { return }
+        Task {
+            isMutatingEnvironment = true
+            defer { isMutatingEnvironment = false }
+            let writer = SkillWriteUseCase()
+            do {
+                var plans: [SkillWritePlan] = []
+                for target in targets {
+                    plans.append(try await writer.planPatch(
+                        generation: generation,
+                        skillRoot: URL(fileURLWithPath: target.rootPath),
+                        destinationName: URL(fileURLWithPath: source.path).lastPathComponent,
+                        sourceSkill: URL(fileURLWithPath: source.path),
+                        conflictResolution: .skip
+                    ))
+                }
+                let results = await writer.executeSerial(plans, currentGeneration: generation)
+                let succeeded = results.filter { $0.status == .succeeded }.count
+                let failed = results.filter { $0.status == .failed }.count
+                skillOperationMessage = "补齐完成：成功 \(succeeded)，失败 \(failed)。"
+                await refreshSkillIndex()
+            } catch {
+                skillOperationMessage = "Skill 补齐预检失败：\(String(describing: error))"
+            }
+        }
+    }
+
+    func clearSkillOperationMessage() {
+        skillOperationMessage = nil
+    }
+
+    private func runSkillOperation(
+        _ operation: @escaping @Sendable (SkillWriteUseCase) async throws -> Void
+    ) {
+        skillOperationMessage = nil
+        guard !updateController.sessionInProgress else {
+            skillOperationMessage = localize("更新进行中，暂不能修改 Agent 环境。")
+            return
+        }
+        Task {
+            isMutatingEnvironment = true
+            defer { isMutatingEnvironment = false }
+            do {
+                try await operation(SkillWriteUseCase())
+                skillOperationMessage = localize("Skill 操作成功。")
+                await refreshSkillIndex()
+            } catch {
+                skillOperationMessage = "Skill 操作失败：\(String(describing: error))"
+            }
+        }
+    }
+
+    private func refreshSkillIndex() async {
+        guard let snapshot, let catalog else { skillIndex = nil; return }
+        if allows(.skillWrite), !updateController.sessionInProgress {
+            let wasMutating = isMutatingEnvironment
+            isMutatingEnvironment = true
+            defer { isMutatingEnvironment = wasMutating }
+            let writer = SkillWriteUseCase()
+            var recovered = 0
+            var failed = 0
+            for target in skillWriteTargets {
+                do {
+                    let results = try await writer.recoverAbandonedStaging(in: URL(fileURLWithPath: target.rootPath))
+                    recovered += results.filter { $0.status == .succeeded }.count
+                    failed += results.filter { $0.status == .failed }.count
+                } catch {
+                    failed += 1
+                }
+            }
+            if recovered > 0 || failed > 0 {
+                skillOperationMessage = "Skill 暂存恢复：已移到废纸篓 \(recovered)，失败 \(failed)。"
+            }
+        }
+        skillIndex = await SkillIndexUseCase(catalog: catalog).execute(homes: snapshot.homes)
+    }
+
     func startTrial() {
         guard let licenseManager else { return }
         Task {
-            licenseState = await licenseManager.startTrial()
+            updateLicenseState(await licenseManager.startTrial())
             reconcileLicensedTasks()
         }
     }
@@ -181,7 +589,7 @@ final class AppModel {
         guard let licenseManager, !licenseKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         let key = licenseKey
         Task {
-            licenseState = await licenseManager.activate(licenseKey: key)
+            updateLicenseState(await licenseManager.activate(licenseKey: key))
             if hasCoreAccess {
                 licenseKey = ""
             }
@@ -192,9 +600,10 @@ final class AppModel {
     private func loadLicense() async {
         guard let licenseManager else { return }
         let state = await licenseManager.loadLocalState()
-        licenseState = state
+        updateLicenseState(state)
+        if hasCoreAccess { await refreshSkillIndex() }
         if case .needsRefresh = state {
-            licenseState = await licenseManager.refresh()
+            await refreshLicenseNow(force: true)
         }
         reconcileLicensedTasks()
         startLicenseMonitoringIfNeeded()
@@ -204,16 +613,85 @@ final class AppModel {
         guard licenseTask == nil, let licenseManager else { return }
         licenseTask = Task { [weak self] in
             while !Task.isCancelled {
-                do { try await Task.sleep(for: .seconds(60)) } catch { return }
+                do { try await Task.sleep(for: .seconds(30)) } catch { return }
                 guard let self else { return }
-                var state = await licenseManager.loadLocalState()
-                if case .needsRefresh = state {
-                    state = await licenseManager.refresh()
+                let state = await licenseManager.loadLocalState()
+                updateLicenseState(state)
+                if case .needsRefresh = state, licenseRefreshSchedule.shouldAttempt(now: Date()) {
+                    await refreshLicenseNow(force: false)
                 }
-                licenseState = state
                 reconcileLicensedTasks()
             }
         }
+    }
+
+    func retryLicense() {
+        Task { await refreshLicenseNow(force: true) }
+    }
+
+    var updateAvailable: Bool { updateController.isConfigured }
+
+    func checkForUpdates() {
+        guard !isMutatingEnvironment else {
+            errorMessage = localize("Agent 环境写入进行中，完成后再检查更新。")
+            return
+        }
+        updateController.checkForUpdates()
+    }
+
+    func deactivateLicense() {
+        guard let licenseManager else { return }
+        Task {
+            do {
+                try await licenseManager.deactivate()
+                licenseRefreshSchedule = LicenseRefreshSchedule()
+                licenseState = .missing
+                reconcileLicensedTasks()
+            } catch {
+                errorMessage = "停用设备失败：\(String(describing: error))"
+            }
+        }
+    }
+
+    private func refreshLicenseNow(force: Bool) async {
+        guard let licenseManager else { return }
+        let now = Date()
+        guard force || licenseRefreshSchedule.shouldAttempt(now: now) else { return }
+        let state = await licenseManager.refresh(now: now)
+        updateLicenseState(state, refreshAttemptedAt: now)
+        reconcileLicensedTasks()
+    }
+
+    private func updateLicenseState(_ state: LicenseState, refreshAttemptedAt: Date? = nil) {
+        licenseState = state
+        switch state {
+        case .valid(let payload), .needsRefresh(let payload):
+            licenseRefreshSchedule.recordSuccess(refreshAfter: payload.refreshAfter)
+        case .serviceUnavailable:
+            if let refreshAttemptedAt {
+                licenseRefreshSchedule.recordFailure(now: refreshAttemptedAt, jitterUnit: Double.random(in: 0...1))
+            }
+        case .missing, .expired, .invalid, .rejected:
+            licenseRefreshSchedule = LicenseRefreshSchedule()
+        }
+    }
+
+    private func startNetworkMonitoring() {
+        pathMonitor.pathUpdateHandler = { [weak self] path in
+            let isAvailable = path.status == .satisfied
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                let restored = isAvailable && !networkAvailable
+                networkAvailable = isAvailable
+                if restored {
+                    licenseRefreshSchedule.networkBecameAvailable(now: Date())
+                    if case .serviceUnavailable = licenseState {
+                        await refreshLicenseNow(force: false)
+                    }
+                }
+            }
+        }
+        pathMonitor.start(queue: pathMonitorQueue)
     }
 
     private func reconcileLicensedTasks() {
@@ -232,14 +710,18 @@ final class AppModel {
         activityTask = Task { [weak self] in
             while !Task.isCancelled {
                 guard let self else { return }
-                if let sample = try? await activitySampler.sample() {
+                if let sample = try? await activitySampler.sample(inventory: snapshot) {
                     activitySnapshot = sample
-                    if historyEnabled, allows(.history) {
+                    if historyEnabled, allows(.history),
+                       lastHistoryPersistedAt.map({ sample.capturedAt.timeIntervalSince($0) >= 60 }) ?? true {
                         try? await historyStore.setEnabled(true)
                         try? await historyStore.append(sample)
+                        lastHistoryPersistedAt = sample.capturedAt
                     }
                 }
-                try? await Task.sleep(for: .seconds(3))
+                let configuredInterval = UserDefaults.standard.double(forKey: "sampleInterval")
+                let interval = configuredInterval == 0 ? 3 : min(max(configuredInterval, 1), 60)
+                try? await Task.sleep(for: .seconds(interval))
             }
         }
     }
@@ -255,6 +737,16 @@ final class AppModel {
         Task {
             try? await historyStore.setEnabled(value)
             if value { await refreshHistory() }
+        }
+    }
+
+    func setHistoryRetentionDays(_ days: Int) {
+        guard [7, 30, 90, 365].contains(days) else { return }
+        historyRetentionDays = days
+        UserDefaults.standard.set(days, forKey: "historyRetentionDays")
+        Task {
+            _ = try? await historyStore.setRetentionDays(days)
+            if historyEnabled { await refreshHistory() }
         }
     }
 
@@ -283,6 +775,22 @@ final class AppModel {
         }
     }
 
+    func exportHistoryPDF() {
+        guard allows(.export) else {
+            errorMessage = localize("当前 License 不包含导出。")
+            return
+        }
+        Task {
+            let end = Date()
+            let points = (try? await historyStore.points(from: end.addingTimeInterval(-7 * 86_400), to: end)) ?? []
+            guard let data = try? HistoryPDFRenderer().render(points: points, locale: .current) else { return }
+            let panel = NSSavePanel()
+            panel.nameFieldStringValue = "agentnest-history.pdf"
+            guard panel.runModal() == .OK, let url = panel.url else { return }
+            try? data.write(to: url, options: .atomic)
+        }
+    }
+
     func deleteLocalData() {
         stopScan()
         licenseTask?.cancel()
@@ -295,10 +803,67 @@ final class AppModel {
         historyPoints = []
         historyEnabled = false
         UserDefaults.standard.removeObject(forKey: "historyEnabled")
+        historyRetentionDays = 365
+        UserDefaults.standard.removeObject(forKey: "historyRetentionDays")
+        hideSensitivePaths = false
+        UserDefaults.standard.removeObject(forKey: "hideSensitivePaths")
+        customScanPaths = []
+        UserDefaults.standard.removeObject(forKey: "customScanPaths")
+        ignoredScanPaths = []
+        UserDefaults.standard.removeObject(forKey: "ignoredScanPaths")
+        userConfirmedHomes = [:]
+        UserDefaults.standard.removeObject(forKey: "userConfirmedHomes")
         Task {
             try? await historyStore.stopAndDelete()
+            try? snapshotStore.delete()
             try? await licenseManager?.clearLocalCredentials()
             licenseState = .missing
+        }
+    }
+
+    func prepareForUninstall() {
+        guard !updateController.sessionInProgress else {
+            uninstallReport = localize("更新进行中，无法准备卸载。")
+            return
+        }
+        stopScan()
+        licenseTask?.cancel()
+        licenseTask = nil
+        activityTask?.cancel()
+        activityTask = nil
+        pathMonitor.cancel()
+        Task {
+            var failures: [String] = []
+            do { try await historyStore.stopAndDelete() } catch { failures.append("history") }
+            do { try snapshotStore.delete() } catch { failures.append("snapshot") }
+            do { try await licenseManager?.clearLocalCredentials() } catch { failures.append("license/keychain") }
+            do {
+                if SMAppService.mainApp.status == .enabled { try await SMAppService.mainApp.unregister() }
+            } catch { failures.append("login-item") }
+            let applicationSupport = FileManager.default.homeDirectoryForCurrentUser
+                .appending(path: "Library/Application Support/AgentNest")
+            do {
+                if FileManager.default.fileExists(atPath: applicationSupport.path) {
+                    try FileManager.default.removeItem(at: applicationSupport)
+                }
+            } catch { failures.append("application-support") }
+            if let identifier = Bundle.main.bundleIdentifier {
+                UserDefaults.standard.removePersistentDomain(forName: identifier)
+            }
+            snapshot = nil
+            skillIndex = nil
+            activitySnapshot = nil
+            historyPoints = []
+            historyEnabled = false
+            historyRetentionDays = 365
+            hideSensitivePaths = false
+            customScanPaths = []
+            ignoredScanPaths = []
+            userConfirmedHomes = [:]
+            licenseState = .missing
+            uninstallReport = failures.isEmpty
+                ? localize("本地数据、登录项与凭据已清除；现在可退出并将 AgentNest.app 移到废纸篓。")
+                : "准备卸载完成，但以下项目需人工检查：\(failures.joined(separator: ", "))"
         }
     }
 
@@ -310,6 +875,11 @@ final class AppModel {
     }
 
     private func localize(_ key: String) -> String {
-        NSLocalizedString(key, bundle: .main, comment: "")
+        guard selectedLanguage != "system",
+              let path = Bundle.main.path(forResource: selectedLanguage, ofType: "lproj"),
+              let bundle = Bundle(path: path) else {
+            return NSLocalizedString(key, bundle: .main, comment: "")
+        }
+        return NSLocalizedString(key, bundle: bundle, comment: "")
     }
 }

@@ -1,5 +1,6 @@
 import AgentNestCore
 import CryptoKit
+import CoreGraphics
 import Darwin
 import Foundation
 
@@ -11,10 +12,14 @@ struct AgentNestCoreTestRunner {
             try await testScan()
             try await testSkills()
             try await testCleanupPolicy()
-            try testActivityRates()
+            try await testCleanupInventory()
+            try await testActivityRates()
+            try testDiskUtilityParsing()
             try await testHistoryStore()
+            try testHistoryPDF()
             try await testReceipts()
-            print("AgentNestCore tests passed (34 checks)")
+            try testLicenseRefreshSchedule()
+            print("AgentNestCore tests passed (79 checks)")
         } catch {
             FileHandle.standardError.write(Data("AgentNestCore tests failed: \(error)\n".utf8))
             exit(1)
@@ -44,6 +49,12 @@ struct AgentNestCoreTestRunner {
         "skills":[],"artifacts":[],"capabilities":{"space":false,"skills":false,"activity":false,"cleanup":false}}
         """.utf8)
         try expectThrows("unsafe definition path") { _ = try AgentDefinitionCatalog.load(data: unsafe) }
+        try expect(
+            CanonicalPath.isEqualOrDescendant("/tmp/fixture", of: "/") &&
+                CanonicalPath.isDescendant("/foo/child", of: "/foo") &&
+                !CanonicalPath.isEqualOrDescendant("/foobar", of: "/foo"),
+            "canonical path containment handles filesystem root and component boundaries"
+        )
     }
 
     private static func testScan() async throws {
@@ -72,8 +83,79 @@ struct AgentNestCoreTestRunner {
         let possible = snapshot.homes.filter { $0.confidence == .possible }
         try expect(confirmed.count == 2 && Set(confirmed.map(\.id)).count == 2, "multi-home discovery and physical alias deduplication")
         try expect(possible.count == 1 && possible.first?.path == possibleHome.path, "similar directory remains possible")
+        let userConfirmedSnapshot = try await ScanUseCase(catalog: AgentDefinitionCatalog.bundled()).execute(request: ScanRequest(
+            root: root,
+            userConfirmedHomes: [possibleHome.path: "openai.codex"]
+        ))
+        try expect(
+            userConfirmedSnapshot.homes.first(where: { $0.path == possibleHome.path })?.confidence == .confirmed &&
+                userConfirmedSnapshot.homes.first(where: { $0.path == possibleHome.path })?.source == .userConfirmed,
+            "an explicit local candidate decision confirms only the selected product and records its source"
+        )
+        try expect(snapshot.products.count == 1 && snapshot.products.first?.id == "openai.codex", "homes are grouped beneath their product")
+        try expect(snapshot.products.first?.installations.isEmpty == true && snapshot.products.first?.profiles.isEmpty == true, "installation and profile are not fabricated without evidence")
         let defaultResult = try unwrap(confirmed.first { $0.path == defaultHome.path }, "default home")
         try expect(defaultResult.storage.itemCount == 3, "hard links count once in physical ledger; got \(defaultResult.storage.itemCount)")
+        try expect(Set(snapshot.storageLedger.artifacts.map(\.id)).count == snapshot.storageLedger.artifacts.count, "storage ledger contains each physical resource once")
+        try expect(
+            snapshot.totalStorage.physicalBytes == snapshot.storageLedger.artifacts.reduce(0) { $0 &+ $1.storage.physicalBytes },
+            "snapshot total conserves artifact physical bytes"
+        )
+        try expect(snapshot.storageLedger.artifacts.allSatisfy { $0.category == .unattributed }, "undefined artifact rules do not guess categories")
+
+        let incrementalFile = defaultHome.appending(path: "incremental.fixture")
+        try Data("incremental".utf8).write(to: incrementalFile)
+        let homeReplacement = try await ScanUseCase(catalog: AgentDefinitionCatalog.bundled()).execute(request: ScanRequest(
+            root: defaultHome,
+            customLocations: [defaultHome]
+        ))
+        let reconciled = try SnapshotReconciler().replacingHome(at: defaultHome.path, in: snapshot, with: homeReplacement)
+        try expect(
+            reconciled.homes.contains(where: { $0.path == deepHome.path }) &&
+                reconciled.storageLedger.artifacts.contains(where: { $0.path == incrementalFile.path }) &&
+                reconciled.totalStorage.physicalBytes == reconciled.storageLedger.artifacts.reduce(0) { $0 &+ $1.storage.physicalBytes },
+            "single-Home reconciliation preserves unaffected Homes and rebuilds a conservative physical ledger"
+        )
+
+        let ignoredSnapshot = try await ScanUseCase(catalog: AgentDefinitionCatalog.bundled()).execute(request: ScanRequest(
+            root: root,
+            ignoredLocations: [deepHome],
+            environment: ["CODEX_HOME": deepHome.path]
+        ))
+        try expect(
+            !ignoredSnapshot.homes.contains(where: { $0.path == deepHome.path }) &&
+                !ignoredSnapshot.storageLedger.artifacts.contains(where: { $0.path == deepHome.path || $0.path.hasPrefix(deepHome.path + "/") }),
+            "ignored locations are excluded before discovery and physical accounting"
+        )
+
+        let unstableRoot = root.appending(path: "unstable-fixture")
+        let unstableHome = unstableRoot.appending(path: ".codex")
+        let unstableFingerprint = unstableHome.appending(path: "version.json")
+        try FileManager.default.createDirectory(at: unstableHome, withIntermediateDirectories: true)
+        try Data("{\"version\":\"before\"}".utf8).write(to: unstableFingerprint)
+        let unstableSnapshot = try await ScanUseCase(catalog: AgentDefinitionCatalog.bundled()).execute(
+            request: ScanRequest(root: unstableRoot),
+            progress: { progress in
+                if progress.phase == .validatingHomes {
+                    try? Data("{\"version\":\"changed-during-scan\"}".utf8).write(to: unstableFingerprint)
+                }
+            }
+        )
+        try expect(
+            unstableSnapshot.isPartial && unstableSnapshot.homes.first?.confidence == .possible,
+            "a required fingerprint changed during scanning downgrades the exact Home conclusion"
+        )
+        try expect(
+            !unstableSnapshot.storageLedger.artifacts.contains(where: { $0.path == unstableFingerprint.path }) &&
+                unstableSnapshot.findings.contains(where: { $0.code == "finding.scan.unstable" }),
+            "unstable resources are suppressed from exact physical accounting and reported"
+        )
+
+        let snapshotStore = SnapshotStore(fileURL: root.appending(path: "app-data/latest-snapshot.json"))
+        try snapshotStore.save(snapshot)
+        try expect(try snapshotStore.load() == snapshot, "latest immutable snapshot survives an atomic persistence round trip")
+        let snapshotMode = try FileManager.default.attributesOfItem(atPath: snapshotStore.fileURL.path)[.posixPermissions] as? NSNumber
+        try expect(snapshotMode?.intValue == 0o600, "persisted snapshot is owner-only")
 
         try Data("not-json".utf8).write(to: defaultHome.appending(path: "version.json"))
         let malformedSnapshot = try await ScanUseCase(catalog: AgentDefinitionCatalog.bundled()).execute(request: ScanRequest(root: root))
@@ -91,6 +173,18 @@ struct AgentNestCoreTestRunner {
         try expect(
             unavailable.isPartial && unavailable.coverage.unreadableLocationCount == 1,
             "unavailable root is represented as partial coverage"
+        )
+
+        let permissionRoot = root.appending(path: "permission-fixture")
+        let blockedDirectory = permissionRoot.appending(path: "blocked")
+        try FileManager.default.createDirectory(at: blockedDirectory, withIntermediateDirectories: true)
+        try Data("private".utf8).write(to: blockedDirectory.appending(path: "secret"))
+        guard chmod(blockedDirectory.path, 0) == 0 else { throw POSIXError(.EACCES) }
+        defer { _ = chmod(blockedDirectory.path, S_IRWXU) }
+        let permissionSnapshot = try await ScanUseCase(catalog: AgentDefinitionCatalog.bundled()).execute(request: ScanRequest(root: permissionRoot))
+        try expect(
+            permissionSnapshot.isPartial && permissionSnapshot.coverage.unreadableLocationCount >= 1,
+            "an unreadable subtree preserves the scan while making affected coverage partial"
         )
     }
 
@@ -111,6 +205,10 @@ struct AgentNestCoreTestRunner {
         let expired = makePayload(machineHash: machineHash, issuedAt: now.addingTimeInterval(-7200), offlineUntil: now.addingTimeInterval(-1))
         try expectThrows("expired offline window") {
             _ = try verifier.verify(try sign(expired, with: privateKey), machineIDHash: machineHash, now: now)
+        }
+        let older = makePayload(machineHash: machineHash, issuedAt: now.addingTimeInterval(-120), offlineUntil: now.addingTimeInterval(7200))
+        try expectThrows("replayed older receipt") {
+            _ = try verifier.verify(try sign(older, with: privateKey), machineIDHash: machineHash, now: now, replacing: payload)
         }
 
         let directory = FileManager.default.temporaryDirectory.appending(path: "AgentNestReceiptTests-\(UUID().uuidString)")
@@ -148,7 +246,21 @@ struct AgentNestCoreTestRunner {
         }
     }
 
-    private static func testActivityRates() throws {
+    private static func testLicenseRefreshSchedule() throws {
+        let now = Date(timeIntervalSince1970: 1_000)
+        var schedule = LicenseRefreshSchedule()
+        schedule.recordFailure(now: now, jitterUnit: 0)
+        try expect(schedule.failureCount == 1 && schedule.nextAttemptAt == now.addingTimeInterval(45), "license retry starts with bounded negative jitter")
+        schedule.recordFailure(now: now, jitterUnit: 1)
+        try expect(schedule.failureCount == 2 && schedule.nextAttemptAt == now.addingTimeInterval(150), "license retry uses jittered exponential backoff")
+        schedule.networkBecameAvailable(now: now.addingTimeInterval(10))
+        try expect(schedule.shouldAttempt(now: now.addingTimeInterval(10)), "network restoration releases a failed refresh immediately")
+        let refreshAfter = now.addingTimeInterval(86_400)
+        schedule.recordSuccess(refreshAfter: refreshAfter)
+        try expect(schedule.failureCount == 0 && schedule.nextAttemptAt == refreshAfter, "successful refresh returns to receipt schedule")
+    }
+
+    private static func testActivityRates() async throws {
         var calculator = ActivityRateCalculator(maximumComparableInterval: 10)
         let date = Date()
         let first = calculator.record(TimedActivityCounters(
@@ -179,6 +291,72 @@ struct AgentNestCoreTestRunner {
             )
         ))
         try expect(reset.didResetBaseline && reset.cpuFraction.value == nil, "counter regression resets baseline without spike")
+
+        let reusedPID = Int32(42)
+        let sampler = SystemActivitySampler(
+            provider: SequencedCounterProvider(),
+            evidenceProvider: SequencedEvidenceProvider(pid: reusedPID)
+        )
+        _ = try await sampler.sample()
+        let evidenceSnapshot = try await sampler.sample()
+        try expect(
+            evidenceSnapshot.processes.first?.id.startSeconds == 2 && evidenceSnapshot.processes.first?.cpuFraction.value == nil,
+            "PID reuse creates a new process baseline instead of joining sessions"
+        )
+        try expect(evidenceSnapshot.physicalDevices.first?.readBytesPerSecond.value != nil, "physical device rates use stable registry identity")
+
+        let openFile = FileManager.default.temporaryDirectory.appending(path: "AgentNestOpenFile-\(UUID().uuidString)")
+        try Data("fixture".utf8).write(to: openFile)
+        defer { try? FileManager.default.removeItem(at: openFile) }
+        let handle = try FileHandle(forReadingFrom: openFile)
+        defer { try? handle.close() }
+        let fileEvidence = DarwinProcessFileEvidenceProvider().currentlyOpenFiles(pid: getpid(), maximumCount: 128)
+        try expect(fileEvidence.paths.contains { URL(fileURLWithPath: $0).lastPathComponent == openFile.lastPathComponent }, "currently-open evidence comes from bounded vnode descriptors")
+        let bounded = DarwinProcessFileEvidenceProvider().currentlyOpenFiles(pid: getpid(), maximumCount: 0)
+        try expect(bounded.paths.isEmpty && bounded.droppedCount > 0, "open-file evidence reports budget drops instead of growing unbounded")
+
+        let ownProcess = DarwinSystemActivityEvidenceProvider().readEvidence().processes.first { $0.identity.pid == getpid() }
+        try expect(ownProcess?.workingDirectoryPath != nil, "process evidence captures the current working directory when libproc permits it")
+
+        let attributionRoot = FileManager.default.temporaryDirectory.appending(path: "AgentNestActivity-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: attributionRoot) }
+        let attributionHome = attributionRoot.appending(path: ".codex")
+        try FileManager.default.createDirectory(at: attributionHome, withIntermediateDirectories: true)
+        try Data("{\"version\":\"fixture\"}".utf8).write(to: attributionHome.appending(path: "version.json"))
+        let inventory = try await ScanUseCase(catalog: AgentDefinitionCatalog.bundled()).execute(request: ScanRequest(root: attributionRoot))
+        let attributedSampler = SystemActivitySampler(
+            provider: SequencedCounterProvider(),
+            evidenceProvider: WorkingDirectoryEvidenceProvider(path: attributionHome.appending(path: "workspace").path)
+        )
+        let attributed = try await attributedSampler.sample(inventory: inventory)
+        try expect(
+            attributed.processes.first?.attribution == .agent &&
+                attributed.processes.first?.evidence.first?.hasPrefix("working-directory:") == true,
+            "working-directory evidence attributes a process to the containing Home without using its name"
+        )
+
+        let stormSampler = SystemActivitySampler(
+            provider: SequencedCounterProvider(),
+            evidenceProvider: StormEvidenceProvider(count: 5_000)
+        )
+        let storm = try await stormSampler.sample()
+        try expect(
+            storm.processes.count == 4_096 && storm.droppedEvidenceCount == 904,
+            "process evidence storms are capped and excess observations become explicit drops"
+        )
+    }
+
+    private static func testDiskUtilityParsing() throws {
+        let data = try PropertyListSerialization.data(fromPropertyList: [
+            "SMARTStatus": "Verified",
+            "ParentWholeDisk": "disk12",
+            "APFSPhysicalStores": [["APFSPhysicalStore": "disk0s2"]],
+        ], format: .binary, options: 0)
+        let info = try unwrap(DiskUtilityProbe.parseInfo(data: data), "diskutil plist")
+        try expect(info.health == .verified, "diskutil SMART status is parsed structurally")
+        try expect(info.wholeDiskNames == ["disk0", "disk12"], "APFS stores map to whole-disk names without guessing paths")
+        let unsupportedData = try PropertyListSerialization.data(fromPropertyList: ["DeviceIdentifier": "disk9s1"], format: .xml, options: 0)
+        try expect(DiskUtilityProbe.parseInfo(data: unsupportedData)?.health == .unsupported, "missing SMART field remains unsupported")
     }
 
     private static func testHistoryStore() async throws {
@@ -206,6 +384,60 @@ struct AgentNestCoreTestRunner {
         try expect(String(decoding: csv, as: UTF8.self).hasPrefix("schema_version,captured_at"), "history CSV uses stable machine schema")
         try await store.stopAndDelete()
         try expect(!FileManager.default.fileExists(atPath: databaseURL.path) && !FileManager.default.fileExists(atPath: databaseURL.path + "-wal"), "stop and delete removes database sidecars")
+
+        let rollupClock = TestClock(now: Date(timeIntervalSince1970: 2_000_000))
+        let rollupStore = HistoryStore(
+            fileURL: directory.appending(path: "rollup.sqlite"),
+            clock: { rollupClock.value() }
+        )
+        try await rollupStore.setEnabled(true)
+        for (offset, cpu) in [0.1, 0.2, 0.3, 0.4].enumerated() {
+            try await rollupStore.append(activityFixture(
+                at: rollupClock.value().addingTimeInterval(TimeInterval(offset * 60)),
+                cpu: cpu
+            ))
+        }
+        let future = rollupClock.value().addingTimeInterval(2 * 86_400)
+        rollupClock.set(future)
+        try await rollupStore.append(activityFixture(at: future, cpu: 0.5))
+        let rolled = try await rollupStore.points(
+            from: Date(timeIntervalSince1970: 1_999_000),
+            to: future.addingTimeInterval(1)
+        )
+        try expect(rolled.count == 2, "history older than 24 hours is compacted into a 15-minute rollup; got \(rolled)")
+        try expect(abs((rolled.first?.cpuFraction ?? -1) - 0.25) < 0.0001, "history rollup averages available values without filling gaps with zero")
+
+        let retentionClock = TestClock(now: Date(timeIntervalSince1970: 4_000_000))
+        let retentionStore = HistoryStore(
+            fileURL: directory.appending(path: "retention.sqlite"),
+            retentionDays: 365,
+            clock: { retentionClock.value() }
+        )
+        try await retentionStore.setEnabled(true)
+        let retainedDate = retentionClock.value().addingTimeInterval(-20 * 86_400)
+        try await retentionStore.append(activityFixture(at: retainedDate, cpu: 0.2))
+        _ = try await retentionStore.setRetentionDays(7)
+        let pruned = try await retentionStore.points(from: retainedDate.addingTimeInterval(-1), to: retentionClock.value())
+        try expect(pruned.isEmpty, "shortening history retention immediately prunes older rollups")
+    }
+
+    private static func testHistoryPDF() throws {
+        let points = (0..<40).map { index in
+            HistoryPoint(
+                capturedAt: Date(timeIntervalSince1970: TimeInterval(1_000 + index * 60)),
+                cpuFraction: index.isMultiple(of: 3) ? nil : Double(index) / 100,
+                diskReadBytesPerSecond: 1_000,
+                diskWriteBytesPerSecond: nil,
+                networkReceiveBytesPerSecond: 2_000,
+                networkSendBytesPerSecond: 500,
+                coverage: 0.8
+            )
+        }
+        let data = try HistoryPDFRenderer().render(points: points, generatedAt: Date(timeIntervalSince1970: 4_000), locale: Locale(identifier: "en_US"))
+        try expect(data.starts(with: Data("%PDF".utf8)), "history report is a local PDF artifact")
+        let provider = try unwrap(CGDataProvider(data: data as CFData), "PDF data provider")
+        let document = try unwrap(CGPDFDocument(provider), "PDF document")
+        try expect(document.numberOfPages == 2, "history PDF paginates deterministic row budgets")
     }
 
     private static func testCleanupPolicy() async throws {
@@ -267,6 +499,31 @@ struct AgentNestCoreTestRunner {
         )
     }
 
+    private static func testCleanupInventory() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "AgentNestCleanupInventory-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let home = root.appending(path: ".codex")
+        let cache = home.appending(path: "cache")
+        try FileManager.default.createDirectory(at: cache, withIntermediateDirectories: true)
+        try Data("{\"version\":\"fixture\"}".utf8).write(to: home.appending(path: "version.json"))
+        try Data(repeating: 1, count: 4_096).write(to: cache.appending(path: "item.bin"))
+        let definition = try AgentDefinitionCatalog.load(data: Data("""
+        {"schemaVersion":1,"id":"openai.codex","displayName":"Codex",
+        "homeDiscovery":{"defaultPaths":["~/.codex"],"environmentVariables":[],"allowDeepDiscovery":false},
+        "fingerprints":{"required":[{"kind":"jsonFile","relativePath":"version.json"}],"optional":[],"negative":[]},
+        "skills":[],"artifacts":[{"relativePath":"cache","category":"cache","cleanup":{"risk":"rebuildable","method":"trash"}}],
+        "capabilities":{"space":true,"skills":false,"activity":false,"cleanup":true}}
+        """.utf8))
+        let catalog = try AgentDefinitionCatalog(definitions: [definition])
+        let snapshot = try await ScanUseCase(catalog: catalog).execute(request: ScanRequest(root: root))
+        let useCase = CleanupInventoryUseCase(catalog: catalog)
+        let unknown = useCase.execute(snapshot: snapshot, activity: nil)
+        try expect(unknown.count == 1 && unknown.first?.risk == .rebuildable && unknown.first?.path == cache.path, "cleanup inventory only emits explicitly declared complete artifact roots")
+        try expect(unknown.first?.activity == .unknown && CleanupPolicy().plan(generation: snapshot.generation, selected: unknown).units.isEmpty, "missing activity evidence blocks cleanup execution")
+        let inactive = useCase.execute(snapshot: snapshot, activity: activityFixture(at: Date(), cpu: 0.1))
+        try expect(inactive.first?.activity == .inactive && CleanupPolicy().plan(generation: snapshot.generation, selected: inactive).units.count == 1, "verified inactive targets can enter a cleanup preview")
+    }
+
     private static func testSkills() async throws {
         let root = FileManager.default.temporaryDirectory.appending(path: "AgentNestSkillTests-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }
@@ -280,6 +537,7 @@ struct AgentNestCoreTestRunner {
         try FileManager.default.createDirectory(at: firstSkill, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: secondSkill, withIntermediateDirectories: true)
         try Data("---\nname: release\ndescription: first\n---\n\n# Release A\n".utf8).write(to: firstSkill.appending(path: "SKILL.md"))
+        try Data("fixture asset".utf8).write(to: firstSkill.appending(path: "asset.txt"))
         try Data("---\nname: release\ndescription: second\n---\n\n# Release B\n".utf8).write(to: secondSkill.appending(path: "SKILL.md"))
 
         let snapshot = try await ScanUseCase(catalog: AgentDefinitionCatalog.bundled()).execute(request: ScanRequest(root: root))
@@ -312,6 +570,61 @@ struct AgentNestCoreTestRunner {
         let patchedRelease = try unwrap(secondIndex.logicalSkills.first { $0.id == "release" }, "patched release skill")
         try expect(patchedRelease.missingHomeIDs.isEmpty && patchedRelease.variants.count == 2, "patch updates coverage without merging variants")
 
+        let thirdRelease = thirdSkillRoot.appending(path: "release")
+        let editPlan = try await writer.planEdit(
+            generation: generation,
+            skillRoot: thirdSkillRoot,
+            skillName: "release",
+            expectedIdentity: physicalIdentity(thirdRelease),
+            mainDocument: "---\nname: release\ndescription: edited\n---\n\n# Edited\n"
+        )
+        try await writer.execute(editPlan, currentGeneration: generation)
+        try expect(
+            String(decoding: try Data(contentsOf: thirdRelease.appending(path: "SKILL.md")), as: UTF8.self).contains("# Edited") &&
+                FileManager.default.fileExists(atPath: thirdRelease.appending(path: "asset.txt").path),
+            "edit atomically replaces the main document and preserves package files"
+        )
+
+        let identityBeforeRename = try physicalIdentity(thirdRelease)
+        let renamePlan = try await writer.planRename(
+            generation: generation,
+            skillRoot: thirdSkillRoot,
+            sourceName: "release",
+            expectedIdentity: identityBeforeRename,
+            destinationName: "release-renamed"
+        )
+        try await writer.execute(renamePlan, currentGeneration: generation)
+        let renamed = thirdSkillRoot.appending(path: "release-renamed")
+        try expect(
+            !FileManager.default.fileExists(atPath: thirdRelease.path) && physicalIdentity(renamed) == identityBeforeRename,
+            "rename is exclusive and preserves physical identity"
+        )
+
+        let keepBothPlan = try await writer.planPatch(
+            generation: generation,
+            skillRoot: thirdSkillRoot,
+            destinationName: "release-renamed",
+            sourceSkill: firstSkill,
+            conflictResolution: .keepBoth
+        )
+        try await writer.execute(keepBothPlan, currentGeneration: generation)
+        try expect(FileManager.default.fileExists(atPath: thirdSkillRoot.appending(path: "release-renamed-2").path), "keep-both conflict resolution chooses a distinct target")
+
+        let batchPlans = try await ["batch-a", "batch-b"].asyncMap { name in
+            try await writer.planCreate(generation: generation, skillRoot: thirdSkillRoot, name: name, description: "fixture")
+        }
+        let cancelledBatch = await writer.executeSerial(batchPlans, currentGeneration: generation, shouldCancel: { true })
+        try expect(cancelledBatch.allSatisfy { $0.status == .skipped && $0.code == "skill.cancelled" }, "serial batch reports cancellation per target")
+        try expect(batchPlans.allSatisfy { !FileManager.default.fileExists(atPath: $0.destination) }, "cancelled serial batch performs no writes")
+
+        let deletePlan = try await writer.planDelete(
+            generation: generation,
+            skillRoot: thirdSkillRoot,
+            skillName: "release-renamed-2",
+            expectedIdentity: physicalIdentity(thirdSkillRoot.appending(path: "release-renamed-2"))
+        )
+        try expect(deletePlan.operation == .delete && deletePlan.files.isEmpty, "delete requires a preview bound to the installation identity")
+
         let racePlan = try await writer.planCreate(generation: generation, skillRoot: thirdSkillRoot, name: "race", description: "fixture")
         try FileManager.default.createDirectory(at: thirdSkillRoot.appending(path: "race"), withIntermediateDirectories: false)
         try await expectThrows("write target changed after preview") {
@@ -330,6 +643,36 @@ struct AgentNestCoreTestRunner {
                 sourceSkill: firstSkill
             )
         }
+
+        let recoveryNow = Date()
+        let staleStaging = thirdSkillRoot.appending(path: ".agentnest-staging-\(UUID().uuidString)")
+        let freshStaging = thirdSkillRoot.appending(path: ".agentnest-staging-\(UUID().uuidString)")
+        let lookalikeStaging = thirdSkillRoot.appending(path: ".agentnest-staging-not-a-uuid")
+        let symlinkStaging = thirdSkillRoot.appending(path: ".agentnest-staging-\(UUID().uuidString)")
+        for directory in [staleStaging, freshStaging, lookalikeStaging] {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+        }
+        try FileManager.default.createSymbolicLink(at: symlinkStaging, withDestinationURL: firstSkill)
+        try FileManager.default.setAttributes([.modificationDate: recoveryNow.addingTimeInterval(-7_200)], ofItemAtPath: staleStaging.path)
+        let recovered = try await writer.recoverAbandonedStaging(in: thirdSkillRoot, now: recoveryNow)
+        defer {
+            for result in recovered {
+                if let path = result.trashedPath { try? FileManager.default.removeItem(atPath: path) }
+            }
+        }
+        try expect(
+            recovered.count == 1 &&
+                recovered.first.map { URL(fileURLWithPath: $0.originalPath).lastPathComponent } == staleStaging.lastPathComponent &&
+                recovered.first?.status == .succeeded,
+            "crash recovery only trashes an exact, stale AgentNest staging directory"
+        )
+        try expect(
+            !FileManager.default.fileExists(atPath: staleStaging.path) &&
+                FileManager.default.fileExists(atPath: freshStaging.path) &&
+                FileManager.default.fileExists(atPath: lookalikeStaging.path) &&
+                FileManager.default.fileExists(atPath: symlinkStaging.path),
+            "crash recovery leaves fresh, lookalike, and symlink entries untouched"
+        )
     }
 
     private static func makePayload(machineHash: String, issuedAt: Date, offlineUntil: Date) -> EntitlementPayload {
@@ -375,6 +718,141 @@ struct AgentNestCoreTestRunner {
         let fileType = value.st_mode & S_IFMT
         let kind: ResourceKind = fileType == S_IFDIR ? .directory : (fileType == S_IFREG ? .file : .other)
         return PhysicalResourceIdentity(device: UInt64(value.st_dev), inode: UInt64(value.st_ino), kind: kind)
+    }
+
+    private static func activityFixture(at date: Date, cpu: Double?) -> ActivitySnapshot {
+        let available = MetricValue(value: cpu, availability: cpu == nil ? .unavailable : .available, observedSeconds: 60, coverage: cpu == nil ? 0 : 1)
+        let unavailable = MetricValue(value: nil, availability: .unavailable, observedSeconds: 60, coverage: 0)
+        return ActivitySnapshot(
+            capturedAt: date,
+            cpuFraction: available,
+            diskReadBytesPerSecond: unavailable,
+            diskWriteBytesPerSecond: unavailable,
+            networkReceiveBytesPerSecond: unavailable,
+            networkSendBytesPerSecond: unavailable,
+            didResetBaseline: false
+        )
+    }
+}
+
+private extension Array {
+    func asyncMap<Output>(_ transform: (Element) async throws -> Output) async rethrows -> [Output] {
+        var output: [Output] = []
+        output.reserveCapacity(count)
+        for element in self { output.append(try await transform(element)) }
+        return output
+    }
+}
+
+private final class SequencedCounterProvider: ActivityCounterProvider, @unchecked Sendable {
+    private let lock = NSLock()
+    private var index = 0
+
+    func readCounters() throws -> CumulativeActivityCounters {
+        lock.lock()
+        defer { lock.unlock() }
+        index += 1
+        let value = UInt64(index * 100)
+        return CumulativeActivityCounters(
+            userCPUTicks: value,
+            systemCPUTicks: value,
+            idleCPUTicks: value,
+            diskReadBytes: value,
+            diskWriteBytes: value,
+            networkReceiveBytes: value,
+            networkSendBytes: value
+        )
+    }
+}
+
+private final class SequencedEvidenceProvider: SystemActivityEvidenceProvider, @unchecked Sendable {
+    private let lock = NSLock()
+    private var index = 0
+    private let pid: Int32
+
+    init(pid: Int32) { self.pid = pid }
+
+    func readEvidence() -> SystemActivityEvidence {
+        lock.lock()
+        defer { lock.unlock() }
+        index += 1
+        let value = UInt64(index * 1_000)
+        return SystemActivityEvidence(
+            processes: [CumulativeProcessObservation(
+                identity: ProcessStartIdentity(pid: pid, startSeconds: UInt64(index), startMicroseconds: 0),
+                name: "fixture",
+                executablePath: "/fixture/process",
+                workingDirectoryPath: nil,
+                cpuNanoseconds: value,
+                requestedReadBytes: value,
+                requestedWriteBytes: value
+            )],
+            devices: [CumulativeDeviceObservation(id: 7, name: "fixture-device", readBytes: value, writeBytes: value)],
+            volumes: [],
+            droppedCount: 0
+        )
+    }
+}
+
+private struct WorkingDirectoryEvidenceProvider: SystemActivityEvidenceProvider, Sendable {
+    let path: String
+
+    func readEvidence() -> SystemActivityEvidence {
+        SystemActivityEvidence(
+            processes: [CumulativeProcessObservation(
+                identity: ProcessStartIdentity(pid: 24, startSeconds: 1, startMicroseconds: 0),
+                name: "unrelated-name",
+                executablePath: "/usr/bin/false",
+                workingDirectoryPath: path,
+                cpuNanoseconds: 1,
+                requestedReadBytes: 1,
+                requestedWriteBytes: 1
+            )],
+            devices: [],
+            volumes: [],
+            droppedCount: 0
+        )
+    }
+}
+
+private struct StormEvidenceProvider: SystemActivityEvidenceProvider, Sendable {
+    let count: Int
+
+    func readEvidence() -> SystemActivityEvidence {
+        SystemActivityEvidence(
+            processes: (0..<count).map { index in
+                CumulativeProcessObservation(
+                    identity: ProcessStartIdentity(pid: Int32(index + 1), startSeconds: 1, startMicroseconds: 0),
+                    name: "storm",
+                    executablePath: nil,
+                    cpuNanoseconds: 0,
+                    requestedReadBytes: 0,
+                    requestedWriteBytes: 0
+                )
+            },
+            devices: [],
+            volumes: [],
+            droppedCount: 0
+        )
+    }
+}
+
+private final class TestClock: @unchecked Sendable {
+    private let lock = NSLock()
+    private var now: Date
+
+    init(now: Date) { self.now = now }
+
+    func value() -> Date {
+        lock.lock()
+        defer { lock.unlock() }
+        return now
+    }
+
+    func set(_ value: Date) {
+        lock.lock()
+        now = value
+        lock.unlock()
     }
 }
 

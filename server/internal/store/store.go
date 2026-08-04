@@ -16,11 +16,13 @@ import (
 )
 
 type State struct {
-	Trials            map[string]domain.Trial   `json:"trials"`
-	Licenses          map[string]domain.License `json:"licenses"`
-	Machines          map[string]domain.Machine `json:"machines"`
-	ProcessedWebhooks map[string]time.Time      `json:"processedWebhooks"`
-	Audit             []domain.AuditEvent       `json:"audit"`
+	Trials            map[string]domain.Trial       `json:"trials"`
+	Licenses          map[string]domain.License     `json:"licenses"`
+	Policies          map[string]domain.Policy      `json:"policies"`
+	Machines          map[string]domain.Machine     `json:"machines"`
+	Entitlements      map[string]domain.Entitlement `json:"entitlements"`
+	ProcessedWebhooks map[string]time.Time          `json:"processedWebhooks"`
+	Audit             []domain.AuditEvent           `json:"audit"`
 }
 
 type FileStore struct {
@@ -31,7 +33,7 @@ type FileStore struct {
 
 func Open(path string) (*FileStore, error) {
 	store := &FileStore{path: path, state: State{
-		Trials: make(map[string]domain.Trial), Licenses: make(map[string]domain.License), Machines: make(map[string]domain.Machine), ProcessedWebhooks: make(map[string]time.Time),
+		Trials: make(map[string]domain.Trial), Licenses: make(map[string]domain.License), Policies: make(map[string]domain.Policy), Machines: make(map[string]domain.Machine), Entitlements: make(map[string]domain.Entitlement), ProcessedWebhooks: make(map[string]time.Time),
 	}}
 	info, statErr := os.Lstat(path)
 	if statErr == nil {
@@ -46,6 +48,7 @@ func Open(path string) (*FileStore, error) {
 	}
 	data, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
+		store.ensureSystemPolicies()
 		return store, nil
 	}
 	if err != nil {
@@ -60,13 +63,31 @@ func Open(path string) (*FileStore, error) {
 	if store.state.Licenses == nil {
 		store.state.Licenses = make(map[string]domain.License)
 	}
+	if store.state.Policies == nil {
+		store.state.Policies = make(map[string]domain.Policy)
+	}
 	if store.state.Machines == nil {
 		store.state.Machines = make(map[string]domain.Machine)
+	}
+	if store.state.Entitlements == nil {
+		store.state.Entitlements = make(map[string]domain.Entitlement)
 	}
 	if store.state.ProcessedWebhooks == nil {
 		store.state.ProcessedWebhooks = make(map[string]time.Time)
 	}
+	store.ensureSystemPolicies()
 	return store, nil
+}
+
+func (s *FileStore) ensureSystemPolicies() {
+	if _, ok := s.state.Policies["trial"]; ok {
+		return
+	}
+	s.state.Policies["trial"] = domain.Policy{
+		ID: "trial", Plan: "trial", Features: []string{"scan", "overview"}, MaxMachines: 1,
+		RefreshAfterSeconds: int64((24 * time.Hour).Seconds()),
+		OfflineTTLSeconds:   int64(domain.TrialOfflineTTL.Seconds()),
+	}
 }
 
 func (s *FileStore) ApplyPaymentEvent(eventID, eventType, licenseKey, plan string, maxMachines int, expiresAt *time.Time, now time.Time) (bool, error) {
@@ -92,9 +113,10 @@ func (s *FileStore) ApplyPaymentEvent(eventID, eventType, licenseKey, plan strin
 			}
 			license = domain.License{ID: id, KeyHash: keyHash}
 		}
+		policy := paidPolicy(plan, maxMachines)
+		s.state.Policies[policy.ID] = policy
 		license.Status = "active"
-		license.Plan = plan
-		license.MaxMachines = maxMachines
+		license.PolicyID = policy.ID
 		license.SubscriptionTo = expiresAt
 	case "refund", "chargeback", "suspend":
 		if license.ID == "" {
@@ -128,7 +150,9 @@ func (s *FileStore) EnsureLicense(key, plan string, maxMachines int) error {
 	if err != nil {
 		return err
 	}
-	s.state.Licenses[id] = domain.License{ID: id, KeyHash: keyHash, Plan: plan, Status: "active", MaxMachines: maxMachines}
+	policy := paidPolicy(plan, maxMachines)
+	s.state.Policies[policy.ID] = policy
+	s.state.Licenses[id] = domain.License{ID: id, KeyHash: keyHash, PolicyID: policy.ID, Status: "active"}
 	return s.persistLocked()
 }
 
@@ -145,7 +169,7 @@ func (s *FileStore) Trial(productID, machineIDHash string, now time.Time) (domai
 	return trial, s.persistLocked()
 }
 
-func (s *FileStore) Activate(licenseKey, machineIDHash string, now time.Time) (domain.License, domain.Machine, string, domain.ErrorCode, error) {
+func (s *FileStore) Activate(licenseKey, machineIDHash string, now time.Time) (domain.License, domain.Policy, domain.Machine, string, domain.ErrorCode, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var license domain.License
@@ -156,27 +180,31 @@ func (s *FileStore) Activate(licenseKey, machineIDHash string, now time.Time) (d
 		}
 	}
 	if license.ID == "" {
-		return license, domain.Machine{}, "", domain.ErrLicenseInvalid, nil
+		return license, domain.Policy{}, domain.Machine{}, "", domain.ErrLicenseInvalid, nil
+	}
+	policy, ok := s.state.Policies[license.PolicyID]
+	if !ok {
+		return license, domain.Policy{}, domain.Machine{}, "", domain.ErrLicenseInvalid, nil
 	}
 	if license.Status != "active" {
-		return license, domain.Machine{}, "", domain.ErrLicenseSuspended, nil
+		return license, policy, domain.Machine{}, "", domain.ErrLicenseSuspended, nil
 	}
 	if license.SubscriptionTo != nil && !now.Before(*license.SubscriptionTo) {
-		return license, domain.Machine{}, "", domain.ErrLicenseExpired, nil
+		return license, policy, domain.Machine{}, "", domain.ErrLicenseExpired, nil
 	}
 
 	for id, machine := range s.state.Machines {
 		if machine.LicenseID == license.ID && machine.MachineIDHash == machineIDHash {
 			token, err := randomToken()
 			if err != nil {
-				return license, machine, "", "", err
+				return license, policy, machine, "", "", err
 			}
 			machine.Active = true
 			machine.RefreshHash = HashSecret(token)
 			machine.LastRefreshedAt = now.UTC()
 			s.state.Machines[id] = machine
 			s.appendAuditLocked("machine.reactivated", id, now)
-			return license, machine, token, "", s.persistLocked()
+			return license, policy, machine, token, "", s.persistLocked()
 		}
 	}
 	active := 0
@@ -185,24 +213,24 @@ func (s *FileStore) Activate(licenseKey, machineIDHash string, now time.Time) (d
 			active++
 		}
 	}
-	if active >= license.MaxMachines {
-		return license, domain.Machine{}, "", domain.ErrDeviceLimit, nil
+	if active >= policy.MaxMachines {
+		return license, policy, domain.Machine{}, "", domain.ErrDeviceLimit, nil
 	}
 	id, err := randomID("mac")
 	if err != nil {
-		return license, domain.Machine{}, "", "", err
+		return license, policy, domain.Machine{}, "", "", err
 	}
 	token, err := randomToken()
 	if err != nil {
-		return license, domain.Machine{}, "", "", err
+		return license, policy, domain.Machine{}, "", "", err
 	}
 	machine := domain.Machine{ID: id, LicenseID: license.ID, MachineIDHash: machineIDHash, RefreshHash: HashSecret(token), Active: true, CreatedAt: now.UTC(), LastRefreshedAt: now.UTC()}
 	s.state.Machines[id] = machine
 	s.appendAuditLocked("machine.activated", id, now)
-	return license, machine, token, "", s.persistLocked()
+	return license, policy, machine, token, "", s.persistLocked()
 }
 
-func (s *FileStore) Refresh(token, machineIDHash string, now time.Time) (domain.License, domain.Machine, domain.ErrorCode, error) {
+func (s *FileStore) Refresh(token, machineIDHash string, now time.Time) (domain.License, domain.Policy, domain.Machine, domain.ErrorCode, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	tokenHash := HashSecret(token)
@@ -211,21 +239,100 @@ func (s *FileStore) Refresh(token, machineIDHash string, now time.Time) (domain.
 			continue
 		}
 		if !machine.Active {
-			return domain.License{}, machine, domain.ErrMachineNotFound, nil
+			return domain.License{}, domain.Policy{}, machine, domain.ErrMachineNotFound, nil
 		}
 		license := s.state.Licenses[machine.LicenseID]
+		policy, ok := s.state.Policies[license.PolicyID]
+		if !ok {
+			return license, domain.Policy{}, machine, domain.ErrLicenseInvalid, nil
+		}
 		if license.Status != "active" {
-			return license, machine, domain.ErrLicenseSuspended, nil
+			return license, policy, machine, domain.ErrLicenseSuspended, nil
 		}
 		if license.SubscriptionTo != nil && !now.Before(*license.SubscriptionTo) {
-			return license, machine, domain.ErrLicenseExpired, nil
+			return license, policy, machine, domain.ErrLicenseExpired, nil
 		}
 		machine.LastRefreshedAt = now.UTC()
 		s.state.Machines[id] = machine
 		s.appendAuditLocked("machine.refreshed", id, now)
-		return license, machine, "", s.persistLocked()
+		return license, policy, machine, "", s.persistLocked()
 	}
-	return domain.License{}, domain.Machine{}, domain.ErrRefreshInvalid, nil
+	return domain.License{}, domain.Policy{}, domain.Machine{}, domain.ErrRefreshInvalid, nil
+}
+
+func (s *FileStore) RecordEntitlement(entitlement domain.Entitlement, now time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.state.Entitlements[entitlement.ReceiptID] = entitlement
+	s.appendAuditLocked("entitlement.issued", entitlement.ReceiptID, now)
+	return s.persistLocked()
+}
+
+func (s *FileStore) UpsertPolicy(policy domain.Policy, now time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.state.Policies[policy.ID] = policy
+	s.appendAuditLocked("policy.upserted", policy.ID, now)
+	return s.persistLocked()
+}
+
+func (s *FileStore) Policy(id string) (domain.Policy, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	policy, ok := s.state.Policies[id]
+	return policy, ok
+}
+
+func (s *FileStore) CreateLicense(key, policyID string, expiresAt *time.Time, now time.Time) (domain.License, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.state.Policies[policyID]; !ok {
+		return domain.License{}, fmt.Errorf("policy does not exist")
+	}
+	keyHash := HashSecret(key)
+	for _, license := range s.state.Licenses {
+		if license.KeyHash == keyHash {
+			return domain.License{}, fmt.Errorf("license key already exists")
+		}
+	}
+	id, err := randomID("lic")
+	if err != nil {
+		return domain.License{}, err
+	}
+	license := domain.License{ID: id, KeyHash: keyHash, PolicyID: policyID, Status: "active", SubscriptionTo: expiresAt}
+	s.state.Licenses[id] = license
+	s.appendAuditLocked("license.created", id, now)
+	return license, s.persistLocked()
+}
+
+func (s *FileStore) SetLicenseStatus(id, status string, now time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	license, ok := s.state.Licenses[id]
+	if !ok {
+		return fmt.Errorf("license does not exist")
+	}
+	license.Status = status
+	s.state.Licenses[id] = license
+	s.appendAuditLocked("license."+status, id, now)
+	return s.persistLocked()
+}
+
+func (s *FileStore) AdminState() State {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	data, _ := json.Marshal(s.state)
+	var result State
+	_ = json.Unmarshal(data, &result)
+	for id, license := range result.Licenses {
+		license.KeyHash = ""
+		result.Licenses[id] = license
+	}
+	for id, machine := range result.Machines {
+		machine.RefreshHash = ""
+		result.Machines[id] = machine
+	}
+	return result
 }
 
 func (s *FileStore) Deactivate(token, machineIDHash string, now time.Time) (domain.ErrorCode, error) {
@@ -247,6 +354,15 @@ func (s *FileStore) Deactivate(token, machineIDHash string, now time.Time) (doma
 func HashSecret(value string) string {
 	sum := sha256.Sum256([]byte(value))
 	return hex.EncodeToString(sum[:])
+}
+
+func paidPolicy(plan string, maxMachines int) domain.Policy {
+	return domain.Policy{
+		ID: fmt.Sprintf("paid:%s:%d", plan, maxMachines), Plan: plan,
+		Features:    []string{"scan", "overview", "skill.write", "patch", "cleanup", "trace", "history", "export"},
+		MaxMachines: maxMachines, RefreshAfterSeconds: int64((24 * time.Hour).Seconds()),
+		OfflineTTLSeconds: int64(domain.PaidOfflineTTL.Seconds()),
+	}
 }
 
 func (s *FileStore) appendAuditLocked(kind, subject string, now time.Time) {

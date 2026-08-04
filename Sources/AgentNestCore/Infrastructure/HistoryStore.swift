@@ -38,15 +38,22 @@ public enum HistoryStoreError: Error {
 public actor HistoryStore {
     private let fileURL: URL
     private let budgetBytes: UInt64
-    private let retentionDays: Int
+    private var retentionDays: Int
+    private let clock: @Sendable () -> Date
     // SQLite is configured FULLMUTEX and all access is additionally serialized by this actor.
     nonisolated(unsafe) private var database: OpaquePointer?
     private var enabled = false
 
-    public init(fileURL: URL, budgetBytes: UInt64 = 64 * 1_024 * 1_024, retentionDays: Int = 30) {
+    public init(
+        fileURL: URL,
+        budgetBytes: UInt64 = 64 * 1_024 * 1_024,
+        retentionDays: Int = 365,
+        clock: @escaping @Sendable () -> Date = Date.init
+    ) {
         self.fileURL = fileURL
         self.budgetBytes = min(max(budgetBytes, 32 * 1_024 * 1_024), 160 * 1_024 * 1_024)
         self.retentionDays = min(max(retentionDays, 7), 365)
+        self.clock = clock
     }
 
     deinit {
@@ -58,10 +65,21 @@ public actor HistoryStore {
             guard !enabled else { return }
             try openIfNeeded()
             enabled = true
+            try prune()
         } else {
             enabled = false
             if let database { sqlite3_close(database); self.database = nil }
         }
+    }
+
+    @discardableResult
+    public func setRetentionDays(_ days: Int) throws -> Int {
+        retentionDays = min(max(days, 7), 365)
+        if enabled {
+            try openIfNeeded()
+            try prune()
+        }
+        return retentionDays
     }
 
     public func append(_ snapshot: ActivitySnapshot) throws {
@@ -99,8 +117,15 @@ public actor HistoryStore {
         try openIfNeeded()
         let sql = """
         SELECT captured_at, cpu_fraction, disk_read_bps, disk_write_bps,
-               network_receive_bps, network_send_bps, coverage
-        FROM activity_samples WHERE captured_at >= ? AND captured_at <= ? ORDER BY captured_at
+               network_receive_bps, network_send_bps, coverage FROM (
+          SELECT captured_at, cpu_fraction, disk_read_bps, disk_write_bps,
+                 network_receive_bps, network_send_bps, coverage
+          FROM activity_samples
+          UNION ALL
+          SELECT bucket_at AS captured_at, cpu_fraction, disk_read_bps, disk_write_bps,
+                 network_receive_bps, network_send_bps, coverage
+          FROM activity_rollups
+        ) WHERE captured_at >= ? AND captured_at <= ? ORDER BY captured_at
         """
         var statement: OpaquePointer?
         guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK else { throw statementError() }
@@ -170,6 +195,19 @@ public actor HistoryStore {
               coverage REAL NOT NULL
             ) WITHOUT ROWID
             """)
+            try execute("""
+            CREATE TABLE IF NOT EXISTS activity_rollups(
+              bucket_at REAL NOT NULL,
+              resolution_seconds INTEGER NOT NULL,
+              cpu_fraction REAL,
+              disk_read_bps REAL,
+              disk_write_bps REAL,
+              network_receive_bps REAL,
+              network_send_bps REAL,
+              coverage REAL NOT NULL,
+              PRIMARY KEY(bucket_at, resolution_seconds)
+            ) WITHOUT ROWID
+            """)
         } catch {
             sqlite3_close(opened)
             database = nil
@@ -178,16 +216,36 @@ public actor HistoryStore {
     }
 
     private func prune() throws {
-        let cutoff = Date().addingTimeInterval(TimeInterval(-retentionDays * 86_400)).timeIntervalSince1970
-        var statement: OpaquePointer?
-        guard sqlite3_prepare_v2(database, "DELETE FROM activity_samples WHERE captured_at < ?", -1, &statement, nil) == SQLITE_OK else { throw statementError() }
-        sqlite3_bind_double(statement, 1, cutoff)
-        guard sqlite3_step(statement) == SQLITE_DONE else { sqlite3_finalize(statement); throw statementError() }
-        sqlite3_finalize(statement)
+        let now = clock()
+        let minuteCutoff = Int64(now.addingTimeInterval(-86_400).timeIntervalSince1970)
+        let quarterHourCutoff = Int64(now.addingTimeInterval(-30 * 86_400).timeIntervalSince1970)
+        let retentionCutoff = Int64(now.addingTimeInterval(TimeInterval(-retentionDays * 86_400)).timeIntervalSince1970)
+        try execute("""
+        INSERT OR REPLACE INTO activity_rollups
+        SELECT CAST(captured_at / 900 AS INTEGER) * 900, 900,
+               AVG(cpu_fraction), AVG(disk_read_bps), AVG(disk_write_bps),
+               AVG(network_receive_bps), AVG(network_send_bps), AVG(coverage)
+        FROM activity_samples WHERE captured_at < \(minuteCutoff)
+        GROUP BY CAST(captured_at / 900 AS INTEGER)
+        """)
+        try execute("DELETE FROM activity_samples WHERE captured_at < \(minuteCutoff)")
+        try execute("""
+        INSERT OR REPLACE INTO activity_rollups
+        SELECT CAST(bucket_at / 3600 AS INTEGER) * 3600, 3600,
+               AVG(cpu_fraction), AVG(disk_read_bps), AVG(disk_write_bps),
+               AVG(network_receive_bps), AVG(network_send_bps), AVG(coverage)
+        FROM activity_rollups WHERE resolution_seconds = 900 AND bucket_at < \(quarterHourCutoff)
+        GROUP BY CAST(bucket_at / 3600 AS INTEGER)
+        """)
+        try execute("DELETE FROM activity_rollups WHERE resolution_seconds = 900 AND bucket_at < \(quarterHourCutoff)")
+        try execute("DELETE FROM activity_rollups WHERE bucket_at < \(retentionCutoff)")
+        try execute("PRAGMA wal_checkpoint(PASSIVE)")
         let size = databaseSize()
         if size > budgetBytes {
             try execute("DELETE FROM activity_samples WHERE captured_at IN (SELECT captured_at FROM activity_samples ORDER BY captured_at LIMIT (SELECT COUNT(*) / 2 FROM activity_samples))")
+            try execute("DELETE FROM activity_rollups WHERE (bucket_at, resolution_seconds) IN (SELECT bucket_at, resolution_seconds FROM activity_rollups ORDER BY bucket_at LIMIT (SELECT COUNT(*) / 2 FROM activity_rollups))")
             try execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            try execute("VACUUM")
         }
     }
 

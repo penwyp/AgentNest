@@ -59,7 +59,7 @@ public actor CleanupExecutor {
                 let home = URL(fileURLWithPath: unit.homePath).resolvingSymlinksInPath().standardizedFileURL
                 let homeMetadata = try FileMetadata.read(home).node
                 guard homeMetadata.identity == unit.homeIdentity,
-                      target.path.hasPrefix(home.path + "/") else {
+                      CanonicalPath.isDescendant(target.path, of: home.path) else {
                     results.append(CleanupResult(unitID: unit.id, status: .skipped, code: "cleanup.boundaryChanged"))
                     continue
                 }

@@ -46,6 +46,12 @@ public struct SkillLocation: Codable, Equatable, Sendable {
 public struct ArtifactRule: Codable, Equatable, Sendable {
     public let relativePath: String
     public let category: String
+    public let cleanup: ArtifactCleanupDefinition?
+}
+
+public struct ArtifactCleanupDefinition: Codable, Equatable, Sendable {
+    public let risk: ArtifactRisk
+    public let method: CleanupMethod
 }
 
 public struct Capabilities: Codable, Equatable, Sendable {

@@ -44,24 +44,130 @@ public actor SkillWriteUseCase {
         generation: UUID,
         skillRoot: URL,
         destinationName: String,
-        sourceSkill: URL
+        sourceSkill: URL,
+        conflictResolution: SkillPatchConflictResolution = .skip
     ) throws -> SkillWritePlan {
         guard isValidName(destinationName) else { throw SkillWriteError.invalidName }
         let files = try readPackage(sourceSkill)
         let root = skillRoot.resolvingSymlinksInPath().standardizedFileURL
         let rootMetadata = try FileMetadata.read(root).node
         guard rootMetadata.identity.kind == .directory, !rootMetadata.isSymbolicLink else { throw SkillWriteError.targetNotDirectory }
-        let destination = root.appending(path: destinationName).standardizedFileURL
+        var destination = root.appending(path: destinationName).standardizedFileURL
         guard isDirectChild(destination, of: root) else { throw SkillWriteError.targetOutsideRoot }
-        guard !FileManager.default.fileExists(atPath: destination.path) else { throw SkillWriteError.targetAlreadyExists }
+        var expectedDestinationIdentity: PhysicalResourceIdentity?
+        if FileManager.default.fileExists(atPath: destination.path) {
+            switch conflictResolution {
+            case .skip:
+                throw SkillWriteError.targetAlreadyExists
+            case .replace:
+                let metadata = try FileMetadata.read(destination).node
+                guard metadata.identity.kind == .directory, !metadata.isSymbolicLink else {
+                    throw SkillWriteError.targetChanged
+                }
+                expectedDestinationIdentity = metadata.identity
+            case .keepBoth:
+                destination = try availableDestination(root: root, baseName: destinationName)
+            }
+        }
         return SkillWritePlan(
             generation: generation,
-            operation: .patch,
+            operation: expectedDestinationIdentity == nil ? .patch : .replace,
             skillRoot: root.path,
             skillRootIdentity: rootMetadata.identity,
             destination: destination.path,
-            expectedDestinationIdentity: nil,
+            expectedDestinationIdentity: expectedDestinationIdentity,
             files: files
+        )
+    }
+
+    public func planEdit(
+        generation: UUID,
+        skillRoot: URL,
+        skillName: String,
+        expectedIdentity: PhysicalResourceIdentity,
+        mainDocument: String
+    ) throws -> SkillWritePlan {
+        guard mainDocument.utf8.count <= maximumTotalBytes else { throw SkillWriteError.budgetExceeded }
+        let root = try validatedRoot(skillRoot)
+        let destination = root.url.appending(path: skillName).standardizedFileURL
+        guard isDirectChild(destination, of: root.url) else { throw SkillWriteError.targetOutsideRoot }
+        let metadata = try FileMetadata.read(destination).node
+        guard metadata.identity == expectedIdentity, metadata.identity.kind == .directory, !metadata.isSymbolicLink else {
+            throw SkillWriteError.targetChanged
+        }
+        var files = try readPackage(destination)
+        guard let mainIndex = files.firstIndex(where: { $0.relativePath == "SKILL.md" }) else {
+            throw SkillWriteError.invalidSkill
+        }
+        files[mainIndex] = SkillWriteFile(relativePath: "SKILL.md", data: Data(mainDocument.utf8))
+        try validateFiles(files)
+        return SkillWritePlan(
+            generation: generation,
+            operation: .replace,
+            skillRoot: root.url.path,
+            skillRootIdentity: root.identity,
+            destination: destination.path,
+            expectedDestinationIdentity: expectedIdentity,
+            files: files
+        )
+    }
+
+    public func planRename(
+        generation: UUID,
+        skillRoot: URL,
+        sourceName: String,
+        expectedIdentity: PhysicalResourceIdentity,
+        destinationName: String
+    ) throws -> SkillWritePlan {
+        guard isValidName(sourceName), isValidName(destinationName), sourceName != destinationName else {
+            throw SkillWriteError.invalidName
+        }
+        let root = try validatedRoot(skillRoot)
+        let source = root.url.appending(path: sourceName).standardizedFileURL
+        let destination = root.url.appending(path: destinationName).standardizedFileURL
+        guard isDirectChild(source, of: root.url), isDirectChild(destination, of: root.url) else {
+            throw SkillWriteError.targetOutsideRoot
+        }
+        let metadata = try FileMetadata.read(source).node
+        guard metadata.identity == expectedIdentity, metadata.identity.kind == .directory, !metadata.isSymbolicLink else {
+            throw SkillWriteError.targetChanged
+        }
+        guard !FileManager.default.fileExists(atPath: destination.path) else { throw SkillWriteError.targetAlreadyExists }
+        return SkillWritePlan(
+            generation: generation,
+            operation: .rename,
+            skillRoot: root.url.path,
+            skillRootIdentity: root.identity,
+            source: source.path,
+            expectedSourceIdentity: expectedIdentity,
+            destination: destination.path,
+            expectedDestinationIdentity: nil,
+            files: []
+        )
+    }
+
+    public func planDelete(
+        generation: UUID,
+        skillRoot: URL,
+        skillName: String,
+        expectedIdentity: PhysicalResourceIdentity
+    ) throws -> SkillWritePlan {
+        guard isValidName(skillName) else { throw SkillWriteError.invalidName }
+        let root = try validatedRoot(skillRoot)
+        let destination = root.url.appending(path: skillName).standardizedFileURL
+        guard isDirectChild(destination, of: root.url) else { throw SkillWriteError.targetOutsideRoot }
+        let metadata = try FileMetadata.read(destination).node
+        guard metadata.identity == expectedIdentity, metadata.identity.kind == .directory, !metadata.isSymbolicLink else {
+            throw SkillWriteError.targetChanged
+        }
+        return SkillWritePlan(
+            generation: generation,
+            operation: .delete,
+            skillRoot: root.url.path,
+            skillRootIdentity: root.identity,
+            destination: destination.path,
+            expectedDestinationIdentity: expectedIdentity,
+            files: []
         )
     }
 
@@ -72,16 +178,47 @@ public actor SkillWriteUseCase {
         guard currentRoot.identity == plan.skillRootIdentity else { throw SkillWriteError.targetChanged }
         let destination = URL(fileURLWithPath: plan.destination).standardizedFileURL
         guard isDirectChild(destination, of: root) else { throw SkillWriteError.targetOutsideRoot }
-        guard !FileManager.default.fileExists(atPath: destination.path) else { throw SkillWriteError.targetChanged }
+
+        switch plan.operation {
+        case .rename:
+            try executeRename(plan, root: root, destination: destination)
+            return
+        case .delete:
+            try executeDelete(plan, root: root, destination: destination)
+            return
+        case .create, .patch, .replace:
+            break
+        }
+
+        if let expected = plan.expectedDestinationIdentity {
+            let metadata = try FileMetadata.read(destination).node
+            guard metadata.identity == expected, metadata.identity.kind == .directory, !metadata.isSymbolicLink else {
+                throw SkillWriteError.targetChanged
+            }
+        } else {
+            guard !FileManager.default.fileExists(atPath: destination.path) else { throw SkillWriteError.targetChanged }
+        }
         try validateFiles(plan.files)
 
         let staging = root.appending(path: ".agentnest-staging-\(plan.id.uuidString)")
         guard !FileManager.default.fileExists(atPath: staging.path) else { throw SkillWriteError.targetChanged }
+        var stagingContainsReplacedTarget = false
+        var stagingLockDescriptor: Int32 = -1
+        defer {
+            if stagingLockDescriptor >= 0 {
+                flock(stagingLockDescriptor, LOCK_UN)
+                close(stagingLockDescriptor)
+            }
+        }
         do {
             try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+            stagingLockDescriptor = open(staging.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW)
+            guard stagingLockDescriptor >= 0, flock(stagingLockDescriptor, LOCK_EX | LOCK_NB) == 0 else {
+                throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+            }
             for file in plan.files {
                 let target = staging.appending(path: file.relativePath).standardizedFileURL
-                guard target.path.hasPrefix(staging.path + "/") else { throw SkillWriteError.invalidRelativePath }
+                guard CanonicalPath.isDescendant(target.path, of: staging.path) else { throw SkillWriteError.invalidRelativePath }
                 try FileManager.default.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
                 guard FileManager.default.createFile(atPath: target.path, contents: nil, attributes: [.posixPermissions: 0o600]) else {
                     throw CocoaError(.fileWriteUnknown)
@@ -91,12 +228,113 @@ public actor SkillWriteUseCase {
                 try handle.synchronize()
                 try handle.close()
             }
-            try FileManager.default.moveItem(at: staging, to: destination)
+            if plan.expectedDestinationIdentity == nil {
+                guard renameatx_np(AT_FDCWD, staging.path, AT_FDCWD, destination.path, UInt32(RENAME_EXCL)) == 0 else {
+                    throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+                }
+            } else {
+                let expectedIdentity = plan.expectedDestinationIdentity!
+                let destinationBeforeSwap = try FileMetadata.read(destination).node
+                guard destinationBeforeSwap.identity == expectedIdentity else { throw SkillWriteError.targetChanged }
+                guard renameatx_np(AT_FDCWD, staging.path, AT_FDCWD, destination.path, UInt32(RENAME_SWAP)) == 0 else {
+                    throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+                }
+                stagingContainsReplacedTarget = true
+                let replacedTarget = try FileMetadata.read(staging).node
+                guard replacedTarget.identity == expectedIdentity else {
+                    guard renameatx_np(AT_FDCWD, staging.path, AT_FDCWD, destination.path, UInt32(RENAME_SWAP)) == 0 else {
+                        throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+                    }
+                    stagingContainsReplacedTarget = false
+                    throw SkillWriteError.targetChanged
+                }
+                var trashedURL: NSURL?
+                try FileManager.default.trashItem(at: staging, resultingItemURL: &trashedURL)
+                stagingContainsReplacedTarget = false
+            }
             try synchronizeDirectory(root)
         } catch {
-            try? FileManager.default.removeItem(at: staging)
+            if !stagingContainsReplacedTarget {
+                try? FileManager.default.removeItem(at: staging)
+            }
             throw error
         }
+    }
+
+    public func recoverAbandonedStaging(
+        in skillRoot: URL,
+        now: Date = Date(),
+        minimumAge: TimeInterval = 3_600
+    ) throws -> [SkillStagingRecoveryResult] {
+        guard minimumAge >= 60 else { throw SkillWriteError.budgetExceeded }
+        let root = try validatedRoot(skillRoot).url
+        let prefix = ".agentnest-staging-"
+        let cutoff = now.addingTimeInterval(-minimumAge)
+        let children = try FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)
+        var results: [SkillStagingRecoveryResult] = []
+
+        for child in children.sorted(by: { $0.path < $1.path }) {
+            let name = child.lastPathComponent
+            guard name.hasPrefix(prefix), UUID(uuidString: String(name.dropFirst(prefix.count))) != nil,
+                  isDirectChild(child, of: root) else { continue }
+            do {
+                let before = try FileMetadata.read(child).node
+                guard before.identity.kind == .directory, !before.isSymbolicLink,
+                      let modifiedAt = before.modifiedAt, modifiedAt <= cutoff else { continue }
+                let descriptor = open(child.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW)
+                guard descriptor >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+                defer {
+                    flock(descriptor, LOCK_UN)
+                    close(descriptor)
+                }
+                guard flock(descriptor, LOCK_EX | LOCK_NB) == 0 else { continue }
+                let current = try FileMetadata.read(child).node
+                guard current.identity == before.identity, !current.isSymbolicLink,
+                      let currentModifiedAt = current.modifiedAt, currentModifiedAt <= cutoff else { continue }
+                var trashedURL: NSURL?
+                try FileManager.default.trashItem(at: child, resultingItemURL: &trashedURL)
+                results.append(SkillStagingRecoveryResult(
+                    originalPath: child.path,
+                    trashedPath: (trashedURL as URL?)?.path,
+                    status: .succeeded,
+                    code: "skill.stagingRecovered"
+                ))
+            } catch {
+                results.append(SkillStagingRecoveryResult(
+                    originalPath: child.path,
+                    trashedPath: nil,
+                    status: .failed,
+                    code: "skill.stagingRecoveryFailed"
+                ))
+            }
+        }
+        if results.contains(where: { $0.status == .succeeded }) { try synchronizeDirectory(root) }
+        return results
+    }
+
+    public func executeSerial(
+        _ plans: [SkillWritePlan],
+        currentGeneration: UUID,
+        shouldCancel: @Sendable () -> Bool = { false }
+    ) -> [SkillWriteResult] {
+        var results: [SkillWriteResult] = []
+        for (index, plan) in plans.enumerated() {
+            if shouldCancel() || Task.isCancelled {
+                results.append(contentsOf: plans[index...].map {
+                    SkillWriteResult(planID: $0.id, status: .skipped, code: "skill.cancelled")
+                })
+                break
+            }
+            do {
+                try execute(plan, currentGeneration: currentGeneration)
+                results.append(SkillWriteResult(planID: plan.id, status: .succeeded, code: "skill.succeeded"))
+            } catch let error as SkillWriteError {
+                results.append(SkillWriteResult(planID: plan.id, status: .failed, code: "skill.\(error.rawValue)"))
+            } catch {
+                results.append(SkillWriteResult(planID: plan.id, status: .failed, code: "skill.ioFailed"))
+            }
+        }
+        return results
     }
 
     public func moveToTrash(
@@ -148,6 +386,51 @@ public actor SkillWriteUseCase {
         }
         try validateFiles(files)
         return files
+    }
+
+    private func validatedRoot(_ skillRoot: URL) throws -> (url: URL, identity: PhysicalResourceIdentity) {
+        let root = skillRoot.resolvingSymlinksInPath().standardizedFileURL
+        let metadata = try FileMetadata.read(root).node
+        guard metadata.identity.kind == .directory, !metadata.isSymbolicLink else {
+            throw SkillWriteError.targetNotDirectory
+        }
+        return (root, metadata.identity)
+    }
+
+    private func availableDestination(root: URL, baseName: String) throws -> URL {
+        for suffix in 2...999 {
+            let candidate = root.appending(path: "\(baseName)-\(suffix)").standardizedFileURL
+            if !FileManager.default.fileExists(atPath: candidate.path) { return candidate }
+        }
+        throw SkillWriteError.targetAlreadyExists
+    }
+
+    private func executeRename(_ plan: SkillWritePlan, root: URL, destination: URL) throws {
+        guard let sourcePath = plan.source, let expectedIdentity = plan.expectedSourceIdentity else {
+            throw SkillWriteError.targetChanged
+        }
+        let source = URL(fileURLWithPath: sourcePath).standardizedFileURL
+        guard isDirectChild(source, of: root) else { throw SkillWriteError.targetOutsideRoot }
+        let metadata = try FileMetadata.read(source).node
+        guard metadata.identity == expectedIdentity, metadata.identity.kind == .directory, !metadata.isSymbolicLink,
+              !FileManager.default.fileExists(atPath: destination.path) else {
+            throw SkillWriteError.targetChanged
+        }
+        guard renameatx_np(AT_FDCWD, source.path, AT_FDCWD, destination.path, UInt32(RENAME_EXCL)) == 0 else {
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
+        try synchronizeDirectory(root)
+    }
+
+    private func executeDelete(_ plan: SkillWritePlan, root: URL, destination: URL) throws {
+        guard let expectedIdentity = plan.expectedDestinationIdentity else { throw SkillWriteError.targetChanged }
+        let metadata = try FileMetadata.read(destination).node
+        guard metadata.identity == expectedIdentity, metadata.identity.kind == .directory, !metadata.isSymbolicLink else {
+            throw SkillWriteError.targetChanged
+        }
+        var trashedURL: NSURL?
+        try FileManager.default.trashItem(at: destination, resultingItemURL: &trashedURL)
+        try synchronizeDirectory(root)
     }
 
     private func validateFiles(_ files: [SkillWriteFile]) throws {

@@ -65,7 +65,12 @@ public struct AgentDefinitionCatalog: Sendable {
             }
         }
         try validateArrayObjects(root["skills"], allowed: ["relativePath", "format"], path: "$.skills")
-        try validateArrayObjects(root["artifacts"], allowed: ["relativePath", "category"], path: "$.artifacts")
+        try validateArrayObjects(root["artifacts"], allowed: ["relativePath", "category", "cleanup"], path: "$.artifacts")
+        if let artifacts = root["artifacts"] as? [[String: Any]] {
+            for (index, artifact) in artifacts.enumerated() {
+                try validateObject(artifact["cleanup"], allowed: ["risk", "method"], path: "$.artifacts[\(index)].cleanup")
+            }
+        }
         try validateObject(root["capabilities"], allowed: ["space", "skills", "activity", "cleanup"], path: "$.capabilities")
 
         let definition = try JSONDecoder().decode(AgentDefinition.self, from: data)

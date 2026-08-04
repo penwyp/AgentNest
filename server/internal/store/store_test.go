@@ -56,21 +56,21 @@ func TestActivationEnforcesDeviceLimitAndDeactivateReleasesSeat(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := time.Date(2026, 8, 4, 10, 0, 0, 0, time.UTC)
-	_, first, token, code, err := fileStore.Activate("FULL-TEST-KEY", machineHash("one"), now)
+	_, _, first, token, code, err := fileStore.Activate("FULL-TEST-KEY", machineHash("one"), now)
 	if err != nil || code != "" {
 		t.Fatalf("first activation: code=%s err=%v", code, err)
 	}
 	if !first.Active || token == "" {
 		t.Fatal("first activation did not produce active machine and token")
 	}
-	_, _, _, code, err = fileStore.Activate("FULL-TEST-KEY", machineHash("two"), now)
+	_, _, _, _, code, err = fileStore.Activate("FULL-TEST-KEY", machineHash("two"), now)
 	if err != nil || code != "device_limit" {
 		t.Fatalf("second activation: code=%s err=%v", code, err)
 	}
 	if code, err := fileStore.Deactivate(token, machineHash("one"), now); err != nil || code != "" {
 		t.Fatalf("deactivate: code=%s err=%v", code, err)
 	}
-	_, second, _, code, err := fileStore.Activate("FULL-TEST-KEY", machineHash("two"), now)
+	_, _, second, _, code, err := fileStore.Activate("FULL-TEST-KEY", machineHash("two"), now)
 	if err != nil || code != "" || !second.Active {
 		t.Fatalf("activation after release: code=%s err=%v", code, err)
 	}

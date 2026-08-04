@@ -108,6 +108,14 @@ public enum SkillWriteOperation: String, Codable, Sendable {
     case create
     case replace
     case patch
+    case rename
+    case delete
+}
+
+public enum SkillPatchConflictResolution: String, Codable, Sendable {
+    case skip
+    case replace
+    case keepBoth
 }
 
 public struct SkillWriteFile: Codable, Equatable, Sendable {
@@ -126,6 +134,8 @@ public struct SkillWritePlan: Identifiable, Codable, Equatable, Sendable {
     public let operation: SkillWriteOperation
     public let skillRoot: String
     public let skillRootIdentity: PhysicalResourceIdentity
+    public let source: String?
+    public let expectedSourceIdentity: PhysicalResourceIdentity?
     public let destination: String
     public let expectedDestinationIdentity: PhysicalResourceIdentity?
     public let files: [SkillWriteFile]
@@ -136,6 +146,8 @@ public struct SkillWritePlan: Identifiable, Codable, Equatable, Sendable {
         operation: SkillWriteOperation,
         skillRoot: String,
         skillRootIdentity: PhysicalResourceIdentity,
+        source: String? = nil,
+        expectedSourceIdentity: PhysicalResourceIdentity? = nil,
         destination: String,
         expectedDestinationIdentity: PhysicalResourceIdentity?,
         files: [SkillWriteFile]
@@ -145,9 +157,43 @@ public struct SkillWritePlan: Identifiable, Codable, Equatable, Sendable {
         self.operation = operation
         self.skillRoot = skillRoot
         self.skillRootIdentity = skillRootIdentity
+        self.source = source
+        self.expectedSourceIdentity = expectedSourceIdentity
         self.destination = destination
         self.expectedDestinationIdentity = expectedDestinationIdentity
         self.files = files
+    }
+}
+
+public enum SkillWriteResultStatus: String, Codable, Sendable {
+    case succeeded
+    case failed
+    case skipped
+}
+
+public struct SkillWriteResult: Codable, Equatable, Sendable {
+    public let planID: UUID
+    public let status: SkillWriteResultStatus
+    public let code: String
+
+    public init(planID: UUID, status: SkillWriteResultStatus, code: String) {
+        self.planID = planID
+        self.status = status
+        self.code = code
+    }
+}
+
+public struct SkillStagingRecoveryResult: Codable, Equatable, Sendable {
+    public let originalPath: String
+    public let trashedPath: String?
+    public let status: SkillWriteResultStatus
+    public let code: String
+
+    public init(originalPath: String, trashedPath: String?, status: SkillWriteResultStatus, code: String) {
+        self.originalPath = originalPath
+        self.trashedPath = trashedPath
+        self.status = status
+        self.code = code
     }
 }
 

@@ -50,6 +50,7 @@ public enum DiscoverySource: String, Codable, Sendable {
     case environment
     case custom
     case deepScan
+    case userConfirmed
 }
 
 public enum AgentHomeConfidence: String, Codable, Sendable {
@@ -174,18 +175,21 @@ public struct DeviceSnapshot: Identifiable, Codable, Equatable, Sendable {
     public let generation: UUID
     public let createdAt: Date
     public let isPartial: Bool
-    public let homes: [AgentHome]
-    public let totalStorage: StorageMeasurement
+    public let products: [AgentProduct]
+    public let storageLedger: StorageLedger
     public let coverage: SnapshotCoverage
     public let findings: [Finding]
+
+    public var homes: [AgentHome] { products.flatMap(\.homes) }
+    public var totalStorage: StorageMeasurement { storageLedger.total }
 
     public init(
         id: UUID = UUID(),
         generation: UUID,
         createdAt: Date,
         isPartial: Bool,
-        homes: [AgentHome],
-        totalStorage: StorageMeasurement,
+        products: [AgentProduct],
+        storageLedger: StorageLedger,
         coverage: SnapshotCoverage,
         findings: [Finding]
     ) {
@@ -193,8 +197,8 @@ public struct DeviceSnapshot: Identifiable, Codable, Equatable, Sendable {
         self.generation = generation
         self.createdAt = createdAt
         self.isPartial = isPartial
-        self.homes = homes
-        self.totalStorage = totalStorage
+        self.products = products
+        self.storageLedger = storageLedger
         self.coverage = coverage
         self.findings = findings
     }
@@ -203,11 +207,21 @@ public struct DeviceSnapshot: Identifiable, Codable, Equatable, Sendable {
 public struct ScanRequest: Sendable {
     public let root: URL
     public let customLocations: [URL]
+    public let ignoredLocations: [URL]
+    public let userConfirmedHomes: [String: String]
     public let environment: [String: String]
 
-    public init(root: URL, customLocations: [URL] = [], environment: [String: String] = [:]) {
+    public init(
+        root: URL,
+        customLocations: [URL] = [],
+        ignoredLocations: [URL] = [],
+        userConfirmedHomes: [String: String] = [:],
+        environment: [String: String] = [:]
+    ) {
         self.root = root.standardizedFileURL
         self.customLocations = customLocations.map(\.standardizedFileURL)
+        self.ignoredLocations = ignoredLocations.map(\.standardizedFileURL)
+        self.userConfirmedHomes = userConfirmedHomes
         self.environment = environment
     }
 }

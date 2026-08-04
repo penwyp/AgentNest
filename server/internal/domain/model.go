@@ -20,18 +20,35 @@ type Trial struct {
 
 type License struct {
 	ID             string     `json:"id"`
-	KeyHash        string     `json:"keyHash"`
-	Plan           string     `json:"plan"`
+	KeyHash        string     `json:"keyHash,omitempty"`
+	PolicyID       string     `json:"policyId"`
 	Status         string     `json:"status"`
-	MaxMachines    int        `json:"maxMachines"`
 	SubscriptionTo *time.Time `json:"subscriptionExpiresAt,omitempty"`
+}
+
+type Policy struct {
+	ID                  string   `json:"id"`
+	Plan                string   `json:"plan"`
+	Features            []string `json:"features"`
+	MaxMachines         int      `json:"maxMachines"`
+	RefreshAfterSeconds int64    `json:"refreshAfterSeconds"`
+	OfflineTTLSeconds   int64    `json:"offlineTtlSeconds"`
+}
+
+type Entitlement struct {
+	ReceiptID     string    `json:"receiptId"`
+	LicenseID     string    `json:"licenseId"`
+	MachineIDHash string    `json:"machineIdHash"`
+	PolicyID      string    `json:"policyId"`
+	IssuedAt      time.Time `json:"issuedAt"`
+	OfflineUntil  time.Time `json:"offlineUntil"`
 }
 
 type Machine struct {
 	ID              string    `json:"id"`
 	LicenseID       string    `json:"licenseId"`
 	MachineIDHash   string    `json:"machineIdHash"`
-	RefreshHash     string    `json:"refreshHash"`
+	RefreshHash     string    `json:"refreshHash,omitempty"`
 	Active          bool      `json:"active"`
 	CreatedAt       time.Time `json:"createdAt"`
 	LastRefreshedAt time.Time `json:"lastRefreshedAt"`

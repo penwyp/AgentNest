@@ -37,5 +37,11 @@
     <string></string>
     <key>AgentNestLicensePublicKey</key>
     <string></string>
+    <key>SUFeedURL</key>
+    <string></string>
+    <key>SUPublicEDKey</key>
+    <string></string>
+    <key>SUEnableAutomaticChecks</key>
+    <false/>
 </dict>
 </plist>

@@ -86,7 +86,7 @@ func TestPaymentWebhookIsSignedAndIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	handler := New(fileStore, signer, slog.New(slog.NewTextHandler(io.Discard, nil)), "webhook-secret").Handler()
+	handler := New(fileStore, signer, slog.New(slog.NewTextHandler(io.Discard, nil)), Config{WebhookSecret: "webhook-secret"}).Handler()
 	body, err := json.Marshal(map[string]any{
 		"eventId": "evt_purchase_1", "type": "purchase", "licenseKey": "WEBHOOK-LICENSE", "plan": "annual", "maxMachines": 2,
 	})
@@ -127,6 +127,66 @@ func TestPaymentWebhookIsSignedAndIdempotent(t *testing.T) {
 	}
 }
 
+func TestAdminPolicyLicenseAndRevocation(t *testing.T) {
+	handler, _ := testHandler(t)
+	unauthorized := httptest.NewRecorder()
+	handler.ServeHTTP(unauthorized, httptest.NewRequest(http.MethodGet, "/v1/admin/state", nil))
+	if unauthorized.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthorized admin status=%d", unauthorized.Code)
+	}
+
+	policy := adminJSON(t, handler, http.MethodPut, "/v1/admin/policies/team", map[string]any{
+		"plan": "team", "features": []string{"scan", "overview", "skill.write", "patch"},
+		"maxMachines": 2, "refreshAfterSeconds": 3600, "offlineTtlSeconds": 86400,
+	})
+	if policy.Code != http.StatusOK {
+		t.Fatalf("policy status=%d body=%s", policy.Code, policy.Body.String())
+	}
+	created := adminJSON(t, handler, http.MethodPost, "/v1/admin/licenses", map[string]any{
+		"licenseKey": "ADMIN-CREATED-KEY", "policyId": "team",
+	})
+	if created.Code != http.StatusCreated {
+		t.Fatalf("license status=%d body=%s", created.Code, created.Body.String())
+	}
+	var license domain.License
+	if err := json.NewDecoder(created.Body).Decode(&license); err != nil {
+		t.Fatal(err)
+	}
+	if license.ID == "" || license.PolicyID != "team" || license.KeyHash != "" {
+		t.Fatalf("unsafe admin license response: %+v", license)
+	}
+
+	machineHash := store.HashSecret("admin-machine")
+	activation := postJSON(t, handler, "/v1/activate", map[string]string{
+		"productId": domain.ProductID, "machineIdHash": machineHash, "licenseKey": "ADMIN-CREATED-KEY",
+	})
+	if activation.Code != http.StatusOK {
+		t.Fatalf("activation status=%d body=%s", activation.Code, activation.Body.String())
+	}
+	var entitlement domain.EntitlementResponse
+	if err := json.NewDecoder(activation.Body).Decode(&entitlement); err != nil {
+		t.Fatal(err)
+	}
+
+	state := adminJSON(t, handler, http.MethodGet, "/v1/admin/state", nil)
+	if state.Code != http.StatusOK || strings.Contains(state.Body.String(), "ADMIN-CREATED-KEY") ||
+		strings.Contains(state.Body.String(), "keyHash") || strings.Contains(state.Body.String(), "refreshHash") ||
+		!strings.Contains(state.Body.String(), "entitlement.issued") {
+		t.Fatalf("unsafe or incomplete admin state: status=%d body=%s", state.Code, state.Body.String())
+	}
+
+	revoked := adminJSON(t, handler, http.MethodPatch, "/v1/admin/licenses/"+license.ID, map[string]string{"status": "revoked"})
+	if revoked.Code != http.StatusNoContent {
+		t.Fatalf("revoke status=%d body=%s", revoked.Code, revoked.Body.String())
+	}
+	refresh := postJSON(t, handler, "/v1/refresh", map[string]string{
+		"productId": domain.ProductID, "machineIdHash": machineHash, "refreshToken": entitlement.RefreshToken,
+	})
+	if refresh.Code != http.StatusUnauthorized || !strings.Contains(refresh.Body.String(), "license_suspended") {
+		t.Fatalf("revoked refresh status=%d body=%s", refresh.Code, refresh.Body.String())
+	}
+}
+
 func testHandler(t *testing.T) (http.Handler, ed25519.PublicKey) {
 	t.Helper()
 	seed := bytes.Repeat([]byte{7}, ed25519.SeedSize)
@@ -143,7 +203,7 @@ func testHandler(t *testing.T) (http.Handler, ed25519.PublicKey) {
 		t.Fatal(err)
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	return New(fileStore, signer, logger).Handler(), signer.PublicKey()
+	return New(fileStore, signer, logger, Config{AdminToken: "admin-test-token"}).Handler(), signer.PublicKey()
 }
 
 func postJSON(t *testing.T, handler http.Handler, path string, value any) *httptest.ResponseRecorder {
@@ -153,6 +213,24 @@ func postJSON(t *testing.T, handler http.Handler, path string, value any) *httpt
 		t.Fatal(err)
 	}
 	request := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	return response
+}
+
+func adminJSON(t *testing.T, handler http.Handler, method, path string, value any) *httptest.ResponseRecorder {
+	t.Helper()
+	var body io.Reader
+	if value != nil {
+		encoded, err := json.Marshal(value)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body = bytes.NewReader(encoded)
+	}
+	request := httptest.NewRequest(method, path, body)
+	request.Header.Set("Authorization", "Bearer admin-test-token")
 	request.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
