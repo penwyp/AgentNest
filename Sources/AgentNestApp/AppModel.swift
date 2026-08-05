@@ -28,6 +28,9 @@ final class AppModel {
 
         var id: String { rawValue }
 
+        /// 侧栏导航项（按视觉分组顺序）。
+        static let navigationItems: [Destination] = [.home, .agents, .skills, .storage, .activity, .history, .settings]
+
         var systemImage: String {
             switch self {
             case .home: "house"

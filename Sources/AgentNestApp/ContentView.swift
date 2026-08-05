@@ -14,26 +14,135 @@ struct ContentView: View {
 
     private var mainNavigation: some View {
         NavigationSplitView {
-            List(AppModel.Destination.allCases, selection: $model.selection) { item in
-                Label {
-                    Text(model.localized(item.rawValue))
-                } icon: {
-                    Image(systemName: item.systemImage)
-                }
-                    .tag(item)
-            }
-            .navigationTitle("AgentNest")
+            sidebar
         } detail: {
-            switch model.selection ?? .home {
-            case .home: HomeView(model: model)
-            case .agents: AgentListView(model: model)
-            case .skills: SkillView(model: model)
-            case .storage: StorageView(model: model)
-            case .activity: ActivityView(model: model)
-            case .history: HistoryView(model: model)
-            case .settings: SettingsView(model: model)
+            ZStack {
+                DSCanvasBackground()
+                switch model.selection ?? .home {
+                case .home: HomeView(model: model)
+                case .agents: AgentListView(model: model)
+                case .skills: SkillView(model: model)
+                case .storage: StorageView(model: model)
+                case .activity: ActivityView(model: model)
+                case .history: HistoryView(model: model)
+                case .settings: SettingsView(model: model)
+                }
             }
         }
+        .navigationSplitViewStyle(.balanced)
+    }
+
+    /// 设计系统侧边栏：canvas 底、分组导航、选中态使用 accent 色（surface.selection 配方）。
+    private var sidebar: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: DS.Space.x200) {
+                Image(systemName: "bird.fill")
+                    .font(.system(size: 16, weight: .medium))
+                    .foregroundStyle(DS.Semantic.accentPrimary)
+                Text("AgentNest")
+                    .font(DS.Typeface.section)
+                Spacer()
+            }
+            .padding(.horizontal, DS.Space.x300)
+            .padding(.top, DS.Space.x250)
+            .padding(.bottom, DS.Space.x200)
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 2) {
+                    SidebarRow(model: model, item: .home)
+                    sidebarDivider
+                    SidebarRow(model: model, item: .agents)
+                    SidebarRow(model: model, item: .skills)
+                    SidebarRow(model: model, item: .storage)
+                    SidebarRow(model: model, item: .activity)
+                    SidebarRow(model: model, item: .history)
+                    sidebarDivider
+                    SidebarRow(model: model, item: .settings)
+                }
+                .padding(.horizontal, DS.Space.x200)
+            }
+
+            Spacer(minLength: 0)
+
+            VStack(alignment: .leading, spacing: DS.Space.x100) {
+                HStack(spacing: DS.Space.x150) {
+                    Circle()
+                        .fill(model.hasCoreAccess ? DS.Semantic.statusPositive : DS.Semantic.statusCaution)
+                        .frame(width: 6, height: 6)
+                    Text(model.licenseStatusText)
+                        .font(DS.Typeface.micro)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+                Text("AgentNest 0.1.0")
+                    .font(DS.Typeface.micro)
+                    .foregroundStyle(.tertiary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(DS.Space.x300)
+        }
+        .background(Color(nsColor: DS.Neutral.canvas))
+        .frame(minWidth: 208, idealWidth: 224)
+    }
+
+    private var sidebarDivider: some View {
+        Rectangle()
+            .fill(Color.primary.opacity(0.06))
+            .frame(height: DS.Stroke.hairline)
+            .padding(.horizontal, DS.Space.x200)
+            .padding(.vertical, DS.Space.x150)
+    }
+}
+
+/// 侧边栏导航行：icon + label，hover/选中态，选中使用 accent 色。
+private struct SidebarRow: View {
+    @Bindable var model: AppModel
+    let item: AppModel.Destination
+    @State private var isHovering = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private var isSelected: Bool { model.selection == item }
+
+    var body: some View {
+        Button { model.selection = item } label: {
+            HStack(spacing: DS.Space.x250) {
+                Image(systemName: item.systemImage)
+                    .font(.system(size: 13, weight: .medium))
+                    .frame(width: 18)
+                    .foregroundStyle(isSelected ? DS.Semantic.accentPrimary : Color.secondary)
+                Text(model.localized(item.rawValue))
+                    .font(DS.Typeface.body)
+                    .foregroundStyle(isSelected ? DS.Semantic.accentPrimary : Color.primary)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, DS.Space.x250)
+            .padding(.vertical, 8)
+            .background(
+                RoundedRectangle(cornerRadius: DS.Radius.controlCompact, style: .continuous)
+                    .fill(rowFill)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: DS.Radius.controlCompact, style: .continuous)
+                    .strokeBorder(
+                        isSelected ? DS.Semantic.accentPrimary.opacity(0.28) : Color.clear,
+                        lineWidth: DS.Stroke.surface
+                    )
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering in
+            withAnimation(reduceMotion ? nil : .easeOut(duration: DS.Motion.hover)) {
+                isHovering = hovering
+            }
+        }
+    }
+
+    private var rowFill: Color {
+        if isSelected { return DS.Semantic.accentPrimary.opacity(DS.Opacity.fillStandard) }
+        if isHovering { return Color.primary.opacity(0.05) }
+        return .clear
     }
 }
 
@@ -41,43 +150,61 @@ private struct ActivationView: View {
     @Bindable var model: AppModel
 
     var body: some View {
-        VStack(spacing: 20) {
-            Image(systemName: "checkmark.shield")
-                .font(.system(size: 64))
-                .foregroundStyle(.tint)
-                .accessibilityHidden(true)
-            Text("AgentNest").font(.largeTitle.bold())
-            Text(model.licenseStatusText)
-                .font(.headline)
-            Text("试用和设备额度由授权服务记录。本机只信任绑定设备且经过 Ed25519 验签的限时 Receipt。")
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: 520)
-            if model.licenseConfigurationAvailable {
-                Button("开始 7 天试用") { model.startTrial() }
-                    .buttonStyle(.borderedProminent)
-                Button("重试授权服务") { model.retryLicense() }
-                HStack {
-                    SecureField("License Key", text: $model.licenseKey)
-                        .textFieldStyle(.roundedBorder)
-                        .frame(width: 320)
-                    Button("激活") { model.activate() }
-                        .disabled(model.licenseKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        ZStack {
+            DSCanvasBackground()
+            VStack(spacing: DS.Space.x400) {
+                Image(systemName: "checkmark.shield")
+                    .font(.system(size: 56, weight: .medium))
+                    .foregroundStyle(DS.Semantic.accentPrimary)
+                    .accessibilityHidden(true)
+                Text("AgentNest")
+                    .font(DS.Typeface.title)
+                Text(model.licenseStatusText)
+                    .font(DS.Typeface.label)
+                    .foregroundStyle(.secondary)
+
+                DSCard(padding: DS.Space.x400, cornerRadius: DS.Radius.panel) {
+                    VStack(spacing: DS.Space.x250) {
+                        Text("试用和设备额度由授权服务记录。本机只信任绑定设备且经过 Ed25519 验签的限时 Receipt。")
+                            .font(DS.Typeface.body)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                        if model.licenseConfigurationAvailable {
+                            Button("开始 7 天试用") { model.startTrial() }
+                                .buttonStyle(.dsAction(.accent, size: .large))
+                            Button("重试授权服务") { model.retryLicense() }
+                                .buttonStyle(.dsAction())
+                            HStack(spacing: DS.Space.x200) {
+                                SecureField("License Key", text: $model.licenseKey)
+                                    .textFieldStyle(.roundedBorder)
+                                    .frame(width: 320)
+                                Button("激活") { model.activate() }
+                                    .buttonStyle(.dsAction(.accent))
+                                    .disabled(model.licenseKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                            }
+                        } else {
+                            Text("开发构建需配置 AGENTNEST_LICENSE_SERVER_URL 与 AGENTNEST_LICENSE_PUBLIC_KEY。")
+                                .font(DS.Typeface.caption)
+                                .foregroundStyle(DS.Semantic.statusCaution)
+                        }
+                    }
+                    .frame(maxWidth: 520)
                 }
-            } else {
-                Text("开发构建需配置 AGENTNEST_LICENSE_SERVER_URL 与 AGENTNEST_LICENSE_PUBLIC_KEY。")
-                    .font(.caption)
-                    .foregroundStyle(.orange)
+                .frame(maxWidth: 560)
+
+                HStack(spacing: DS.Space.x300) {
+                    Button("隐私说明") {}
+                        .buttonStyle(.dsAction())
+                    Button("删除本地数据", role: .destructive) { model.deleteLocalData() }
+                        .buttonStyle(.dsAction(.destructive))
+                    Button("关于") {}
+                        .buttonStyle(.dsAction())
+                    Button("退出") { NSApplication.shared.terminate(nil) }
+                        .buttonStyle(.dsAction())
+                }
             }
-            Divider().frame(width: 520)
-            HStack {
-                Button("隐私说明") {}
-                Button("删除本地数据", role: .destructive) { model.deleteLocalData() }
-                Button("关于") {}
-                Button("退出") { NSApplication.shared.terminate(nil) }
-            }
+            .padding(40)
         }
-        .padding(40)
     }
 }
 
@@ -86,57 +213,71 @@ private struct HomeView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        VStack(spacing: 24) {
-            Spacer()
-            Image(systemName: model.isScanning ? "magnifyingglass.circle.fill" : "bird.fill")
-                .font(.system(size: 76))
-                .foregroundStyle(.tint)
-                .symbolEffect(.pulse, isActive: model.isScanning && !reduceMotion)
-                .accessibilityHidden(true)
-            Text(model.localized(model.isScanning ? "正在分析 Agent 目录" : "发现并维护你的 Agent 环境"))
-                .font(.largeTitle.bold())
-            Text("仅扫描 Agent Definition 声明和你明确添加的 Agent Home，数据只在本机分析。")
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-
-            if let progress = model.progress, model.isScanning {
-                VStack(spacing: 8) {
-                    ProgressView()
-                    Text(model.scanPhaseTitle(progress.phase)).font(.headline)
-                    Text(model.localized("已处理 %d 项 · %@", progress.processedCount, model.formatBytes(progress.processedBytes)))
-                        .font(.caption)
+        ScrollView {
+            VStack(spacing: DS.Space.x400) {
+                VStack(spacing: DS.Space.x250) {
+                    Image(systemName: model.isScanning ? "magnifyingglass.circle.fill" : "bird.fill")
+                        .font(.system(size: 56, weight: .medium))
+                        .foregroundStyle(DS.Semantic.accentPrimary)
+                        .symbolEffect(.pulse, isActive: model.isScanning && !reduceMotion)
+                        .accessibilityHidden(true)
+                    Text(model.localized(model.isScanning ? "正在分析 Agent 目录" : "发现并维护你的 Agent 环境"))
+                        .font(DS.Typeface.display)
+                    Text("仅扫描 Agent Definition 声明和你明确添加的 Agent Home，数据只在本机分析。")
+                        .font(DS.Typeface.body)
                         .foregroundStyle(.secondary)
-                    if let location = progress.currentLocation {
-                        Text(model.displayPath(location)).font(.caption2).lineLimit(1).truncationMode(.middle).privacySensitive()
+                        .multilineTextAlignment(.center)
+                }
+                .padding(.top, DS.Space.x400)
+
+                if let progress = model.progress, model.isScanning {
+                    VStack(spacing: DS.Space.x200) {
+                        ProgressView()
+                            .controlSize(.large)
+                        Text(model.scanPhaseTitle(progress.phase)).font(DS.Typeface.section)
+                        Text(model.localized("已处理 %d 项 · %@", progress.processedCount, model.formatBytes(progress.processedBytes)))
+                            .font(DS.Typeface.caption)
+                            .foregroundStyle(.secondary)
+                        if let location = progress.currentLocation {
+                            Text(model.displayPath(location)).font(DS.Typeface.micro).lineLimit(1).truncationMode(.middle).privacySensitive()
+                        }
                     }
+                    .padding(DS.Space.x400)
+                    .frame(maxWidth: 520)
+                    .background(
+                        RoundedRectangle(cornerRadius: DS.Radius.panel, style: .continuous)
+                            .fill(Color(nsColor: DS.Neutral.recessed))
+                    )
+                    Button(model.localized(model.isStoppingScan ? "正在停止…" : "停止"), role: .cancel) { model.stopScan() }
+                        .buttonStyle(.dsAction(.neutral, size: .regular))
+                        .disabled(model.isStoppingScan)
+                } else {
+                    Button(action: model.startScan) {
+                        Label("扫描", systemImage: "magnifyingglass")
+                            .font(.system(size: 15, weight: .semibold))
+                            .frame(minWidth: 180)
+                    }
+                    .buttonStyle(.dsAction(.accent, size: .large))
+                    .keyboardShortcut(.defaultAction)
                 }
-                .frame(maxWidth: 520)
-                Button(model.localized(model.isStoppingScan ? "正在停止…" : "停止"), role: .cancel) { model.stopScan() }
-                    .disabled(model.isStoppingScan)
-            } else {
-                Button(action: model.startScan) {
-                    Label("扫描", systemImage: "magnifyingglass")
-                        .font(.title2.bold())
-                        .frame(minWidth: 180, minHeight: 44)
-                }
-                .buttonStyle(.borderedProminent)
-                .keyboardShortcut(.defaultAction)
-            }
 
-            if let snapshot = model.snapshot {
-                SnapshotSummary(model: model, snapshot: snapshot)
-                ImpactCards(model: model, snapshot: snapshot)
+                if let snapshot = model.snapshot {
+                    SnapshotSummary(model: model, snapshot: snapshot)
+                    ImpactCards(model: model, snapshot: snapshot)
+                }
+                if let error = model.errorMessage {
+                    Label(error, systemImage: "exclamationmark.triangle")
+                        .font(DS.Typeface.body)
+                        .foregroundStyle(DS.Semantic.statusCaution)
+                        .accessibilityLabel(model.localized("扫描状态：%@", error))
+                }
             }
-            if let error = model.errorMessage {
-                Label(error, systemImage: "exclamationmark.triangle")
-                    .foregroundStyle(.orange)
-                    .accessibilityLabel(model.localized("扫描状态：%@", error))
-            }
-            Spacer()
+            .padding(.horizontal, 32)
+            .padding(.vertical, 24)
+            .frame(maxWidth: 860)
+            .frame(maxWidth: .infinity)
         }
-        .padding(32)
     }
-
 }
 
 private struct ImpactCards: View {
@@ -144,13 +285,14 @@ private struct ImpactCards: View {
     let snapshot: DeviceSnapshot
 
     var body: some View {
-        Grid(horizontalSpacing: 12, verticalSpacing: 12) {
+        Grid(horizontalSpacing: DS.Space.x300, verticalSpacing: DS.Space.x300) {
             GridRow {
                 card(
                     title: "Agent",
                     value: model.localized("%d 个 Home", snapshot.homes.filter { $0.confidence == .confirmed }.count),
                     detail: model.localized(snapshot.homes.contains { $0.confidence == .possible } ? "有疑似位置待确认" : "发现结果已核验"),
                     icon: "cpu",
+                    tint: DS.Chart.series01,
                     destination: .agents
                 )
                 card(
@@ -159,6 +301,7 @@ private struct ImpactCards: View {
                     detail: model.skillIndex.map { model.localized("%d 个冲突 · %d 个无效", $0.conflictCount, $0.invalidCount) }
                         ?? model.localized("当前 Agent 未声明 Skill 来源"),
                     icon: "hammer",
+                    tint: DS.Chart.series06,
                     destination: .skills
                 )
             }
@@ -168,6 +311,7 @@ private struct ImpactCards: View {
                     value: model.formatBytes(snapshot.totalStorage.physicalBytes),
                     detail: largestStorageCategory(snapshot),
                     icon: "internaldrive",
+                    tint: DS.Chart.series03,
                     destination: .storage
                 )
                 card(
@@ -175,6 +319,7 @@ private struct ImpactCards: View {
                     value: activityValue,
                     detail: activityDetail,
                     icon: "waveform.path.ecg",
+                    tint: DS.Chart.series02,
                     destination: .activity
                 )
             }
@@ -187,24 +332,37 @@ private struct ImpactCards: View {
         value: String,
         detail: String,
         icon: String,
+        tint: Color,
         destination: AppModel.Destination
     ) -> some View {
         Button { model.selection = destination } label: {
-            HStack(alignment: .top, spacing: 12) {
-                Image(systemName: icon).font(.title2).frame(width: 30)
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(title).font(.headline)
-                    Text(value).font(.title3.bold())
-                    Text(detail).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+            HStack(alignment: .top, spacing: DS.Space.x300) {
+                Image(systemName: icon)
+                    .font(.system(size: 20, weight: .medium))
+                    .foregroundStyle(tint)
+                    .frame(width: 34, height: 34)
+                    .background(
+                        RoundedRectangle(cornerRadius: DS.Radius.icon, style: .continuous)
+                            .fill(tint.opacity(DS.Opacity.fillSubtle))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: DS.Radius.icon, style: .continuous)
+                            .strokeBorder(tint.opacity(0.18), lineWidth: DS.Stroke.hairline)
+                    )
+                VStack(alignment: .leading, spacing: DS.Space.x100) {
+                    Text(title).font(DS.Typeface.label).foregroundStyle(.secondary)
+                    Text(value).font(DS.Typeface.title).monospacedDigit()
+                    Text(detail).font(DS.Typeface.caption).foregroundStyle(.tertiary).lineLimit(2)
                 }
                 Spacer()
-                Image(systemName: "chevron.right").foregroundStyle(.tertiary)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.tertiary)
             }
-            .padding(14)
-            .frame(maxWidth: .infinity, minHeight: 104, alignment: .leading)
-            .background(.quaternary, in: RoundedRectangle(cornerRadius: 14))
+            .padding(DS.Space.x400)
+            .frame(maxWidth: .infinity, minHeight: 110, alignment: .leading)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.dsCard)
         .accessibilityLabel(model.localized("%@：%@。%@", title, value, detail))
         .accessibilityHint(model.localized("打开%@详情", title))
     }
@@ -234,21 +392,37 @@ private struct SnapshotSummary: View {
     let snapshot: DeviceSnapshot
 
     var body: some View {
-        HStack(spacing: 28) {
-            metric(model.localized("Agent Home"), "\(snapshot.homes.filter { $0.confidence == .confirmed }.count)")
-            metric(model.localized("疑似"), "\(snapshot.homes.filter { $0.confidence == .possible }.count)")
-            metric(model.localized("物理占用"), model.formatBytes(snapshot.totalStorage.physicalBytes))
-            metric(model.localized("完整度"), model.localized(snapshot.isPartial ? "部分" : "完整"))
+        DSCard(padding: DS.Space.x400) {
+            HStack(spacing: 0) {
+                metric(model.localized("Agent Home"), "\(snapshot.homes.filter { $0.confidence == .confirmed }.count)", color: DS.Chart.series01)
+                metricDivider
+                metric(model.localized("疑似"), "\(snapshot.homes.filter { $0.confidence == .possible }.count)", color: DS.Chart.series03)
+                metricDivider
+                metric(model.localized("物理占用"), model.formatBytes(snapshot.totalStorage.physicalBytes), color: DS.Chart.series02)
+                metricDivider
+                metric(model.localized("完整度"), model.localized(snapshot.isPartial ? "部分" : "完整"), color: snapshot.isPartial ? DS.Semantic.statusCaution : DS.Semantic.statusPositive)
+            }
+            .frame(maxWidth: 760)
         }
-        .padding()
-        .background(.quaternary, in: RoundedRectangle(cornerRadius: 14))
+        .frame(maxWidth: 760)
     }
 
-    private func metric(_ title: String, _ value: String) -> some View {
-        VStack(alignment: .leading) {
-            Text(value).font(.title2.bold())
-            Text(title).font(.caption).foregroundStyle(.secondary)
+    private var metricDivider: some View {
+        Rectangle()
+            .fill(Color.primary.opacity(0.08))
+            .frame(width: DS.Stroke.hairline, height: 36)
+            .padding(.horizontal, DS.Space.x400)
+    }
+
+    private func metric(_ title: String, _ value: String, color: Color) -> some View {
+        VStack(alignment: .leading, spacing: DS.Space.x100) {
+            Text(value).font(DS.Typeface.title).monospacedDigit()
+            HStack(spacing: DS.Space.x100) {
+                Circle().fill(color).frame(width: 6, height: 6)
+                Text(title).font(DS.Typeface.caption).foregroundStyle(.secondary)
+            }
         }
+        .frame(minWidth: 110, alignment: .leading)
     }
 }
 
@@ -259,27 +433,37 @@ private struct AgentListView: View {
         Group {
             if let snapshot = model.snapshot, !snapshot.homes.isEmpty {
                 List(snapshot.homes) { home in
-                    VStack(alignment: .leading, spacing: 5) {
-                        HStack {
-                            Text(home.displayName).font(.headline)
-                            Text(model.localized(home.confidence == .confirmed ? "已确认" : "疑似"))
-                                .font(.caption)
-                                .foregroundStyle(home.confidence == .confirmed ? .green : .orange)
+                    VStack(alignment: .leading, spacing: DS.Space.x150) {
+                        HStack(spacing: DS.Space.x200) {
+                            Image(systemName: home.confidence == .confirmed ? "checkmark.circle.fill" : "questionmark.circle.fill")
+                                .font(.system(size: 15, weight: .medium))
+                                .foregroundStyle(home.confidence == .confirmed ? DS.Semantic.statusPositive : DS.Semantic.statusCaution)
+                            Text(home.displayName).font(DS.Typeface.section)
+                            DSBadge(
+                                text: model.localized(home.confidence == .confirmed ? "已确认" : "疑似"),
+                                color: home.confidence == .confirmed ? DS.Semantic.statusPositive : DS.Semantic.statusCaution
+                            )
                         }
-                        Text(model.displayPath(home.path)).font(.caption).foregroundStyle(.secondary).privacySensitive()
+                        Text(model.displayPath(home.path)).font(DS.Typeface.caption).foregroundStyle(.secondary).privacySensitive()
                         Text(model.localized("%@ · %@", model.discoverySourceTitle(home.source), model.formatBytes(home.storage.physicalBytes)))
-                            .font(.caption2)
+                            .font(DS.Typeface.micro)
+                            .foregroundStyle(.tertiary)
+                            .monospacedDigit()
                         if home.confidence == .possible {
-                            HStack {
+                            HStack(spacing: DS.Space.x200) {
                                 Button(model.localized("确认为 %@", home.displayName)) { model.confirmCandidate(home) }
+                                    .buttonStyle(.dsAction(.accent, size: .compact))
                                 Button("忽略此位置", role: .destructive) { model.ignoreCandidate(home) }
+                                    .buttonStyle(.dsAction(.destructive, size: .compact))
                             }
                         } else if home.source == .userConfirmed {
                             Button("撤销本机确认") { model.revokeCandidateConfirmation(home) }
+                                .buttonStyle(.dsAction(size: .compact))
                         }
                     }
-                    .padding(.vertical, 4)
+                    .padding(.vertical, DS.Space.x150)
                 }
+                .scrollContentBackground(.hidden)
             } else {
                 ContentUnavailableView("尚无 Agent 结果", systemImage: "cpu", description: Text("先在首页扫描。"))
             }
@@ -326,11 +510,15 @@ private struct SkillView: View {
                                                 .privacySensitive()
                                             HStack {
                                                 Text(model.localized("%d 个文件 · %@", installation.fileCount, bytes(installation.totalBytes)))
-                                                    .font(.caption2)
+                                                    .font(DS.Typeface.micro)
+                                                    .monospacedDigit()
                                                 Spacer()
                                                 Button("编辑") { beginEdit(installation) }
+                                                    .buttonStyle(.dsAction(size: .compact))
                                                 Button("重命名目录") { beginRename(installation) }
+                                                    .buttonStyle(.dsAction(size: .compact))
                                                 Button("移到废纸篓", role: .destructive) { deleting = installation }
+                                                    .buttonStyle(.dsAction(.destructive, size: .compact))
                                             }
                                             .disabled(!model.allows(.skillWrite) || installation.state != .valid)
                                         }
@@ -338,7 +526,7 @@ private struct SkillView: View {
                                     }
                                 } label: {
                                     Text(model.localized("Variant %@ · %d 个副本", String(variant.contentHash.prefix(12)), variant.installations.count))
-                                        .font(.headline)
+                                        .font(DS.Typeface.label)
                                         .monospaced()
                                 }
                             }
@@ -346,18 +534,22 @@ private struct SkillView: View {
                                 Button(model.localized("补齐到 %d 个缺失 Home", skill.missingHomeIDs.count)) {
                                     model.patchSkillToMissingHomes(skill)
                                 }
+                                .buttonStyle(.dsAction(.accent, size: .compact))
                                 .disabled(!model.allows(.patch))
                             }
                         } label: {
                             HStack {
-                                Text(skill.name)
+                                Text(skill.name).font(DS.Typeface.section)
                                 Spacer()
                                 Text(model.localized("%d 个 Variant · 缺失 %d 个 Home", skill.variants.count, skill.missingHomeIDs.count))
+                                    .font(DS.Typeface.caption)
                                     .foregroundStyle(.secondary)
+                                    .monospacedDigit()
                             }
                         }
                     }
                 }
+                .scrollContentBackground(.hidden)
             } else if model.snapshot == nil {
                 ContentUnavailableView("尚无 Skill 索引", systemImage: "hammer", description: Text("先在首页扫描。"))
             } else {
@@ -499,7 +691,7 @@ private struct StorageView: View {
         Group {
             if let snapshot = model.snapshot {
                 List {
-                    Section("筛选") {
+                    Section {
                         Picker("Agent", selection: $selectedProductID) {
                             Text("全部 Agent").tag("*")
                             ForEach(snapshot.products) { product in
@@ -528,45 +720,55 @@ private struct StorageView: View {
                                 Text(volumeTitle(device: device)).tag(String(device))
                             }
                         }
+                    } header: {
+                        Text("筛选").font(DS.Typeface.section)
                     }
 
-                    Section("唯一物理占用") {
+                    Section {
                         HStack {
-                            Text("合计")
+                            Text("合计").font(DS.Typeface.body)
                             Spacer()
                             Text(bytes(filteredArtifacts(in: snapshot).reduce(0) { $0 &+ $1.storage.physicalBytes }))
-                                .font(.headline)
+                                .font(DS.Typeface.title)
                                 .monospacedDigit()
+                                .foregroundStyle(DS.Semantic.accentPrimary)
                         }
                         Text("每个 device/inode/type 只记一次；共享对象不会重复摊入多个 Home。")
-                            .font(.caption)
+                            .font(DS.Typeface.caption)
                             .foregroundStyle(.secondary)
+                    } header: {
+                        Text("唯一物理占用").font(DS.Typeface.section)
                     }
 
-                    Section("归属与类别") {
+                    Section {
                         if storageGroups(in: snapshot).isEmpty {
                             Text("当前筛选没有资源")
                                 .foregroundStyle(.secondary)
                         } else {
                             ForEach(storageGroups(in: snapshot)) { group in
                                 HStack {
-                                    VStack(alignment: .leading, spacing: 4) {
+                                    VStack(alignment: .leading, spacing: DS.Space.x100) {
                                         Text(group.ownerIsPath ? model.displayPath(group.ownerTitle) : group.ownerTitle)
+                                            .font(DS.Typeface.body)
                                         Text(model.localized("%@ · %@ · %d 项", group.volumeTitle, model.artifactCategoryTitle(group.category), group.itemCount))
-                                            .font(.caption)
+                                            .font(DS.Typeface.caption)
                                             .foregroundStyle(.secondary)
                                     }
                                     Spacer()
                                     Text(bytes(group.physicalBytes))
+                                        .font(DS.Typeface.label)
                                         .monospacedDigit()
                                 }
+                                .padding(.vertical, DS.Space.x100)
                             }
                         }
+                    } header: {
+                        Text("归属与类别").font(DS.Typeface.section)
                     }
 
-                    Section("安全清理候选") {
+                    Section {
                         if let message = model.cleanupOperationMessage {
-                            Text(message).font(.caption).foregroundStyle(.secondary)
+                            Text(message).font(DS.Typeface.caption).foregroundStyle(.secondary)
                         }
                         if model.cleanupUnits.isEmpty {
                             Text("当前 Agent Definition 没有声明可清理目标。")
@@ -574,25 +776,29 @@ private struct StorageView: View {
                         } else {
                             ForEach(model.cleanupUnits) { unit in
                                 HStack {
-                                    VStack(alignment: .leading, spacing: 4) {
-                                        Text(unit.name)
+                                    VStack(alignment: .leading, spacing: DS.Space.x100) {
+                                        Text(unit.name).font(DS.Typeface.body)
                                         Text(model.localized(
                                             "%@ · %@ · %@",
                                             model.artifactCategoryTitle(ArtifactCategory(definitionValue: unit.category)),
                                             model.artifactRiskTitle(unit.risk),
                                             model.activityProtectionTitle(unit.activity)
                                         ))
-                                            .font(.caption).foregroundStyle(.secondary)
+                                            .font(DS.Typeface.caption).foregroundStyle(.secondary)
                                     }
                                     Spacer()
-                                    Text(bytes(unit.storage.physicalBytes)).monospacedDigit()
+                                    Text(bytes(unit.storage.physicalBytes)).font(DS.Typeface.label).monospacedDigit()
                                     Button("复核") { pendingCleanup = unit }
+                                        .buttonStyle(.dsAction(.accent, size: .compact))
                                         .disabled(!model.allows(.cleanup) || unit.activity != .inactive || unit.risk == .protected)
                                 }
                             }
                         }
+                    } header: {
+                        Text("安全清理候选").font(DS.Typeface.section)
                     }
                 }
+                .scrollContentBackground(.hidden)
             } else {
                 ContentUnavailableView("尚无空间账本", systemImage: "internaldrive", description: Text("空间数字仅来自一次完整索引。"))
             }
@@ -714,97 +920,123 @@ private struct ActivityView: View {
         Group {
             if let snapshot = model.activitySnapshot {
                 List {
-                    Section("整机基础指标") {
-                        metricRow("CPU", metric: snapshot.cpuFraction, format: .percent)
+                    Section {
+                        metricRow("CPU", metric: snapshot.cpuFraction, format: .percent, meter: true)
                         metricRow("磁盘读取", metric: snapshot.diskReadBytesPerSecond, format: .bytesPerSecond)
                         metricRow("磁盘写入", metric: snapshot.diskWriteBytesPerSecond, format: .bytesPerSecond)
                         metricRow("网络下载", metric: snapshot.networkReceiveBytesPerSecond, format: .bytesPerSecond)
                         metricRow("网络上传", metric: snapshot.networkSendBytesPerSecond, format: .bytesPerSecond)
+                    } header: {
+                        Text("整机基础指标").font(DS.Typeface.section)
                     }
-                    Section("口径") {
+                    Section {
                         Text("首个样本只建立基线；计数器回退、睡眠或过长间隔会重新建立基线，不显示为尖峰。")
+                            .font(DS.Typeface.caption)
+                            .foregroundStyle(.secondary)
                         Text("进程请求写入与物理设备写入不是同一指标；不可用数据不会显示为 0。")
+                            .font(DS.Typeface.caption)
+                            .foregroundStyle(.secondary)
                         if snapshot.droppedEvidenceCount > 0 {
-                            Text("本轮有 \(snapshot.droppedEvidenceCount) 个进程证据因权限、退出或预算未采集。")
-                                .foregroundStyle(.orange)
+                            Label("本轮有 \(snapshot.droppedEvidenceCount) 个进程证据因权限、退出或预算未采集。", systemImage: "exclamationmark.triangle")
+                                .font(DS.Typeface.caption)
+                                .foregroundStyle(DS.Semantic.statusCaution)
                         }
+                    } header: {
+                        Text("口径").font(DS.Typeface.section)
                     }
-                    Section("可见进程（按 CPU）") {
+                    Section {
                         ForEach(snapshot.processes.prefix(20)) { process in
-                            VStack(alignment: .leading, spacing: 4) {
+                            VStack(alignment: .leading, spacing: DS.Space.x100) {
                                 HStack {
-                                    Text(process.name)
+                                    Text(process.name).font(DS.Typeface.body)
                                     if process.attribution == .agent {
-                                        Text("Agent").font(.caption).foregroundStyle(.green)
+                                        DSBadge(text: "Agent", color: DS.Semantic.statusPositive, filled: true)
                                     } else {
-                                        Text("macOS 与其它进程").font(.caption).foregroundStyle(.secondary)
+                                        DSBadge(text: "macOS 与其它进程", color: .secondary)
                                     }
                                     Spacer()
-                                    Text(metricText(process.cpuFraction, format: .percent)).monospacedDigit()
+                                    Text(metricText(process.cpuFraction, format: .percent)).font(DS.Typeface.label).monospacedDigit()
+                                }
+                                if let fraction = process.cpuFraction.value {
+                                    DSSegmentedMeter(progress: fraction, color: process.attribution == .agent ? DS.Chart.series01 : DS.Chart.series04)
                                 }
                                 if let path = process.executablePath {
-                                    Text(model.displayPath(path)).font(.caption2).foregroundStyle(.secondary).privacySensitive()
+                                    Text(model.displayPath(path)).font(DS.Typeface.micro).foregroundStyle(.secondary).privacySensitive()
                                 }
                                 if let workingDirectory = process.workingDirectoryPath {
-                                    Text("工作目录：\(model.displayPath(workingDirectory))").font(.caption2).foregroundStyle(.secondary).privacySensitive()
+                                    Text("工作目录：\(model.displayPath(workingDirectory))").font(DS.Typeface.micro).foregroundStyle(.secondary).privacySensitive()
                                 }
                                 Text("请求读取 \(metricText(process.requestedReadBytesPerSecond, format: .bytesPerSecond)) · 请求写入 \(metricText(process.requestedWriteBytesPerSecond, format: .bytesPerSecond))")
-                                    .font(.caption)
+                                    .font(DS.Typeface.caption)
                                     .foregroundStyle(.secondary)
                                 if process.attribution == .agent {
                                     DisclosureGroup("文件证据") {
                                         Text("当前打开文件")
-                                            .font(.caption.bold())
+                                            .font(DS.Typeface.label)
                                         if process.currentlyOpenFiles.isEmpty {
                                             Text("无权限、进程已退出或当前没有可见 vnode 文件。")
-                                                .font(.caption2).foregroundStyle(.secondary)
+                                                .font(DS.Typeface.micro).foregroundStyle(.secondary)
                                         } else {
                                             ForEach(process.currentlyOpenFiles.prefix(10), id: \.path) { evidence in
                                                 Text(model.displayPath(evidence.path))
-                                                    .font(.caption2).lineLimit(1).truncationMode(.middle).privacySensitive()
+                                                    .font(DS.Typeface.micro).lineLimit(1).truncationMode(.middle).privacySensitive()
                                             }
                                         }
                                         Text("最近变化")
-                                            .font(.caption.bold())
+                                            .font(DS.Typeface.label)
                                         if process.recentChanges.isEmpty {
                                             Text("未启动 Trace Helper；打开文件不会被冒充为变化事件。")
-                                                .font(.caption2).foregroundStyle(.secondary)
+                                                .font(DS.Typeface.micro).foregroundStyle(.secondary)
                                         }
                                     }
-                                    .font(.caption)
+                                    .font(DS.Typeface.caption)
                                 }
                             }
+                            .padding(.vertical, DS.Space.x100)
                         }
+                    } header: {
+                        Text("可见进程（按 CPU）").font(DS.Typeface.section)
                     }
-                    Section("物理设备吞吐") {
+                    Section {
                         if snapshot.physicalDevices.isEmpty {
                             Text("物理设备指标不可用").foregroundStyle(.secondary)
                         } else {
                             ForEach(snapshot.physicalDevices) { device in
                                 HStack {
-                                    Text(device.name)
+                                    Text(device.name).font(DS.Typeface.body)
                                     Spacer()
                                     Text("读 \(metricText(device.readBytesPerSecond, format: .bytesPerSecond))")
+                                        .font(DS.Typeface.caption).monospacedDigit()
                                     Text("写 \(metricText(device.writeBytesPerSecond, format: .bytesPerSecond))")
+                                        .font(DS.Typeface.caption).monospacedDigit()
                                 }
                             }
                         }
+                    } header: {
+                        Text("物理设备吞吐").font(DS.Typeface.section)
                     }
-                    Section("挂载卷") {
+                    Section {
                         ForEach(snapshot.volumes) { volume in
-                            VStack(alignment: .leading, spacing: 4) {
+                            VStack(alignment: .leading, spacing: DS.Space.x100) {
                                 HStack {
-                                    Text(volume.name)
+                                    Text(volume.name).font(DS.Typeface.body)
                                     Spacer()
-                                    Text(volume.health == .unavailable ? "健康字段不可用" : volume.health.rawValue)
-                                        .font(.caption)
+                                    if let available = volume.availableBytes, let total = volume.totalBytes, total > 0 {
+                                        DSDonut(fraction: Double(available) / Double(total), color: DS.Chart.series02, size: 40)
+                                    } else {
+                                        Text(volume.health == .unavailable ? "健康字段不可用" : volume.health.rawValue)
+                                            .font(DS.Typeface.caption)
+                                    }
                                 }
-                                Text(model.displayPath(volume.mountPath)).font(.caption2).foregroundStyle(.secondary).privacySensitive()
-                                Text(volumeDescription(volume)).font(.caption).foregroundStyle(.secondary)
+                                Text(model.displayPath(volume.mountPath)).font(DS.Typeface.micro).foregroundStyle(.secondary).privacySensitive()
+                                Text(volumeDescription(volume)).font(DS.Typeface.caption).foregroundStyle(.secondary)
                             }
                         }
+                    } header: {
+                        Text("挂载卷").font(DS.Typeface.section)
                     }
                 }
+                .scrollContentBackground(.hidden)
             } else {
                 ContentUnavailableView("正在建立活动基线", systemImage: "waveform.path.ecg", description: Text("第二个可比样本后显示速率。"))
             }
@@ -814,16 +1046,23 @@ private struct ActivityView: View {
 
     private enum MetricFormat { case percent, bytesPerSecond }
 
-    private func metricRow(_ title: String, metric: MetricValue, format: MetricFormat) -> some View {
+    private func metricRow(_ title: String, metric: MetricValue, format: MetricFormat, meter: Bool = false) -> some View {
         HStack {
             VStack(alignment: .leading) {
-                Text(title)
+                Text(title).font(DS.Typeface.body)
                 Text("覆盖率 \(metric.coverage, format: .percent) · 观测 \(metric.observedSeconds, format: .number.precision(.fractionLength(1))) 秒")
-                    .font(.caption)
+                    .font(DS.Typeface.caption)
                     .foregroundStyle(.secondary)
+                    .monospacedDigit()
+            }
+            if meter, let value = metric.value {
+                DSSegmentedMeter(progress: value, color: DS.Chart.series01)
             }
             Spacer()
-            Text(metricText(metric, format: format)).monospacedDigit()
+            Text(metricText(metric, format: format))
+                .font(DS.Typeface.title)
+                .monospacedDigit()
+                .foregroundStyle(metric.value == nil ? .secondary : DS.Semantic.accentPrimary)
         }
     }
 
@@ -863,9 +1102,11 @@ private struct SettingsView: View {
                         Text(model.displayPath(path)).lineLimit(1).truncationMode(.middle).privacySensitive()
                         Spacer()
                         Button("移除", role: .destructive) { model.removeCustomScanLocation(path) }
+                            .buttonStyle(.dsAction(.destructive, size: .compact))
                     }
                 }
                 Button("加入 Agent Home 目录") { model.addCustomScanLocations() }
+                    .buttonStyle(.dsAction())
                 if !model.ignoredScanPaths.isEmpty {
                     Text("忽略位置（优先于其它扫描范围）").font(.caption.bold())
                 }
@@ -874,9 +1115,11 @@ private struct SettingsView: View {
                         Text(model.displayPath(path)).lineLimit(1).truncationMode(.middle).privacySensitive()
                         Spacer()
                         Button("移除", role: .destructive) { model.removeIgnoredScanLocation(path) }
+                            .buttonStyle(.dsAction(.destructive, size: .compact))
                     }
                 }
                 Button("加入忽略位置") { model.addIgnoredScanLocations() }
+                    .buttonStyle(.dsAction())
                 Toggle("隐藏敏感路径", isOn: Binding(
                     get: { model.hideSensitivePaths },
                     set: { model.setHideSensitivePaths($0) }
@@ -917,38 +1160,48 @@ private struct SettingsView: View {
             Section("权限") {
                 LabeledContent("Full Disk Access", value: "请在系统设置查看真实状态")
                 Button("打开 Full Disk Access 设置") { model.openFullDiskAccessSettings() }
+                    .buttonStyle(.dsAction())
                 LabeledContent("Trace Helper", value: "未安装")
                 LabeledContent("登录项", value: model.loginItemStatusText)
                 HStack {
                     Button("启用登录项") { model.setLoginItemEnabled(true) }
+                        .buttonStyle(.dsAction(size: .compact))
                     Button("停用登录项") { model.setLoginItemEnabled(false) }
+                        .buttonStyle(.dsAction(size: .compact))
                 }
             }
             Section("本地数据") {
                 Button("删除本地数据", role: .destructive) { model.deleteLocalData() }
+                    .buttonStyle(.dsAction(.destructive))
                 Button("删除本地数据并准备卸载", role: .destructive) { confirmUninstall = true }
+                    .buttonStyle(.dsAction(.destructive))
                 if let report = model.uninstallReport {
-                    Text(report).font(.caption)
+                    Text(report).font(DS.Typeface.caption)
                     Button("退出 AgentNest") { NSApplication.shared.terminate(nil) }
+                        .buttonStyle(.dsAction())
                 }
                 Text("停止扫描与采集，并删除快照、历史、Receipt 和 Keychain 凭据；不会删除已移入废纸篓的第三方文件。")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(DS.Typeface.caption).foregroundStyle(.secondary)
             }
             Section("License") {
                 LabeledContent("状态", value: model.licenseStatusText)
                 Button("立即重试刷新") { model.retryLicense() }
+                    .buttonStyle(.dsAction())
                     .disabled(!model.licenseConfigurationAvailable)
                 Button("停用这台设备", role: .destructive) { model.deactivateLicense() }
+                    .buttonStyle(.dsAction(.destructive))
                     .disabled(!model.canDeactivateLicense)
             }
             Section("更新") {
                 Button("检查更新") { model.checkForUpdates() }
+                    .buttonStyle(.dsAction())
                     .disabled(!model.updateAvailable || model.isMutatingEnvironment)
                 Text(model.updateAvailable ? "更新包必须同时通过 HTTPS、Sparkle Ed25519 与 Apple 代码签名验证。" : "发布构建尚未配置 HTTPS appcast 与 Sparkle 公钥。")
                     .font(.caption).foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)
+        .scrollContentBackground(.hidden)
         .navigationTitle("设置")
         .alert("准备卸载 AgentNest？", isPresented: $confirmUninstall) {
             Button("清除并准备卸载", role: .destructive) { model.prepareForUninstall() }
@@ -969,14 +1222,42 @@ private struct HistoryView: View {
             } else if model.historyPoints.isEmpty {
                 ContentUnavailableView("尚无历史样本", systemImage: "chart.xyaxis.line", description: Text("有可比活动样本后将保存脱敏聚合。"))
             } else {
-                List(model.historyPoints, id: \.capturedAt) { point in
-                    HStack {
-                        Text(point.capturedAt, format: .dateTime.month().day().hour().minute().second())
-                        Spacer()
-                        Text(point.cpuFraction?.formatted(.percent.precision(.fractionLength(1))) ?? "CPU 不可用")
-                        Text("覆盖率 \(point.coverage, format: .percent)").foregroundStyle(.secondary)
+                List {
+                    if historyCPU.count >= 2 {
+                        Section {
+                            VStack(alignment: .leading, spacing: DS.Space.x200) {
+                                HStack {
+                                    Text("CPU 趋势").font(DS.Typeface.label)
+                                    Spacer()
+                                    DSBadge(text: "最近 \(historyCPU.count) 个样本", color: DS.Chart.series01)
+                                }
+                                DSLineChart(samples: historyCPU, color: DS.Chart.series01, height: 88)
+                                    .accessibilityLabel("CPU 历史趋势折线图")
+                            }
+                            .padding(.vertical, DS.Space.x100)
+                        } header: {
+                            Text("趋势").font(DS.Typeface.section)
+                        }
+                    }
+                    Section {
+                        ForEach(model.historyPoints, id: \.capturedAt) { point in
+                            HStack {
+                                Text(point.capturedAt, format: .dateTime.month().day().hour().minute().second())
+                                    .font(DS.Typeface.data)
+                                Spacer()
+                                Text(point.cpuFraction?.formatted(.percent.precision(.fractionLength(1))) ?? "CPU 不可用")
+                                    .font(DS.Typeface.label)
+                                    .monospacedDigit()
+                                Text("覆盖率 \(point.coverage, format: .percent)")
+                                    .font(DS.Typeface.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    } header: {
+                        Text("脱敏样本").font(DS.Typeface.section)
                     }
                 }
+                .scrollContentBackground(.hidden)
             }
         }
         .navigationTitle("历史")
@@ -988,6 +1269,10 @@ private struct HistoryView: View {
             .disabled(!model.historyEnabled || !model.allows(.export))
         }
         .task { await model.refreshHistory() }
+    }
+
+    private var historyCPU: [Double] {
+        model.historyPoints.map { $0.cpuFraction ?? 0 }
     }
 }
 
