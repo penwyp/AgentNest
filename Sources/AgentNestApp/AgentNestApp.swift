@@ -10,6 +10,7 @@ struct AgentNestApplication: App {
             ContentView(model: model)
                 .frame(minWidth: 900, minHeight: 620)
                 .environment(\.locale, model.appLocale)
+                .tint(DS.Semantic.accentPrimary)
         }
         .defaultSize(width: 1080, height: 720)
 
