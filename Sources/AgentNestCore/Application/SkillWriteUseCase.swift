@@ -7,6 +7,37 @@ public actor SkillWriteUseCase {
 
     public init() {}
 
+    public func ensureSkillRoot(
+        home: URL,
+        expectedHomeIdentity: PhysicalResourceIdentity,
+        relativePath: String
+    ) throws -> URL {
+        guard isValidRootName(relativePath) else { throw SkillWriteError.invalidRelativePath }
+        let home = home.resolvingSymlinksInPath().standardizedFileURL
+        let homeMetadata = try FileMetadata.read(home).node
+        guard homeMetadata.identity == expectedHomeIdentity,
+              homeMetadata.identity.kind == .directory,
+              !homeMetadata.isSymbolicLink else { throw SkillWriteError.targetChanged }
+        let root = home.appending(path: relativePath).standardizedFileURL
+        guard isDirectChild(root, of: home) else { throw SkillWriteError.targetOutsideRoot }
+
+        var isDirectory: ObjCBool = false
+        if FileManager.default.fileExists(atPath: root.path, isDirectory: &isDirectory) {
+            let rootMetadata = try FileMetadata.read(root).node
+            guard isDirectory.boolValue, rootMetadata.identity.kind == .directory, !rootMetadata.isSymbolicLink else {
+                throw SkillWriteError.targetNotDirectory
+            }
+            return root
+        }
+        try FileManager.default.createDirectory(
+            at: root,
+            withIntermediateDirectories: false,
+            attributes: [.posixPermissions: 0o700]
+        )
+        try synchronizeDirectory(home)
+        return root
+    }
+
     public func planCreate(
         generation: UUID,
         skillRoot: URL,
@@ -452,6 +483,13 @@ public actor SkillWriteUseCase {
     private func isValidName(_ name: String) -> Bool {
         guard !name.isEmpty, name.count <= 80, name.first != ".", name.last != "-" else { return false }
         return name.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-" || $0 == "_") }
+    }
+
+    private func isValidRootName(_ name: String) -> Bool {
+        !name.isEmpty &&
+            name != "." &&
+            name != ".." &&
+            name.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "." || $0 == "-" || $0 == "_") }
     }
 
     private func escapeYAMLString(_ value: String) -> String {

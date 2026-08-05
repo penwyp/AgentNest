@@ -64,7 +64,7 @@ public struct AgentDefinitionCatalog: Sendable {
                 try validateArrayObjects(fingerprints[key], allowed: ["kind", "relativePath"], path: "$.fingerprints.\(key)")
             }
         }
-        try validateArrayObjects(root["skills"], allowed: ["relativePath", "format"], path: "$.skills")
+        try validateArrayObjects(root["skills"], allowed: ["relativePath", "format", "writable"], path: "$.skills")
         try validateArrayObjects(root["artifacts"], allowed: ["relativePath", "category", "cleanup"], path: "$.artifacts")
         if let artifacts = root["artifacts"] as? [[String: Any]] {
             for (index, artifact) in artifacts.enumerated() {
@@ -87,6 +87,9 @@ public struct AgentDefinitionCatalog: Sendable {
         }
         for path in definition.homeDiscovery.defaultPaths where !isSafeDefaultHomePath(path) {
             throw AgentDefinitionError.invalidRelativePath(path)
+        }
+        for location in definition.skills where location.writable && location.relativePath.contains("/") {
+            throw AgentDefinitionError.invalidRelativePath(location.relativePath)
         }
         for variable in definition.homeDiscovery.environmentVariables where !isSafeEnvironmentVariable(variable) {
             throw AgentDefinitionError.invalidRelativePath(variable)
@@ -113,14 +116,27 @@ public struct AgentDefinitionCatalog: Sendable {
     }
 
     private static func isSafeRelativePath(_ path: String) -> Bool {
-        guard !path.isEmpty, !path.hasPrefix("/"), !path.contains("\\") else { return false }
+        guard !path.isEmpty,
+              !path.hasPrefix("/"),
+              !path.contains("\\"),
+              !path.contains("*"),
+              !path.contains("?"),
+              !path.contains("["),
+              !path.contains("]") else { return false }
         return path.split(separator: "/", omittingEmptySubsequences: false).allSatisfy { $0 != ".." && !$0.isEmpty }
     }
 
     private static func isSafeDefaultHomePath(_ path: String) -> Bool {
         guard path == "~" || path.hasPrefix("~/") else { return false }
         let suffix = path == "~" ? "home" : String(path.dropFirst(2))
-        return isSafeRelativePath(suffix)
+        guard !suffix.contains("\\"), !suffix.contains("?"), !suffix.contains("[") && !suffix.contains("]") else {
+            return false
+        }
+        let components = suffix.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
+        guard components.allSatisfy({ !$0.isEmpty && $0 != ".." }) else { return false }
+        let wildcardIndexes = components.indices.filter { components[$0].contains("*") }
+        guard wildcardIndexes.allSatisfy({ $0 == components.index(before: components.endIndex) }) else { return false }
+        return wildcardIndexes.isEmpty || components.last != "*"
     }
 
     private static func isSafeEnvironmentVariable(_ value: String) -> Bool {

@@ -67,6 +67,8 @@ check-format:
 	test -z "$$(gofmt -l server)"
 	bash -n e2e/run.sh
 	bash -n deploy/local/runtime/control.sh
+	bash -n Tests/i18n.sh
+	bash Tests/i18n.sh
 	swift package dump-package >/dev/null
 	plutil -lint "$(ROOT_DIR)/Resources/Info.plist"
 	plutil -lint "$(ROOT_DIR)/Resources/en.lproj/Localizable.strings" "$(ROOT_DIR)/Resources/zh-Hans.lproj/Localizable.strings"
