@@ -31,6 +31,25 @@ enum DS {
         static let x450: CGFloat = 18
     }
 
+    // MARK: 组件布局 layout.*
+
+    /// 页面级几何只在这里定义，消费 View 不直接散落尺寸常量。
+    enum Layout {
+        static let pageMaxWidth: CGFloat = 920
+        static let pageHorizontalInset: CGFloat = 32
+        static let pageVerticalInset: CGFloat = 24
+        static let heroIconFrame: CGFloat = 40
+        static let homeActionMinWidth: CGFloat = 168
+    }
+
+    enum IconSize {
+        static let brand: CGFloat = 16
+        static let navigation: CGFloat = 13
+        static let page: CGFloat = 20
+        static let hero: CGFloat = 40
+        static let card: CGFloat = 20
+    }
+
     // MARK: 圆角 radius.*
 
     enum Radius {
@@ -105,6 +124,7 @@ enum DS {
         static let fillSubtle: Double = 0.10
         static let fillStandard: Double = 0.12
         static let borderStandard: Double = 0.13
+        static let iconBorder: Double = 0.18
         static let disabledControl: Double = 0.46
         static let disabledIcon: Double = 0.42
         static let unavailable: Double = 0.30
@@ -135,6 +155,9 @@ enum DS {
         static let enter = 0.28
         static let sample = 0.36
         static let settle = 0.40
+        static let chartHistogram = 0.50
+        static let chartMeter = 0.48
+        static let chartDonut = 0.55
     }
 
     // MARK: 图表色序 chart.color.series.*
@@ -166,6 +189,60 @@ struct DSCanvasBackground: View {
     var body: some View {
         Color(nsColor: DS.Neutral.canvas)
             .ignoresSafeArea()
+    }
+}
+
+/// 原生列表/表单继续负责滚动与可访问性，只移除系统自带的不透明内容底色。
+private struct DSInstrumentListModifier: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .scrollContentBackground(.hidden)
+            .background(Color.clear)
+    }
+}
+
+extension View {
+    func dsInstrumentList() -> some View {
+        modifier(DSInstrumentListModifier())
+    }
+}
+
+/// 页面首部：把标题、说明、状态图标和主操作固定为同一信息层级。
+struct DSPageHeader<Accessory: View>: View {
+    let title: String
+    let subtitle: String
+    let systemImage: String
+    var color: Color = DS.Semantic.accentPrimary
+    @ViewBuilder let accessory: Accessory
+
+    var body: some View {
+        HStack(alignment: .center, spacing: DS.Space.x300) {
+            Image(systemName: systemImage)
+                .font(.system(size: DS.IconSize.page, weight: .medium))
+                .foregroundStyle(color)
+                .frame(width: DS.Layout.heroIconFrame, height: DS.Layout.heroIconFrame)
+                .background(
+                    RoundedRectangle(cornerRadius: DS.Radius.icon, style: .continuous)
+                        .fill(color.opacity(DS.Opacity.fillSubtle))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: DS.Radius.icon, style: .continuous)
+                        .strokeBorder(color.opacity(DS.Opacity.iconBorder), lineWidth: DS.Stroke.hairline)
+                )
+                .accessibilityHidden(true)
+
+            VStack(alignment: .leading, spacing: DS.Space.x100) {
+                Text(title)
+                    .font(DS.Typeface.display)
+                Text(subtitle)
+                    .font(DS.Typeface.body)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: DS.Space.x400)
+            accessory
+        }
     }
 }
 
@@ -288,14 +365,15 @@ struct DSActionButtonStyle: ButtonStyle {
 
     @Environment(\.isEnabled) private var isEnabled
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.controlActiveState) private var controlActiveState
     @State private var isHovering = false
-    @State private var isPressed = false
 
-    private var fill: Color {
+    private func fill(isPressed: Bool) -> Color {
+        let isActiveHovering = isHovering && controlActiveState == .active
         switch variant {
         case .neutral: return Color(nsColor: .controlBackgroundColor).opacity(0.92)
-        case .accent: return DS.Semantic.accentPrimary.opacity(isPressed ? 0.78 : (isHovering ? 0.92 : 0.86))
-        case .destructive: return DS.Semantic.statusCritical.opacity(isPressed ? 0.78 : (isHovering ? 0.90 : 1.0))
+        case .accent: return DS.Semantic.accentPrimary.opacity(isPressed ? 0.78 : (isActiveHovering ? 0.92 : 0.86))
+        case .destructive: return DS.Semantic.statusCritical.opacity(isPressed ? 0.78 : (isActiveHovering ? 0.90 : 1.0))
         }
     }
 
@@ -315,6 +393,7 @@ struct DSActionButtonStyle: ButtonStyle {
     }
 
     func makeBody(configuration: Configuration) -> some View {
+        let isPressed = configuration.isPressed && controlActiveState == .active
         configuration.label
             .font(size.font)
             .foregroundStyle(isEnabled ? foreground : foreground.opacity(DS.Opacity.disabledControl))
@@ -322,7 +401,7 @@ struct DSActionButtonStyle: ButtonStyle {
             .frame(minHeight: size.height)
             .background(
                 RoundedRectangle(cornerRadius: size == .regular ? DS.Radius.controlRegular : DS.Radius.controlCompact, style: .continuous)
-                    .fill(isEnabled ? fill : fill.opacity(DS.Opacity.disabledControl))
+                    .fill(isEnabled ? fill(isPressed: isPressed) : fill(isPressed: false).opacity(DS.Opacity.disabledControl))
             )
             .overlay(
                 RoundedRectangle(
@@ -353,19 +432,10 @@ struct DSActionButtonStyle: ButtonStyle {
                     isHovering = hovering
                 }
             }
-            .simultaneousGesture(
-                DragGesture(minimumDistance: 0)
-                    .onChanged { _ in
-                        withAnimation(reduceMotion ? nil : .easeOut(duration: DS.Motion.press)) {
-                            isPressed = true
-                        }
-                    }
-                    .onEnded { _ in
-                        withAnimation(reduceMotion ? nil : .easeOut(duration: DS.Motion.press)) {
-                            isPressed = false
-                        }
-                    }
-            )
+            .onChange(of: controlActiveState) { _, state in
+                if state != .active { isHovering = false }
+            }
+            .animation(reduceMotion ? nil : .easeOut(duration: DS.Motion.press), value: isPressed)
     }
 }
 
@@ -379,10 +449,12 @@ extension ButtonStyle where Self == DSActionButtonStyle {
 struct DSIconButtonStyle: ButtonStyle {
     @Environment(\.isEnabled) private var isEnabled
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.controlActiveState) private var controlActiveState
     @State private var isHovering = false
-    @State private var isPressed = false
 
     func makeBody(configuration: Configuration) -> some View {
+        let isPressed = configuration.isPressed && controlActiveState == .active
+        let isActiveHovering = isHovering && controlActiveState == .active
         configuration.label
             .font(.system(size: 13, weight: .medium))
             .foregroundStyle(.primary)
@@ -392,7 +464,7 @@ struct DSIconButtonStyle: ButtonStyle {
                     .fill(
                         isPressed
                             ? Color.primary.opacity(0.14)
-                            : (isHovering ? Color.primary.opacity(0.10) : Color(nsColor: .controlBackgroundColor).opacity(0.78))
+                            : (isActiveHovering ? Color.primary.opacity(0.10) : Color(nsColor: .controlBackgroundColor).opacity(0.78))
                     )
             )
             .overlay(
@@ -411,22 +483,13 @@ struct DSIconButtonStyle: ButtonStyle {
             .contentShape(Rectangle())
             .onHover { hovering in
                 withAnimation(reduceMotion ? nil : .easeOut(duration: DS.Motion.hover)) {
-                    isHovering = hovering
+                    self.isHovering = hovering
                 }
             }
-            .simultaneousGesture(
-                DragGesture(minimumDistance: 0)
-                    .onChanged { _ in
-                        withAnimation(reduceMotion ? nil : .easeOut(duration: DS.Motion.press)) {
-                            isPressed = true
-                        }
-                    }
-                    .onEnded { _ in
-                        withAnimation(reduceMotion ? nil : .easeOut(duration: DS.Motion.press)) {
-                            isPressed = false
-                        }
-                    }
-            )
+            .onChange(of: controlActiveState) { _, state in
+                if state != .active { self.isHovering = false }
+            }
+            .animation(reduceMotion ? nil : .easeOut(duration: DS.Motion.press), value: isPressed)
     }
 }
 
@@ -439,24 +502,26 @@ struct DSCardButtonStyle: ButtonStyle {
     var cornerRadius: CGFloat = DS.Radius.panel
     @Environment(\.isEnabled) private var isEnabled
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.controlActiveState) private var controlActiveState
     @State private var isHovering = false
-    @State private var isPressed = false
 
     func makeBody(configuration: Configuration) -> some View {
+        let isPressed = configuration.isPressed && controlActiveState == .active
+        let isActiveHovering = isHovering && controlActiveState == .active
         configuration.label
             .background(
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                     .fill(
                         isPressed
                             ? Color.primary.opacity(0.06)
-                            : (isHovering ? Color.primary.opacity(0.04) : Color(nsColor: DS.Neutral.raised))
+                            : (isActiveHovering ? Color.primary.opacity(0.04) : Color(nsColor: DS.Neutral.raised))
                     )
             )
             .overlay(
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                     .strokeBorder(
-                        Color.primary.opacity(isHovering ? 0.22 : DS.Opacity.borderStandard),
-                        lineWidth: isHovering ? 1 : DS.Stroke.surface
+                        Color.primary.opacity(isActiveHovering ? 0.22 : DS.Opacity.borderStandard),
+                        lineWidth: isActiveHovering ? 1 : DS.Stroke.surface
                     )
             )
             .overlay(alignment: .top) {
@@ -473,25 +538,17 @@ struct DSCardButtonStyle: ButtonStyle {
                     .allowsHitTesting(false)
             }
             .scaleEffect(isPressed && isEnabled ? 0.99 : 1)
+            .shadow(color: Color.black.opacity(0.06), radius: 4, y: 1)
             .contentShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
             .onHover { hovering in
                 withAnimation(reduceMotion ? nil : .easeOut(duration: DS.Motion.hover)) {
-                    isHovering = hovering
+                    self.isHovering = hovering
                 }
             }
-            .simultaneousGesture(
-                DragGesture(minimumDistance: 0)
-                    .onChanged { _ in
-                        withAnimation(reduceMotion ? nil : .easeOut(duration: DS.Motion.press)) {
-                            isPressed = true
-                        }
-                    }
-                    .onEnded { _ in
-                        withAnimation(reduceMotion ? nil : .easeOut(duration: DS.Motion.press)) {
-                            isPressed = false
-                        }
-                    }
-            )
+            .onChange(of: controlActiveState) { _, state in
+                if state != .active { self.isHovering = false }
+            }
+            .animation(reduceMotion ? nil : .easeOut(duration: DS.Motion.press), value: isPressed)
     }
 }
 
@@ -527,7 +584,7 @@ struct DSBadge: View {
 
 /// 微柱状图（chart.bar.radius 1.5 / gap 3 / 最小值 2×3）
 struct DSMicroHistogram: View {
-    let values: [Double]          // 0…1
+    let values: [Double?]         // 0…1；nil 是缺失样本，0 是已知零值
     var color: Color = DS.Chart.series01
     var height: CGFloat = 36
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -537,10 +594,10 @@ struct DSMicroHistogram: View {
             let barWidth = max(2, (proxy.size.width - CGFloat(max(values.count - 1, 0)) * 3) / CGFloat(max(values.count, 1)))
             HStack(alignment: .bottom, spacing: 3) {
                 ForEach(Array(values.enumerated()), id: \.offset) { _, value in
-                    let clamped = min(max(value, 0), 1)
+                    let clamped = value.map { min(max($0, 0), 1) }
                     RoundedRectangle(cornerRadius: 1.5, style: .continuous)
-                        .fill(color.opacity(clamped > 0 ? 0.70 : 0.14))
-                        .frame(width: barWidth, height: max(3, height * clamped))
+                        .fill(clamped == nil ? Color.secondary.opacity(0.14) : color.opacity(0.70))
+                        .frame(width: barWidth, height: max(3, height * (clamped ?? 0)))
                 }
             }
             .frame(maxHeight: .infinity, alignment: .bottom)
@@ -548,11 +605,6 @@ struct DSMicroHistogram: View {
         .frame(height: height)
         .animation(reduceMotion ? nil : .easeInOut(duration: DS.Motion.chartHistogram), value: values)
     }
-}
-
-extension DS.Motion {
-    static let chartHistogram: Double = 0.50
-    static let chartMeter: Double = 0.48
 }
 
 /// 十段校准仪表（chart.meter.segment.*）
@@ -610,13 +662,9 @@ struct DSDonut: View {
     }
 }
 
-extension DS.Motion {
-    static let chartDonut: Double = 0.55
-}
-
 /// 面积折线（轻量：单一 Path 绘制，无模糊无阴影）
 struct DSLineChart: View {
-    let samples: [Double]         // 0…1
+    let samples: [Double?]        // 0…1；nil 表示缺失，不与真实 0 混淆
     var color: Color = DS.Chart.series01
     var showArea: Bool = true
     var height: CGFloat = 48
@@ -627,45 +675,74 @@ struct DSLineChart: View {
             let w = proxy.size.width
             let h = proxy.size.height
             let n = max(samples.count - 1, 1)
-            let points = samples.enumerated().map { index, value in
-                CGPoint(
+            let points: [CGPoint?] = samples.enumerated().map { index, value in
+                value.map {
+                    CGPoint(
                     x: n == 0 ? 0 : (CGFloat(index) / CGFloat(n)) * w,
-                    y: h - CGFloat(min(max(value, 0), 1)) * (h - 4) - 2
-                )
-            }
-            ZStack {
-                if showArea, points.count > 1 {
-                    areaPath(points: points, height: h).fill(LinearGradient(
-                        colors: [color.opacity(DS.Chart.areaOpacity), color.opacity(0)],
-                        startPoint: .top, endPoint: .bottom
-                    ))
-                }
-                if points.count > 1 {
-                    linePath(points: points).stroke(
-                        color,
-                        style: StrokeStyle(lineWidth: DS.Chart.lineWidth, lineCap: .round, lineJoin: .round)
+                        y: h - CGFloat(min(max($0, 0), 1)) * (h - 4) - 2
                     )
                 }
+            }
+            ZStack {
+                if showArea {
+                    areaPath(points: points, height: h).fill(
+                        LinearGradient(
+                            colors: [color.opacity(DS.Chart.areaOpacity), color.opacity(0)],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
+                }
+                linePath(points: points).stroke(
+                    color,
+                    style: StrokeStyle(lineWidth: DS.Chart.lineWidth, lineCap: .round, lineJoin: .round)
+                )
             }
         }
         .frame(height: height)
         .animation(reduceMotion ? nil : .easeInOut(duration: DS.Motion.sample), value: samples)
     }
 
-    private func linePath(points: [CGPoint]) -> Path {
+    private func linePath(points: [CGPoint?]) -> Path {
         var path = Path()
-        guard let first = points.first else { return path }
-        path.move(to: first)
-        for p in points.dropFirst() { path.addLine(to: p) }
+        var startsSegment = true
+        for point in points {
+            guard let point else {
+                startsSegment = true
+                continue
+            }
+            if startsSegment {
+                path.move(to: point)
+                startsSegment = false
+            } else {
+                path.addLine(to: point)
+            }
+        }
         return path
     }
 
-    private func areaPath(points: [CGPoint], height: CGFloat) -> Path {
-        var path = linePath(points: points)
-        guard let last = points.last, let first = points.first else { return path }
-        path.addLine(to: CGPoint(x: last.x, y: height))
-        path.addLine(to: CGPoint(x: first.x, y: height))
-        path.closeSubpath()
+    private func areaPath(points: [CGPoint?], height: CGFloat) -> Path {
+        var path = Path()
+        var segment: [CGPoint] = []
+
+        func appendSegment(_ segment: [CGPoint], to path: inout Path) {
+            guard segment.count > 1, let first = segment.first, let last = segment.last else { return }
+            path.move(to: first)
+            for point in segment.dropFirst() { path.addLine(to: point) }
+            path.addLine(to: CGPoint(x: last.x, y: height))
+            path.addLine(to: CGPoint(x: first.x, y: height))
+            path.closeSubpath()
+        }
+
+        for point in points {
+            if let point {
+                segment.append(point)
+            } else {
+                appendSegment(segment, to: &path)
+                segment.removeAll(keepingCapacity: true)
+            }
+        }
+        appendSegment(segment, to: &path)
         return path
     }
 }

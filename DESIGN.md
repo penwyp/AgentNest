@@ -233,6 +233,23 @@ Reduce Motion 将全部时长解析为 `0 s`，保留最终视觉状态。
 | `surface.divider` | `color.text.primary` at `0.06`，`stroke.hairline` 高 |
 | 内边距 | 水平 `space.200`，垂直 `space.150` |
 
+### 5.6 Page Header（页面首部）
+
+页面首部用于建立“当前对象 + 当前状态 + 主操作”的稳定层级，不承担装饰性 Hero 展示：
+
+| Token | 值 |
+| --- | --- |
+| `layout.page.max-width` | `920 pt` |
+| `layout.page.inset.horizontal` | `32 pt` |
+| `layout.page.inset.vertical` | `24 pt` |
+| `page.header.icon.frame` | `40 pt` 方形，符号 `20 pt Medium` |
+| `page.header.icon.surface` | 当前语义色 `10%` 填充 + `18%` 描边 |
+| `page.header.title` | `type.display` |
+| `page.header.subtitle` | `type.body` / `text.secondary` |
+| `page.header.action.minimum-width` | `168 pt` |
+
+首页扫描状态在页面首部下方使用 `Recessed` 配方就地更新；不得用循环脉冲、旋转图标或放大的装饰图形表达后台工作。
+
 ---
 
 ## 6. 导航配方（侧边栏）
@@ -444,6 +461,9 @@ hover 在指针离开或窗口失活时清除；pressed 不叠加 hover；focus 
 | Action Button | `DSActionButtonStyle`（`.dsAction(_:size:)`） | 扫描、激活、清理、设置 |
 | Icon Button | `DSIconButtonStyle`（`.dsIcon`） | 预留（工具按钮） |
 | Badge | `DSBadge` | Agent 列表、进程行 |
+| 页面布局 / 图标尺寸 | `DS.Layout.*`、`DS.IconSize.*` | 首页、导航、状态行 |
+| 页面首部 | `DSPageHeader` | HomeView |
+| 原生列表画布 | `.dsInstrumentList()` | Agent / Skill / 空间 / 活动 / 设置 / 历史 |
 | 导航行 | `SidebarRow`（ContentView） | 侧边栏 |
 | 面积折线 | `DSLineChart` | HistoryView CPU 趋势 |
 | 微柱状图 | `DSMicroHistogram` | 预留（速率分布） |

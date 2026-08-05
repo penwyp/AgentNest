@@ -340,3 +340,9 @@
 "文件系统操作失败" = "File system operation failed";
 "用户停止了后续清理" = "The user stopped remaining cleanup";
 "另一个扫描或写操作正在进行。" = "Another scan or write operation is in progress.";
+"CPU 趋势" = "CPU Trend";
+"最近 %d 个样本" = "Latest %d samples";
+"CPU 历史趋势折线图" = "CPU history trend line chart";
+"趋势" = "Trends";
+"脱敏样本" = "Redacted Samples";
+"Agent" = "Agent";

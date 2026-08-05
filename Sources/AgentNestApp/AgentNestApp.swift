@@ -4,9 +4,10 @@ import SwiftUI
 @main
 struct AgentNestApplication: App {
     @State private var model = AppModel()
+    @Environment(\.openWindow) private var openWindow
 
     var body: some Scene {
-        WindowGroup("AgentNest") {
+        WindowGroup("AgentNest", id: "main") {
             ContentView(model: model)
                 .frame(minWidth: 900, minHeight: 620)
                 .environment(\.locale, model.appLocale)
@@ -18,6 +19,7 @@ struct AgentNestApplication: App {
             Text(model.menuStatus)
             Divider()
             Button(model.localized("打开 AgentNest")) {
+                openWindow(id: "main")
                 NSApplication.shared.activate(ignoringOtherApps: true)
             }
             if model.isScanning {

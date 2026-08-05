@@ -37,7 +37,7 @@ struct ContentView: View {
         VStack(spacing: 0) {
             HStack(spacing: DS.Space.x200) {
                 Image(systemName: "bird.fill")
-                    .font(.system(size: 16, weight: .medium))
+                    .font(.system(size: DS.IconSize.brand, weight: .medium))
                     .foregroundStyle(DS.Semantic.accentPrimary)
                 Text("AgentNest")
                     .font(DS.Typeface.section)
@@ -101,6 +101,7 @@ private struct SidebarRow: View {
     let item: AppModel.Destination
     @State private var isHovering = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.controlActiveState) private var controlActiveState
 
     private var isSelected: Bool { model.selection == item }
 
@@ -108,7 +109,7 @@ private struct SidebarRow: View {
         Button { model.selection = item } label: {
             HStack(spacing: DS.Space.x250) {
                 Image(systemName: item.systemImage)
-                    .font(.system(size: 13, weight: .medium))
+                    .font(.system(size: DS.IconSize.navigation, weight: .medium))
                     .frame(width: 18)
                     .foregroundStyle(isSelected ? DS.Semantic.accentPrimary : Color.secondary)
                 Text(model.localized(item.rawValue))
@@ -117,7 +118,7 @@ private struct SidebarRow: View {
                 Spacer(minLength: 0)
             }
             .padding(.horizontal, DS.Space.x250)
-            .padding(.vertical, 8)
+            .padding(.vertical, DS.Space.x200)
             .background(
                 RoundedRectangle(cornerRadius: DS.Radius.controlCompact, style: .continuous)
                     .fill(rowFill)
@@ -137,11 +138,14 @@ private struct SidebarRow: View {
                 isHovering = hovering
             }
         }
+        .onChange(of: controlActiveState) { _, state in
+            if state != .active { isHovering = false }
+        }
     }
 
     private var rowFill: Color {
         if isSelected { return DS.Semantic.accentPrimary.opacity(DS.Opacity.fillStandard) }
-        if isHovering { return Color.primary.opacity(0.05) }
+        if isHovering, controlActiveState == .active { return Color.primary.opacity(0.05) }
         return .clear
     }
 }
@@ -210,73 +214,94 @@ private struct ActivationView: View {
 
 private struct HomeView: View {
     @Bindable var model: AppModel
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         ScrollView {
-            VStack(spacing: DS.Space.x400) {
-                VStack(spacing: DS.Space.x250) {
-                    Image(systemName: model.isScanning ? "magnifyingglass.circle.fill" : "bird.fill")
-                        .font(.system(size: 56, weight: .medium))
-                        .foregroundStyle(DS.Semantic.accentPrimary)
-                        .symbolEffect(.pulse, isActive: model.isScanning && !reduceMotion)
-                        .accessibilityHidden(true)
-                    Text(model.localized(model.isScanning ? "正在分析 Agent 目录" : "发现并维护你的 Agent 环境"))
-                        .font(DS.Typeface.display)
-                    Text("仅扫描 Agent Definition 声明和你明确添加的 Agent Home，数据只在本机分析。")
-                        .font(DS.Typeface.body)
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
+            VStack(alignment: .leading, spacing: DS.Space.x400) {
+                DSPageHeader(
+                    title: model.localized(model.isScanning ? "正在分析 Agent 目录" : "发现并维护你的 Agent 环境"),
+                    subtitle: model.localized("仅扫描 Agent Definition 声明和你明确添加的 Agent Home，数据只在本机分析。"),
+                    systemImage: model.isScanning ? "magnifyingglass" : "bird.fill"
+                ) {
+                    if model.isScanning {
+                        Button(model.localized(model.isStoppingScan ? "正在停止…" : "停止"), role: .cancel) {
+                            model.stopScan()
+                        }
+                        .buttonStyle(.dsAction())
+                        .disabled(model.isStoppingScan)
+                    } else {
+                        Button(action: model.startScan) {
+                            Label("扫描", systemImage: "magnifyingglass")
+                                .frame(minWidth: DS.Layout.homeActionMinWidth)
+                        }
+                        .buttonStyle(.dsAction(.accent, size: .large))
+                        .keyboardShortcut(.defaultAction)
+                    }
                 }
-                .padding(.top, DS.Space.x400)
 
                 if let progress = model.progress, model.isScanning {
-                    VStack(spacing: DS.Space.x200) {
-                        ProgressView()
-                            .controlSize(.large)
-                        Text(model.scanPhaseTitle(progress.phase)).font(DS.Typeface.section)
-                        Text(model.localized("已处理 %d 项 · %@", progress.processedCount, model.formatBytes(progress.processedBytes)))
-                            .font(DS.Typeface.caption)
-                            .foregroundStyle(.secondary)
-                        if let location = progress.currentLocation {
-                            Text(model.displayPath(location)).font(DS.Typeface.micro).lineLimit(1).truncationMode(.middle).privacySensitive()
+                    DSRecessed {
+                        HStack(alignment: .center, spacing: DS.Space.x300) {
+                            Image(systemName: "scope")
+                                .font(.system(size: DS.IconSize.card, weight: .medium))
+                                .foregroundStyle(DS.Semantic.accentPrimary)
+                                .accessibilityHidden(true)
+                            VStack(alignment: .leading, spacing: DS.Space.x100) {
+                                Text(model.scanPhaseTitle(progress.phase))
+                                    .font(DS.Typeface.section)
+                                if let location = progress.currentLocation {
+                                    Text(model.displayPath(location))
+                                        .font(DS.Typeface.micro)
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(1)
+                                        .truncationMode(.middle)
+                                        .privacySensitive()
+                                }
+                            }
+                            Spacer(minLength: DS.Space.x400)
+                            Text(model.localized("已处理 %d 项 · %@", progress.processedCount, model.formatBytes(progress.processedBytes)))
+                                .font(DS.Typeface.data)
+                                .foregroundStyle(.secondary)
+                                .monospacedDigit()
                         }
                     }
-                    .padding(DS.Space.x400)
-                    .frame(maxWidth: 520)
-                    .background(
-                        RoundedRectangle(cornerRadius: DS.Radius.panel, style: .continuous)
-                            .fill(Color(nsColor: DS.Neutral.recessed))
-                    )
-                    Button(model.localized(model.isStoppingScan ? "正在停止…" : "停止"), role: .cancel) { model.stopScan() }
-                        .buttonStyle(.dsAction(.neutral, size: .regular))
-                        .disabled(model.isStoppingScan)
-                } else {
-                    Button(action: model.startScan) {
-                        Label("扫描", systemImage: "magnifyingglass")
-                            .font(.system(size: 15, weight: .semibold))
-                            .frame(minWidth: 180)
-                    }
-                    .buttonStyle(.dsAction(.accent, size: .large))
-                    .keyboardShortcut(.defaultAction)
                 }
 
                 if let snapshot = model.snapshot {
                     SnapshotSummary(model: model, snapshot: snapshot)
                     ImpactCards(model: model, snapshot: snapshot)
+                } else if !model.isScanning {
+                    DSCard {
+                        VStack(spacing: DS.Space.x200) {
+                            Image(systemName: "tray")
+                                .font(.system(size: DS.IconSize.hero, weight: .medium))
+                                .foregroundStyle(.tertiary)
+                                .accessibilityHidden(true)
+                            Text("尚无 Agent 结果")
+                                .font(DS.Typeface.section)
+                            Text("先在首页扫描。")
+                                .font(DS.Typeface.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        .frame(maxWidth: .infinity)
+                    }
                 }
+
                 if let error = model.errorMessage {
-                    Label(error, systemImage: "exclamationmark.triangle")
-                        .font(DS.Typeface.body)
-                        .foregroundStyle(DS.Semantic.statusCaution)
-                        .accessibilityLabel(model.localized("扫描状态：%@", error))
+                    DSRecessed {
+                        Label(error, systemImage: "exclamationmark.triangle")
+                            .font(DS.Typeface.body)
+                            .foregroundStyle(DS.Semantic.statusCaution)
+                            .accessibilityLabel(model.localized("扫描状态：%@", error))
+                    }
                 }
             }
-            .padding(.horizontal, 32)
-            .padding(.vertical, 24)
-            .frame(maxWidth: 860)
+            .padding(.horizontal, DS.Layout.pageHorizontalInset)
+            .padding(.vertical, DS.Layout.pageVerticalInset)
+            .frame(maxWidth: DS.Layout.pageMaxWidth)
             .frame(maxWidth: .infinity)
         }
+        .navigationTitle(model.localized("首页"))
     }
 }
 
@@ -463,12 +488,12 @@ private struct AgentListView: View {
                     }
                     .padding(.vertical, DS.Space.x150)
                 }
-                .scrollContentBackground(.hidden)
+                .dsInstrumentList()
             } else {
                 ContentUnavailableView("尚无 Agent 结果", systemImage: "cpu", description: Text("先在首页扫描。"))
             }
         }
-        .navigationTitle("Agent")
+        .navigationTitle(model.localized("Agent"))
     }
 }
 
@@ -553,7 +578,7 @@ private struct SkillView: View {
                         }
                     }
                 }
-                .scrollContentBackground(.hidden)
+                .dsInstrumentList()
             } else if model.snapshot == nil {
                 ContentUnavailableView("尚无 Skill 索引", systemImage: "hammer", description: Text("先在首页扫描。"))
             } else {
@@ -564,7 +589,7 @@ private struct SkillView: View {
                 )
             }
         }
-        .navigationTitle("Skill")
+        .navigationTitle(model.localized("Skill"))
         .toolbar {
             Button {
                 guard let first = model.skillWriteTargets.first else { return }
@@ -589,7 +614,7 @@ private struct SkillView: View {
                     TextField("描述", text: $createDescription)
                 }
                 .formStyle(.grouped)
-                .navigationTitle("新建 Skill")
+                .navigationTitle(model.localized("新建 Skill"))
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) { Button("取消") { isCreating = false } }
                     ToolbarItem(placement: .confirmationAction) {
@@ -632,7 +657,7 @@ private struct SkillView: View {
                     TextField("新目录名", text: $renameText)
                 }
                 .formStyle(.grouped)
-                .navigationTitle("重命名安装目录")
+                .navigationTitle(model.localized("重命名安装目录"))
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) { Button("取消") { renaming = nil } }
                     ToolbarItem(placement: .confirmationAction) {
@@ -820,13 +845,16 @@ private struct StorageView: View {
                                     model.cleanupResultStatusTitle(result.status),
                                     model.cleanupResultCodeTitle(result.code)
                                 ))
-                                    .font(.caption)
-                                    .foregroundStyle(result.status == .failed ? .red : .secondary)
+                                    .font(DS.Typeface.caption)
+                                    .foregroundStyle(result.status == .failed ? DS.Semantic.statusCritical : Color.secondary)
                             }
                         }
                         if model.isCleaning {
                             HStack {
-                                ProgressView()
+                                Image(systemName: "gearshape.2")
+                                    .font(.system(size: DS.IconSize.navigation, weight: .medium))
+                                    .foregroundStyle(DS.Semantic.accentPrimary)
+                                    .accessibilityHidden(true)
                                 Text("正在逐项执行并复验")
                                 Spacer()
                                 Button("停止后续清理") { model.cancelCleanup() }
@@ -933,12 +961,12 @@ private struct StorageView: View {
                         Text("安全清理候选").font(DS.Typeface.section)
                     }
                 }
-                .scrollContentBackground(.hidden)
+                .dsInstrumentList()
             } else {
                 ContentUnavailableView("尚无空间账本", systemImage: "internaldrive", description: Text("空间数字仅来自一次完整索引。"))
             }
         }
-        .navigationTitle("空间")
+        .navigationTitle(model.localized("空间"))
         .sheet(isPresented: $showingCleanupReview) {
             CleanupReviewSheet(model: model, units: pendingReviewUnits) {
                 model.executeCleanup(pendingReviewUnits)
@@ -1125,8 +1153,8 @@ private struct CleanupReviewSheet: View {
                 Text(model.localized(containsPermanentDeletion
                     ? "所选项包含 Agent 官方永久删除，无法从废纸篓恢复。"
                     : "所选项将移入系统废纸篓，可在清空废纸篓前恢复。"))
-                    .font(.callout)
-                    .foregroundStyle(containsPermanentDeletion ? .orange : .secondary)
+                    .font(DS.Typeface.body)
+                    .foregroundStyle(containsPermanentDeletion ? DS.Semantic.statusCaution : Color.secondary)
             }
 
             List(units) { unit in
@@ -1300,12 +1328,12 @@ private struct ActivityView: View {
                         Text("挂载卷").font(DS.Typeface.section)
                     }
                 }
-                .scrollContentBackground(.hidden)
+                .dsInstrumentList()
             } else {
                 ContentUnavailableView("正在建立活动基线", systemImage: "waveform.path.ecg", description: Text("第二个可比样本后显示速率。"))
             }
         }
-        .navigationTitle("活动")
+        .navigationTitle(model.localized("活动"))
     }
 
     private enum MetricFormat { case percent, bytesPerSecond }
@@ -1465,8 +1493,8 @@ private struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .scrollContentBackground(.hidden)
-        .navigationTitle("设置")
+        .dsInstrumentList()
+        .navigationTitle(model.localized("设置"))
         .alert("准备卸载 AgentNest？", isPresented: $confirmUninstall) {
             Button("清除并准备卸载", role: .destructive) { model.prepareForUninstall() }
             Button("取消", role: .cancel) {}
@@ -1487,7 +1515,7 @@ private struct HistoryView: View {
                 ContentUnavailableView("尚无历史样本", systemImage: "chart.xyaxis.line", description: Text("有可比活动样本后将保存脱敏聚合。"))
             } else {
                 List {
-                    if historyCPU.count >= 2 {
+                    if historyCPU.compactMap({ $0 }).count >= 2 {
                         Section {
                             VStack(alignment: .leading, spacing: DS.Space.x200) {
                                 HStack {
@@ -1521,10 +1549,10 @@ private struct HistoryView: View {
                         Text(model.localized("脱敏样本")).font(DS.Typeface.section)
                     }
                 }
-                .scrollContentBackground(.hidden)
+                .dsInstrumentList()
             }
         }
-        .navigationTitle("历史")
+        .navigationTitle(model.localized("历史"))
         .toolbar {
             Menu("导出") {
                 Button("CSV") { model.exportHistoryCSV() }
@@ -1535,7 +1563,7 @@ private struct HistoryView: View {
         .task { await model.refreshHistory() }
     }
 
-    private var historyCPU: [Double] {
-        model.historyPoints.map { $0.cpuFraction ?? 0 }
+    private var historyCPU: [Double?] {
+        model.historyPoints.map(\.cpuFraction)
     }
 }
