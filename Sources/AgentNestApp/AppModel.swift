@@ -122,22 +122,30 @@ final class AppModel {
     }
 
     var menuStatus: String {
-        guard hasCoreAccess else { return localize("需要试用或激活") }
-        if isScanning { return localize("正在扫描") }
+        guard hasCoreAccess else { return localized("需要试用或激活") }
+        if isScanning { return localized("正在扫描") }
         if let snapshot {
-            return String(format: localize("已发现 %d 个 Agent Home"), snapshot.homes.filter { $0.confidence == .confirmed }.count)
+            return localized("已发现 %d 个 Agent Home", snapshot.homes.filter { $0.confidence == .confirmed }.count)
         }
-        return localize("等待扫描")
+        return localized("等待扫描")
     }
 
-    var appLocale: Locale {
-        selectedLanguage == "system" ? .autoupdatingCurrent : Locale(identifier: selectedLanguage)
-    }
+    private var localization: AppLocalization { AppLocalization(selection: selectedLanguage) }
+
+    var appLocale: Locale { localization.locale }
 
     func setLanguage(_ language: String) {
-        guard ["system", "zh-Hans", "en"].contains(language) else { return }
+        guard AppLocalization.supportedSelections.contains(language) else { return }
         selectedLanguage = language
         UserDefaults.standard.set(language, forKey: "selectedLanguage")
+    }
+
+    func localized(_ key: String) -> String {
+        localization.string(key)
+    }
+
+    func localized(_ key: String, _ arguments: CVarArg...) -> String {
+        String(format: localization.string(key), locale: localization.locale, arguments: arguments)
     }
 
     func setHideSensitivePaths(_ hidden: Bool) {
@@ -146,7 +154,7 @@ final class AppModel {
     }
 
     func displayPath(_ path: String) -> String {
-        hideSensitivePaths ? localize("路径已隐藏") : path
+        hideSensitivePaths ? localized("路径已隐藏") : path
     }
 
     var hasCoreAccess: Bool {
@@ -162,13 +170,13 @@ final class AppModel {
 
     var licenseStatusText: String {
         switch licenseState {
-        case .missing: licenseConfigurationAvailable ? localize("尚未开始试用") : localize("授权服务尚未配置")
-        case .valid(let payload): payload.plan == "trial" ? localize("7 天试用中") : String(format: localize("已激活：%@"), payload.plan)
-        case .needsRefresh: localize("授权有效，等待后台刷新")
-        case .expired: localize("试用或授权已到期")
-        case .invalid(let error): String(format: localize("本地授权无效：%@"), error.rawValue)
-        case .rejected(let code): String(format: localize("授权被服务端拒绝：%@"), code)
-        case .serviceUnavailable(let payload): payload == nil ? localize("授权服务暂时不可用") : localize("离线可用，授权服务暂时不可用")
+        case .missing: licenseConfigurationAvailable ? localized("尚未开始试用") : localized("授权服务尚未配置")
+        case .valid(let payload): payload.plan == "trial" ? localized("7 天试用中") : localized("已激活：%@", payload.plan)
+        case .needsRefresh: localized("授权有效，等待后台刷新")
+        case .expired: localized("试用或授权已到期")
+        case .invalid(let error): localized("本地授权无效：%@", error.rawValue)
+        case .rejected(let code): localized("授权被服务端拒绝：%@", code)
+        case .serviceUnavailable(let payload): payload == nil ? localized("授权服务暂时不可用") : localized("离线可用，授权服务暂时不可用")
         }
     }
 
@@ -193,11 +201,11 @@ final class AppModel {
 
     func startScan() {
         guard hasCoreAccess else {
-            errorMessage = localize("请先开始试用或激活 License。")
+            errorMessage = localized("请先开始试用或激活 License。")
             return
         }
         guard !isScanning, let coordinator else {
-            if coordinator == nil { errorMessage = localize("内置 Agent Definition 无法加载") }
+            if coordinator == nil { errorMessage = localized("内置 Agent Definition 无法加载") }
             return
         }
         isScanning = true
@@ -228,9 +236,9 @@ final class AppModel {
                 try? snapshotStore.save(result)
                 await refreshSkillIndex()
             } catch is CancellationError {
-                errorMessage = localize("扫描已停止；上一次完整快照仍保留。")
+                errorMessage = localized("扫描已停止；上一次完整快照仍保留。")
             } catch {
-                errorMessage = String(format: localize("扫描失败：%@"), error.localizedDescription)
+                errorMessage = localized("扫描失败：%@", error.localizedDescription)
             }
             isScanning = false
             isStoppingScan = false
@@ -250,7 +258,7 @@ final class AppModel {
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
         panel.allowsMultipleSelection = true
-        panel.prompt = localize("加入 Agent Home")
+        panel.prompt = localized("加入 Agent Home")
         guard panel.runModal() == .OK else { return }
         var seen = Set(customScanPaths)
         for url in panel.urls.map({ $0.resolvingSymlinksInPath().standardizedFileURL }) {
@@ -270,7 +278,7 @@ final class AppModel {
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
         panel.allowsMultipleSelection = true
-        panel.prompt = localize("加入忽略位置")
+        panel.prompt = localized("加入忽略位置")
         guard panel.runModal() == .OK else { return }
         var seen = Set(ignoredScanPaths)
         for url in panel.urls.map({ $0.resolvingSymlinksInPath().standardizedFileURL }) {
@@ -314,11 +322,11 @@ final class AppModel {
 
     var loginItemStatusText: String {
         switch SMAppService.mainApp.status {
-        case .enabled: localize("已启用")
-        case .requiresApproval: localize("等待系统批准")
-        case .notRegistered: localize("未启用")
-        case .notFound: localize("当前构建不可用")
-        @unknown default: localize("状态未知")
+        case .enabled: localized("已启用")
+        case .requiresApproval: localized("等待系统批准")
+        case .notRegistered: localized("未启用")
+        case .notFound: localized("当前构建不可用")
+        @unknown default: localized("状态未知")
         }
     }
 
@@ -330,7 +338,7 @@ final class AppModel {
                 try SMAppService.mainApp.unregister()
             }
         } catch {
-            errorMessage = "登录项更新失败：\(String(describing: error))"
+            errorMessage = localized("登录项更新失败：%@", String(describing: error))
         }
     }
 
@@ -363,16 +371,16 @@ final class AppModel {
 
     func executeCleanup(_ unit: CleanupUnit) {
         guard allows(.cleanup), let generation = snapshot?.generation else {
-            cleanupOperationMessage = localize("当前 License 不包含清理。")
+            cleanupOperationMessage = localized("当前 License 不包含清理。")
             return
         }
         guard !updateController.sessionInProgress else {
-            cleanupOperationMessage = localize("更新进行中，暂不能修改 Agent 环境。")
+            cleanupOperationMessage = localized("更新进行中，暂不能修改 Agent 环境。")
             return
         }
         let plan = CleanupPolicy().plan(generation: generation, selected: [unit])
         guard !plan.units.isEmpty else {
-            cleanupOperationMessage = localize("目标受风险或活动保护，未执行。")
+            cleanupOperationMessage = localized("目标受风险或活动保护，未执行。")
             return
         }
         Task {
@@ -380,8 +388,8 @@ final class AppModel {
             defer { isMutatingEnvironment = false }
             let results = await CleanupExecutor().execute(plan, currentGeneration: generation)
             cleanupOperationMessage = results.first?.status == .succeeded
-                ? localize("已移到废纸篓，正在重新扫描。")
-                : "清理未完成：\(results.first?.code ?? "cleanup.unknown")"
+                ? localized("已移到废纸篓，正在重新扫描。")
+                : localized("清理未完成：%@", results.first?.code ?? "cleanup.unknown")
             if results.contains(where: { $0.status == .succeeded }) { rescanHome(at: unit.homePath) }
         }
     }
@@ -409,9 +417,9 @@ final class AppModel {
                 try? snapshotStore.save(result)
                 await refreshSkillIndex()
             } catch is CancellationError {
-                errorMessage = localize("扫描已停止；上一次完整快照仍保留。")
+                errorMessage = localized("扫描已停止；上一次完整快照仍保留。")
             } catch {
-                errorMessage = String(format: localize("扫描失败：%@"), error.localizedDescription)
+                errorMessage = localized("扫描失败：%@", error.localizedDescription)
             }
             isScanning = false
             isStoppingScan = false
@@ -430,7 +438,7 @@ final class AppModel {
 
     func createSkill(target: SkillWriteTarget, name: String, description: String) {
         guard allows(.skillWrite), let generation = snapshot?.generation else {
-            skillOperationMessage = localize("当前 License 不包含 Skill 写入。")
+            skillOperationMessage = localized("当前 License 不包含 Skill 写入。")
             return
         }
         runSkillOperation { writer in
@@ -446,7 +454,7 @@ final class AppModel {
 
     func editSkill(_ installation: SkillInstallation, mainDocument: String) {
         guard allows(.skillWrite), let generation = snapshot?.generation else {
-            skillOperationMessage = localize("当前 License 不包含 Skill 写入。")
+            skillOperationMessage = localized("当前 License 不包含 Skill 写入。")
             return
         }
         runSkillOperation { writer in
@@ -464,7 +472,7 @@ final class AppModel {
 
     func renameSkillInstallation(_ installation: SkillInstallation, destinationName: String) {
         guard allows(.skillWrite), let generation = snapshot?.generation else {
-            skillOperationMessage = localize("当前 License 不包含 Skill 写入。")
+            skillOperationMessage = localized("当前 License 不包含 Skill 写入。")
             return
         }
         runSkillOperation { writer in
@@ -482,7 +490,7 @@ final class AppModel {
 
     func deleteSkillInstallation(_ installation: SkillInstallation) {
         guard allows(.skillWrite), let generation = snapshot?.generation else {
-            skillOperationMessage = localize("当前 License 不包含 Skill 写入。")
+            skillOperationMessage = localized("当前 License 不包含 Skill 写入。")
             return
         }
         runSkillOperation { writer in
@@ -500,11 +508,11 @@ final class AppModel {
     func patchSkillToMissingHomes(_ skill: LogicalSkill) {
         guard allows(.patch), let generation = snapshot?.generation,
               let source = skill.variants.flatMap(\.installations).first(where: { $0.state == .valid }) else {
-            skillOperationMessage = localize("当前 License 不包含补齐，或没有可用来源 Variant。")
+            skillOperationMessage = localized("当前 License 不包含补齐，或没有可用来源 Variant。")
             return
         }
         guard !updateController.sessionInProgress else {
-            skillOperationMessage = localize("更新进行中，暂不能修改 Agent 环境。")
+            skillOperationMessage = localized("更新进行中，暂不能修改 Agent 环境。")
             return
         }
         let targets = skillWriteTargets.filter { skill.missingHomeIDs.contains($0.homeID) }
@@ -527,10 +535,10 @@ final class AppModel {
                 let results = await writer.executeSerial(plans, currentGeneration: generation)
                 let succeeded = results.filter { $0.status == .succeeded }.count
                 let failed = results.filter { $0.status == .failed }.count
-                skillOperationMessage = "补齐完成：成功 \(succeeded)，失败 \(failed)。"
+                skillOperationMessage = localized("补齐完成：成功 %d，失败 %d。", succeeded, failed)
                 await refreshSkillIndex()
             } catch {
-                skillOperationMessage = "Skill 补齐预检失败：\(String(describing: error))"
+                skillOperationMessage = localized("Skill 补齐预检失败：%@", String(describing: error))
             }
         }
     }
@@ -544,7 +552,7 @@ final class AppModel {
     ) {
         skillOperationMessage = nil
         guard !updateController.sessionInProgress else {
-            skillOperationMessage = localize("更新进行中，暂不能修改 Agent 环境。")
+            skillOperationMessage = localized("更新进行中，暂不能修改 Agent 环境。")
             return
         }
         Task {
@@ -552,10 +560,10 @@ final class AppModel {
             defer { isMutatingEnvironment = false }
             do {
                 try await operation(SkillWriteUseCase())
-                skillOperationMessage = localize("Skill 操作成功。")
+                skillOperationMessage = localized("Skill 操作成功。")
                 await refreshSkillIndex()
             } catch {
-                skillOperationMessage = "Skill 操作失败：\(String(describing: error))"
+                skillOperationMessage = localized("Skill 操作失败：%@", String(describing: error))
             }
         }
     }
@@ -579,7 +587,7 @@ final class AppModel {
                 }
             }
             if recovered > 0 || failed > 0 {
-                skillOperationMessage = "Skill 暂存恢复：已移到废纸篓 \(recovered)，失败 \(failed)。"
+                skillOperationMessage = localized("Skill 暂存恢复：已移到废纸篓 %d，失败 %d。", recovered, failed)
             }
         }
         skillIndex = await SkillIndexUseCase(catalog: catalog).execute(homes: snapshot.homes)
@@ -641,7 +649,7 @@ final class AppModel {
 
     func checkForUpdates() {
         guard !isMutatingEnvironment else {
-            errorMessage = localize("Agent 环境写入进行中，完成后再检查更新。")
+            errorMessage = localized("Agent 环境写入进行中，完成后再检查更新。")
             return
         }
         updateController.checkForUpdates()
@@ -656,7 +664,7 @@ final class AppModel {
                 licenseState = .missing
                 reconcileLicensedTasks()
             } catch {
-                errorMessage = "停用设备失败：\(String(describing: error))"
+                errorMessage = localized("停用设备失败：%@", String(describing: error))
             }
         }
     }
@@ -736,7 +744,7 @@ final class AppModel {
 
     func setHistoryEnabled(_ value: Bool) {
         guard !value || allows(.history) else {
-            errorMessage = localize("当前 License 不包含历史保存。")
+            errorMessage = localized("当前 License 不包含历史保存。")
             historyEnabled = false
             return
         }
@@ -768,7 +776,7 @@ final class AppModel {
 
     func exportHistoryCSV() {
         guard allows(.export) else {
-            errorMessage = localize("当前 License 不包含导出。")
+            errorMessage = localized("当前 License 不包含导出。")
             return
         }
         Task {
@@ -785,7 +793,7 @@ final class AppModel {
 
     func exportHistoryPDF() {
         guard allows(.export) else {
-            errorMessage = localize("当前 License 不包含导出。")
+            errorMessage = localized("当前 License 不包含导出。")
             return
         }
         Task {
@@ -831,7 +839,7 @@ final class AppModel {
 
     func prepareForUninstall() {
         guard !updateController.sessionInProgress else {
-            uninstallReport = localize("更新进行中，无法准备卸载。")
+            uninstallReport = localized("更新进行中，无法准备卸载。")
             return
         }
         stopScan()
@@ -870,8 +878,8 @@ final class AppModel {
             userConfirmedHomes = [:]
             licenseState = .missing
             uninstallReport = failures.isEmpty
-                ? localize("本地数据、登录项与凭据已清除；现在可退出并将 AgentNest.app 移到废纸篓。")
-                : "准备卸载完成，但以下项目需人工检查：\(failures.joined(separator: ", "))"
+                ? localized("本地数据、登录项与凭据已清除；现在可退出并将 AgentNest.app 移到废纸篓。")
+                : localized("准备卸载完成，但以下项目需人工检查：%@", failures.joined(separator: ", "))
         }
     }
 
@@ -882,12 +890,4 @@ final class AppModel {
         return Data(base64Encoded: value)
     }
 
-    private func localize(_ key: String) -> String {
-        guard selectedLanguage != "system",
-              let path = Bundle.main.path(forResource: selectedLanguage, ofType: "lproj"),
-              let bundle = Bundle(path: path) else {
-            return NSLocalizedString(key, bundle: .main, comment: "")
-        }
-        return NSLocalizedString(key, bundle: bundle, comment: "")
-    }
 }

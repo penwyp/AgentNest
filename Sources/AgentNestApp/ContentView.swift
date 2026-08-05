@@ -16,7 +16,7 @@ struct ContentView: View {
         NavigationSplitView {
             List(AppModel.Destination.allCases, selection: $model.selection) { item in
                 Label {
-                    Text(LocalizedStringKey(item.rawValue))
+                    Text(model.localized(item.rawValue))
                 } icon: {
                     Image(systemName: item.systemImage)
                 }
@@ -93,7 +93,7 @@ private struct HomeView: View {
                 .foregroundStyle(.tint)
                 .symbolEffect(.pulse, isActive: model.isScanning && !reduceMotion)
                 .accessibilityHidden(true)
-            Text(model.isScanning ? "正在分析 Agent 目录" : "发现并维护你的 Agent 环境")
+            Text(model.localized(model.isScanning ? "正在分析 Agent 目录" : "发现并维护你的 Agent 环境"))
                 .font(.largeTitle.bold())
             Text("仅扫描 Agent Definition 声明和你明确添加的 Agent Home，数据只在本机分析。")
                 .foregroundStyle(.secondary)
@@ -102,8 +102,8 @@ private struct HomeView: View {
             if let progress = model.progress, model.isScanning {
                 VStack(spacing: 8) {
                     ProgressView()
-                    Text(phaseTitle(progress.phase)).font(.headline)
-                    Text("已处理 \(progress.processedCount) 项 · \(ByteCountFormatter.string(fromByteCount: Int64(progress.processedBytes), countStyle: .file))")
+                    Text(model.scanPhaseTitle(progress.phase)).font(.headline)
+                    Text(model.localized("已处理 %d 项 · %@", progress.processedCount, model.formatBytes(progress.processedBytes)))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     if let location = progress.currentLocation {
@@ -111,7 +111,7 @@ private struct HomeView: View {
                     }
                 }
                 .frame(maxWidth: 520)
-                Button(model.isStoppingScan ? "正在停止…" : "停止", role: .cancel) { model.stopScan() }
+                Button(model.localized(model.isStoppingScan ? "正在停止…" : "停止"), role: .cancel) { model.stopScan() }
                     .disabled(model.isStoppingScan)
             } else {
                 Button(action: model.startScan) {
@@ -124,29 +124,19 @@ private struct HomeView: View {
             }
 
             if let snapshot = model.snapshot {
-                SnapshotSummary(snapshot: snapshot)
+                SnapshotSummary(model: model, snapshot: snapshot)
                 ImpactCards(model: model, snapshot: snapshot)
             }
             if let error = model.errorMessage {
                 Label(error, systemImage: "exclamationmark.triangle")
                     .foregroundStyle(.orange)
-                    .accessibilityLabel("扫描状态：\(error)")
+                    .accessibilityLabel(model.localized("扫描状态：%@", error))
             }
             Spacer()
         }
         .padding(32)
     }
 
-    private func phaseTitle(_ phase: ScanPhase) -> String {
-        switch phase {
-        case .discoveringAgents: String(localized: "发现 Agent")
-        case .validatingHomes: String(localized: "验证 Home / Profile")
-        case .indexingSkills: String(localized: "索引 Skill")
-        case .measuringSpace: String(localized: "测量空间")
-        case .generatingFindings: String(localized: "生成安全与活动结论")
-        case .reconciling: String(localized: "对账并完成")
-        }
-    }
 }
 
 private struct ImpactCards: View {
@@ -158,15 +148,16 @@ private struct ImpactCards: View {
             GridRow {
                 card(
                     title: "Agent",
-                    value: "\(snapshot.homes.filter { $0.confidence == .confirmed }.count) 个 Home",
-                    detail: snapshot.homes.contains { $0.confidence == .possible } ? "有疑似位置待确认" : "发现结果已核验",
+                    value: model.localized("%d 个 Home", snapshot.homes.filter { $0.confidence == .confirmed }.count),
+                    detail: model.localized(snapshot.homes.contains { $0.confidence == .possible } ? "有疑似位置待确认" : "发现结果已核验"),
                     icon: "cpu",
                     destination: .agents
                 )
                 card(
                     title: "Skill",
-                    value: "\(model.skillIndex?.installationCount ?? 0) 个安装",
-                    detail: model.skillIndex.map { "\($0.conflictCount) 个冲突 · \($0.invalidCount) 个无效" } ?? "当前 Agent 未声明 Skill 来源",
+                    value: model.localized("%d 个安装", model.skillIndex?.installationCount ?? 0),
+                    detail: model.skillIndex.map { model.localized("%d 个冲突 · %d 个无效", $0.conflictCount, $0.invalidCount) }
+                        ?? model.localized("当前 Agent 未声明 Skill 来源"),
                     icon: "hammer",
                     destination: .skills
                 )
@@ -174,7 +165,7 @@ private struct ImpactCards: View {
             GridRow {
                 card(
                     title: "空间",
-                    value: ByteCountFormatter.string(fromByteCount: Int64(snapshot.totalStorage.physicalBytes), countStyle: .file),
+                    value: model.formatBytes(snapshot.totalStorage.physicalBytes),
                     detail: largestStorageCategory(snapshot),
                     icon: "internaldrive",
                     destination: .storage
@@ -214,39 +205,40 @@ private struct ImpactCards: View {
             .background(.quaternary, in: RoundedRectangle(cornerRadius: 14))
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("\(title)：\(value)。\(detail)")
-        .accessibilityHint("打开\(title)详情")
+        .accessibilityLabel(model.localized("%@：%@。%@", title, value, detail))
+        .accessibilityHint(model.localized("打开%@详情", title))
     }
 
     private var activityValue: String {
-        guard let cpu = model.activitySnapshot?.cpuFraction.value else { return "正在建立基线" }
-        return cpu.formatted(.percent.precision(.fractionLength(1))) + " CPU"
+        guard let cpu = model.activitySnapshot?.cpuFraction.value else { return model.localized("正在建立基线") }
+        return model.localized("%@ CPU", model.formatPercent(cpu))
     }
 
     private var activityDetail: String {
-        guard let activity = model.activitySnapshot else { return "第二个可比样本后显示速率" }
+        guard let activity = model.activitySnapshot else { return model.localized("第二个可比样本后显示速率") }
         let agents = activity.processes.filter { $0.attribution == .agent }.count
-        return "\(agents) 个已归因 Agent 进程 · \(activity.droppedEvidenceCount) 个证据缺口"
+        return model.localized("%d 个已归因 Agent 进程 · %d 个证据缺口", agents, activity.droppedEvidenceCount)
     }
 
     private func largestStorageCategory(_ snapshot: DeviceSnapshot) -> String {
         let totals = Dictionary(grouping: snapshot.storageLedger.artifacts, by: \.category).mapValues {
             $0.reduce(UInt64(0)) { $0 &+ $1.storage.physicalBytes }
         }
-        guard let largest = totals.max(by: { $0.value < $1.value }) else { return "暂无物理资源" }
-        return "最大类别：\(largest.key == .unattributed ? "未归属" : largest.key.rawValue)"
+        guard let largest = totals.max(by: { $0.value < $1.value }) else { return model.localized("暂无物理资源") }
+        return model.localized("最大类别：%@", model.artifactCategoryTitle(largest.key))
     }
 }
 
 private struct SnapshotSummary: View {
+    @Bindable var model: AppModel
     let snapshot: DeviceSnapshot
 
     var body: some View {
         HStack(spacing: 28) {
-            metric("Agent Home", "\(snapshot.homes.filter { $0.confidence == .confirmed }.count)")
-            metric("疑似", "\(snapshot.homes.filter { $0.confidence == .possible }.count)")
-            metric("物理占用", ByteCountFormatter.string(fromByteCount: Int64(snapshot.totalStorage.physicalBytes), countStyle: .file))
-            metric("完整度", snapshot.isPartial ? "部分" : "完整")
+            metric(model.localized("Agent Home"), "\(snapshot.homes.filter { $0.confidence == .confirmed }.count)")
+            metric(model.localized("疑似"), "\(snapshot.homes.filter { $0.confidence == .possible }.count)")
+            metric(model.localized("物理占用"), model.formatBytes(snapshot.totalStorage.physicalBytes))
+            metric(model.localized("完整度"), model.localized(snapshot.isPartial ? "部分" : "完整"))
         }
         .padding()
         .background(.quaternary, in: RoundedRectangle(cornerRadius: 14))
@@ -270,16 +262,16 @@ private struct AgentListView: View {
                     VStack(alignment: .leading, spacing: 5) {
                         HStack {
                             Text(home.displayName).font(.headline)
-                            Text(home.confidence == .confirmed ? "已确认" : "疑似")
+                            Text(model.localized(home.confidence == .confirmed ? "已确认" : "疑似"))
                                 .font(.caption)
                                 .foregroundStyle(home.confidence == .confirmed ? .green : .orange)
                         }
                         Text(model.displayPath(home.path)).font(.caption).foregroundStyle(.secondary).privacySensitive()
-                        Text("\(home.source.rawValue) · \(ByteCountFormatter.string(fromByteCount: Int64(home.storage.physicalBytes), countStyle: .file))")
+                        Text(model.localized("%@ · %@", model.discoverySourceTitle(home.source), model.formatBytes(home.storage.physicalBytes)))
                             .font(.caption2)
                         if home.confidence == .possible {
                             HStack {
-                                Button("确认为 \(home.displayName)") { model.confirmCandidate(home) }
+                                Button(model.localized("确认为 %@", home.displayName)) { model.confirmCandidate(home) }
                                 Button("忽略此位置", role: .destructive) { model.ignoreCandidate(home) }
                             }
                         } else if home.source == .userConfirmed {
@@ -333,7 +325,7 @@ private struct SkillView: View {
                                                 .foregroundStyle(.secondary)
                                                 .privacySensitive()
                                             HStack {
-                                                Text("\(installation.fileCount) 文件 · \(bytes(installation.totalBytes))")
+                                                Text(model.localized("%d 个文件 · %@", installation.fileCount, bytes(installation.totalBytes)))
                                                     .font(.caption2)
                                                 Spacer()
                                                 Button("编辑") { beginEdit(installation) }
@@ -345,13 +337,13 @@ private struct SkillView: View {
                                         .padding(.vertical, 4)
                                     }
                                 } label: {
-                                    Text("Variant \(variant.contentHash.prefix(12)) · \(variant.installations.count) 个副本")
+                                    Text(model.localized("Variant %@ · %d 个副本", String(variant.contentHash.prefix(12)), variant.installations.count))
                                         .font(.headline)
                                         .monospaced()
                                 }
                             }
                             if !skill.missingHomeIDs.isEmpty {
-                                Button("补齐到 \(skill.missingHomeIDs.count) 个缺失 Home") {
+                                Button(model.localized("补齐到 %d 个缺失 Home", skill.missingHomeIDs.count)) {
                                     model.patchSkillToMissingHomes(skill)
                                 }
                                 .disabled(!model.allows(.patch))
@@ -360,7 +352,7 @@ private struct SkillView: View {
                             HStack {
                                 Text(skill.name)
                                 Spacer()
-                                Text("\(skill.variants.count) Variant · 缺失 \(skill.missingHomeIDs.count)")
+                                Text(model.localized("%d 个 Variant · 缺失 %d 个 Home", skill.variants.count, skill.missingHomeIDs.count))
                                     .foregroundStyle(.secondary)
                             }
                         }
@@ -422,7 +414,7 @@ private struct SkillView: View {
                 TextEditor(text: $editorText)
                     .font(.system(.body, design: .monospaced))
                     .padding()
-                    .navigationTitle("编辑 \(installation.name)")
+                    .navigationTitle(model.localized("编辑 %@", installation.name))
                     .toolbar {
                         ToolbarItem(placement: .cancellationAction) { Button("取消") { editing = nil } }
                         ToolbarItem(placement: .confirmationAction) {
@@ -481,7 +473,7 @@ private struct SkillView: View {
             editorText = try model.loadSkillMainDocument(installation)
             editing = installation
         } catch {
-            localError = "无法读取 SKILL.md：\(String(describing: error))"
+            localError = model.localized("无法读取 SKILL.md：%@", String(describing: error))
         }
     }
 
@@ -491,7 +483,7 @@ private struct SkillView: View {
     }
 
     private func bytes(_ value: UInt64) -> String {
-        ByteCountFormatter.string(fromByteCount: Int64(value), countStyle: .file)
+        model.formatBytes(value)
     }
 }
 
@@ -526,7 +518,7 @@ private struct StorageView: View {
                         Picker("类别", selection: $selectedCategory) {
                             Text("全部类别").tag("*")
                             ForEach(ArtifactCategory.allCases, id: \.rawValue) { category in
-                                Text(categoryTitle(category)).tag(category.rawValue)
+                                Text(model.artifactCategoryTitle(category)).tag(category.rawValue)
                             }
                         }
 
@@ -560,7 +552,7 @@ private struct StorageView: View {
                                 HStack {
                                     VStack(alignment: .leading, spacing: 4) {
                                         Text(group.ownerIsPath ? model.displayPath(group.ownerTitle) : group.ownerTitle)
-                                        Text("\(group.volumeTitle) · \(categoryTitle(group.category)) · \(group.itemCount) 项")
+                                        Text(model.localized("%@ · %@ · %d 项", group.volumeTitle, model.artifactCategoryTitle(group.category), group.itemCount))
                                             .font(.caption)
                                             .foregroundStyle(.secondary)
                                     }
@@ -584,7 +576,12 @@ private struct StorageView: View {
                                 HStack {
                                     VStack(alignment: .leading, spacing: 4) {
                                         Text(unit.name)
-                                        Text("\(unit.category) · \(unit.risk.rawValue) · \(unit.activity.rawValue)")
+                                        Text(model.localized(
+                                            "%@ · %@ · %@",
+                                            model.artifactCategoryTitle(ArtifactCategory(definitionValue: unit.category)),
+                                            model.artifactRiskTitle(unit.risk),
+                                            model.activityProtectionTitle(unit.activity)
+                                        ))
                                             .font(.caption).foregroundStyle(.secondary)
                                     }
                                     Spacer()
@@ -612,7 +609,14 @@ private struct StorageView: View {
             }
             Button("取消", role: .cancel) { pendingCleanup = nil }
         } message: { unit in
-            Text("\(model.displayPath(unit.path))\n预计物理占用：\(bytes(unit.storage.physicalBytes))\n风险：\(unit.risk.rawValue)；活动：\(unit.activity.rawValue)；方式：\(unit.method.rawValue)")
+            Text(model.localized(
+                "%@\n预计物理占用：%@\n风险：%@；活动：%@；方式：%@",
+                model.displayPath(unit.path),
+                bytes(unit.storage.physicalBytes),
+                model.artifactRiskTitle(unit.risk),
+                model.activityProtectionTitle(unit.activity),
+                model.cleanupMethodTitle(unit.method)
+            ))
                 .privacySensitive()
         }
     }
@@ -656,7 +660,7 @@ private struct StorageView: View {
             let ownerIsPath: Bool
             if artifact.attribution == .shared {
                 ownerKey = "shared"
-                ownerTitle = "共享资源"
+                ownerTitle = model.localized("共享资源")
                 ownerIsPath = false
             } else if let home = artifact.homeIDs.first.flatMap({ homesByID[$0] }) {
                 ownerKey = "home:\(home.path)"
@@ -664,7 +668,7 @@ private struct StorageView: View {
                 ownerIsPath = true
             } else {
                 ownerKey = "unattributed"
-                ownerTitle = "未归属资源"
+                ownerTitle = model.localized("未归属资源")
                 ownerIsPath = false
             }
             let key = "\(artifact.id.device)|\(ownerKey)|\(artifact.category.rawValue)"
@@ -693,27 +697,13 @@ private struct StorageView: View {
 
     private func volumeTitle(device: UInt64) -> String {
         if let volume = model.activitySnapshot?.volumes.first(where: { $0.id.device == device }) {
-            return model.hideSensitivePaths ? volume.name : "\(volume.name)（\(volume.mountPath)）"
+            return model.hideSensitivePaths ? volume.name : model.localized("%@（%@）", volume.name, volume.mountPath)
         }
-        return "未知卷（device \(device)）"
+        return model.localized("未知卷（device %llu）", device)
     }
 
     private func bytes(_ value: UInt64) -> String {
-        ByteCountFormatter.string(fromByteCount: Int64(value), countStyle: .file)
-    }
-
-    private func categoryTitle(_ category: ArtifactCategory) -> String {
-        switch category {
-        case .sessions: "会话"
-        case .cache: "缓存"
-        case .logs: "日志"
-        case .runtime: "运行时"
-        case .browser: "浏览器"
-        case .database: "数据库"
-        case .skill: "Skill"
-        case .configuration: "配置"
-        case .unattributed: "未归属"
-        }
+        model.formatBytes(value)
     }
 }
 

@@ -16,25 +16,25 @@ struct AgentNestApplication: App {
         MenuBarExtra("AgentNest", systemImage: model.isScanning ? "magnifyingglass.circle.fill" : "bird") {
             Text(model.menuStatus)
             Divider()
-            Button("打开 AgentNest") {
+            Button(model.localized("打开 AgentNest")) {
                 NSApplication.shared.activate(ignoringOtherApps: true)
             }
             if model.isScanning {
-                Button("停止扫描") { model.stopScan() }
+                Button(model.localized("停止扫描")) { model.stopScan() }
             } else {
-                Button("开始扫描") { model.startScan() }
+                Button(model.localized("开始扫描")) { model.startScan() }
             }
             Divider()
-            Button("退出") { NSApplication.shared.terminate(nil) }
+            Button(model.localized("退出")) { NSApplication.shared.terminate(nil) }
         }
         .commands {
             CommandMenu("AgentNest") {
-                Button("开始扫描") { model.startScan() }
+                Button(model.localized("开始扫描")) { model.startScan() }
                     .keyboardShortcut("s", modifiers: [.command, .shift])
-                Button("停止扫描") { model.stopScan() }
+                Button(model.localized("停止扫描")) { model.stopScan() }
                     .disabled(!model.isScanning)
                 Divider()
-                Button("检查更新") { model.checkForUpdates() }
+                Button(model.localized("检查更新")) { model.checkForUpdates() }
                     .disabled(!model.updateAvailable || model.isMutatingEnvironment)
             }
         }
