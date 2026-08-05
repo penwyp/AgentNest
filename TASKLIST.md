@@ -1,6 +1,6 @@
 # AgentNest 开发任务清单与进度
 
-> 真源：`prd.md` v2.1。状态：`[x]` 已完成并验证，`[~]` 已实现但仍缺发布级验证，`[ ]` 未完成，`[!]` 依赖外部确认或凭据。
+> 真源：`prd.md` v2.2。状态：`[x]` 已完成并验证，`[~]` 已实现但仍缺发布级验证，`[ ]` 未完成，`[!]` 依赖外部确认或凭据。
 >
 > 完成定义：代码存在不等于完成；每项必须同时具备对应测试或可复现验收命令。总体完成还要求 `make build`、`make test`、`make e2e` 全部通过。
 
@@ -104,7 +104,8 @@
 
 ## 待确认决策（来自 PRD 24）
 
-- [!] Codex `version.json` 稳定字段以及 Skill/Artifact/会话/官方清理的匿名真实 fixture。
+- [!] Codex `version.json` 稳定字段以及其它 Skill/Artifact 的匿名真实 fixture。
+- [x] Codex 会话父子关系、rollout 空间成员与官方 `thread/delete` 已有匿名 fixture，覆盖关系变化后的 fail-closed 复验。
 - [!] Claude Code、WorkBuddy 等新 Definition 的官方路径与 fixture；确认前保持空定义。
 - [!] 7 天试用为概要能力还是全功能。
 - [!] License 设备额度、换机、解绑、退款、永久/订阅规则。
@@ -122,3 +123,4 @@
 | 2026-08-04 | `make e2e` | 通过 | 多 Home/忽略位置、试用持久、离线过期、防重放、篡改/绑定、席位释放与撤销 |
 | 2026-08-04 | `make check` | 通过 | 格式/资源 lint + release `.app`/CLI/服务端 + 79 项 Swift 检查 + Go race + 扩展 E2E |
 | 2026-08-04 | `make build-universal` | 通过 | App、CLI 与 Sparkle.framework 均验证为 arm64+x86_64，App rpath 已校验 |
+| 2026-08-05 | `make check` | 通过 | 新增 Codex 会话 family/缓存根清理、日期与大小过滤、批量预览、官方删除复验、逐项结果与受影响 Home 重扫；release、Swift/Go race、i18n 和 E2E 全部通过 |

@@ -68,7 +68,11 @@ public struct AgentDefinitionCatalog: Sendable {
         try validateArrayObjects(root["artifacts"], allowed: ["relativePath", "category", "cleanup"], path: "$.artifacts")
         if let artifacts = root["artifacts"] as? [[String: Any]] {
             for (index, artifact) in artifacts.enumerated() {
-                try validateObject(artifact["cleanup"], allowed: ["risk", "method"], path: "$.artifacts[\(index)].cleanup")
+                try validateObject(
+                    artifact["cleanup"],
+                    allowed: ["risk", "method", "unitBoundary", "adapterID"],
+                    path: "$.artifacts[\(index)].cleanup"
+                )
             }
         }
         try validateObject(root["capabilities"], allowed: ["space", "skills", "activity", "cleanup"], path: "$.capabilities")
@@ -90,6 +94,21 @@ public struct AgentDefinitionCatalog: Sendable {
         }
         for location in definition.skills where location.writable && location.relativePath.contains("/") {
             throw AgentDefinitionError.invalidRelativePath(location.relativePath)
+        }
+        for artifact in definition.artifacts {
+            guard let cleanup = artifact.cleanup else { continue }
+            if cleanup.unitBoundary == .adapter {
+                guard cleanup.method == .officialPermanentDelete,
+                      let adapterID = cleanup.adapterID,
+                      isSafeIdentifier(adapterID) else {
+                    throw AgentDefinitionError.invalidRelativePath(cleanup.adapterID ?? "")
+                }
+            } else if cleanup.adapterID != nil || cleanup.method != .trash {
+                throw AgentDefinitionError.invalidRelativePath(cleanup.adapterID ?? "")
+            }
+        }
+        if definition.capabilities.cleanup && !definition.artifacts.contains(where: { $0.cleanup != nil }) {
+            throw AgentDefinitionError.invalidRoot
         }
         for variable in definition.homeDiscovery.environmentVariables where !isSafeEnvironmentVariable(variable) {
             throw AgentDefinitionError.invalidRelativePath(variable)
@@ -142,5 +161,10 @@ public struct AgentDefinitionCatalog: Sendable {
     private static func isSafeEnvironmentVariable(_ value: String) -> Bool {
         guard let first = value.first, first == "_" || first.isASCII && first.isLetter else { return false }
         return value.allSatisfy { $0 == "_" || $0.isASCII && ($0.isLetter || $0.isNumber) }
+    }
+
+    private static func isSafeIdentifier(_ value: String) -> Bool {
+        guard !value.isEmpty, value.count <= 128 else { return false }
+        return value.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "." || $0 == "-" || $0 == "_") }
     }
 }

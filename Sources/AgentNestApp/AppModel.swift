@@ -15,6 +15,13 @@ struct SkillWriteTarget: Identifiable, Hashable {
     var id: String { rootPath }
 }
 
+struct CleanupResultRow: Identifiable {
+    let id: String
+    let name: String
+    let status: CleanupResultStatus
+    let code: String
+}
+
 @MainActor
 @Observable
 final class AppModel {
@@ -56,9 +63,12 @@ final class AppModel {
     private(set) var activitySnapshot: ActivitySnapshot?
     private(set) var historyPoints: [HistoryPoint] = []
     private(set) var skillIndex: SkillIndex?
+    private(set) var cleanupUnits: [CleanupUnit] = []
     private(set) var skillOperationMessage: String?
     private(set) var cleanupOperationMessage: String?
+    private(set) var cleanupResults: [CleanupResultRow] = []
     private(set) var isMutatingEnvironment = false
+    private(set) var isCleaning = false
     private(set) var customScanPaths: [String] = UserDefaults.standard.stringArray(forKey: "customScanPaths") ?? []
     private(set) var ignoredScanPaths: [String] = UserDefaults.standard.stringArray(forKey: "ignoredScanPaths") ?? []
     private(set) var userConfirmedHomes: [String: String] = UserDefaults.standard.dictionary(forKey: "userConfirmedHomes") as? [String: String] ?? [:]
@@ -72,6 +82,8 @@ final class AppModel {
     private var scanTask: Task<Void, Never>?
     private var activityTask: Task<Void, Never>?
     private var licenseTask: Task<Void, Never>?
+    private var cleanupTask: Task<Void, Never>?
+    private var cleanupInventoryTask: Task<Void, Never>?
     private var licenseRefreshSchedule = LicenseRefreshSchedule()
     private let pathMonitor = NWPathMonitor()
     private let pathMonitorQueue = DispatchQueue(label: "com.agentnest.network-monitor")
@@ -99,6 +111,7 @@ final class AppModel {
         catalog = loadedCatalog
         coordinator = loadedCatalog.map { ScanCoordinator(useCase: ScanUseCase(catalog: $0)) }
         snapshot = try? snapshotStore.load()
+        refreshCleanupInventory()
         var urlString = Bundle.main.object(forInfoDictionaryKey: "AgentNestLicenseServerURL") as? String
         var encodedKey = Bundle.main.object(forInfoDictionaryKey: "AgentNestLicensePublicKey") as? String
         #if DEBUG
@@ -212,6 +225,10 @@ final class AppModel {
             if coordinator == nil { errorMessage = localized("内置 Agent Definition 无法加载") }
             return
         }
+        guard !isMutatingEnvironment else {
+            errorMessage = localized("另一个扫描或写操作正在进行。")
+            return
+        }
         isScanning = true
         isStoppingScan = false
         errorMessage = nil
@@ -238,6 +255,7 @@ final class AppModel {
                 }
                 snapshot = result
                 try? snapshotStore.save(result)
+                refreshCleanupInventory()
                 await refreshSkillIndex()
             } catch is CancellationError {
                 errorMessage = localized("扫描已停止；上一次完整快照仍保留。")
@@ -375,12 +393,11 @@ final class AppModel {
         }.sorted { $0.rootPath.localizedStandardCompare($1.rootPath) == .orderedAscending }
     }
 
-    var cleanupUnits: [CleanupUnit] {
-        guard let snapshot, let catalog else { return [] }
-        return CleanupInventoryUseCase(catalog: catalog).execute(snapshot: snapshot, activity: activitySnapshot)
+    func executeCleanup(_ unit: CleanupUnit) {
+        executeCleanup([unit])
     }
 
-    func executeCleanup(_ unit: CleanupUnit) {
+    func executeCleanup(_ units: [CleanupUnit]) {
         guard allows(.cleanup), let generation = snapshot?.generation else {
             cleanupOperationMessage = localized("当前 License 不包含清理。")
             return
@@ -389,31 +406,93 @@ final class AppModel {
             cleanupOperationMessage = localized("更新进行中，暂不能修改 Agent 环境。")
             return
         }
-        let plan = CleanupPolicy().plan(generation: generation, selected: [unit])
+        guard !isMutatingEnvironment else {
+            cleanupOperationMessage = localized("另一个扫描或写操作正在进行。")
+            return
+        }
+        let plan = CleanupPolicy().plan(generation: generation, selected: units)
         guard !plan.units.isEmpty else {
             cleanupOperationMessage = localized("目标受风险或活动保护，未执行。")
             return
         }
-        Task {
+        cleanupTask?.cancel()
+        cleanupTask = Task {
             isMutatingEnvironment = true
-            defer { isMutatingEnvironment = false }
-            let results = await CleanupExecutor().execute(plan, currentGeneration: generation)
-            cleanupOperationMessage = results.first?.status == .succeeded
-                ? localized("已移到废纸篓，正在重新扫描。")
-                : localized("清理未完成：%@", results.first?.code ?? "cleanup.unknown")
-            if results.contains(where: { $0.status == .succeeded }) { rescanHome(at: unit.homePath) }
+            isCleaning = true
+            cleanupResults = []
+            defer {
+                isMutatingEnvironment = false
+                isCleaning = false
+                cleanupTask = nil
+            }
+            let results = await CleanupExecutor().execute(
+                plan,
+                currentGeneration: generation,
+                currentActivity: activitySnapshot,
+                isCancelled: { Task.isCancelled }
+            )
+            let succeeded = results.count { $0.status == .succeeded }
+            let skipped = results.count { $0.status == .skipped }
+            let failed = results.count { $0.status == .failed }
+            let cancelled = results.count { $0.status == .cancelled }
+            let unitsByID = Dictionary(uniqueKeysWithValues: plan.units.map { ($0.id, $0) })
+            cleanupResults = results.map { result in
+                CleanupResultRow(
+                    id: result.unitID,
+                    name: unitsByID[result.unitID].map(cleanupUnitTitle) ?? result.unitID,
+                    status: result.status,
+                    code: result.code
+                )
+            }
+            cleanupOperationMessage = localized(
+                "清理完成：成功 %d，跳过 %d，失败 %d，取消 %d。",
+                succeeded, skipped, failed, cancelled
+            )
+            let affectedHomes = Set(plan.units.filter { unit in
+                results.contains { $0.unitID == unit.id && $0.status == .succeeded }
+            }.map(\.homePath))
+            if !affectedHomes.isEmpty {
+                await rescanHomes(at: affectedHomes.sorted())
+            }
         }
     }
 
-    private func rescanHome(at homePath: String) {
-        guard !isScanning, let coordinator, let baseline = snapshot else { return }
+    func cancelCleanup() {
+        cleanupTask?.cancel()
+    }
+
+    private func refreshCleanupInventory() {
+        cleanupInventoryTask?.cancel()
+        guard let snapshot, let catalog else {
+            cleanupUnits = []
+            cleanupInventoryTask = nil
+            return
+        }
+        let activity = activitySnapshot
+        let generation = snapshot.generation
+        cleanupInventoryTask = Task {
+            let units = await Task.detached(priority: .utility) {
+                CleanupInventoryUseCase(catalog: catalog)
+                    .execute(snapshot: snapshot, activity: activity)
+            }.value
+            guard !Task.isCancelled, self.snapshot?.generation == generation else { return }
+            cleanupUnits = units
+            cleanupInventoryTask = nil
+        }
+    }
+
+    private func rescanHomes(at homePaths: [String]) async {
+        guard !isScanning, let coordinator, var baseline = snapshot else { return }
         isScanning = true
         isStoppingScan = false
-        errorMessage = nil
-        let root = URL(fileURLWithPath: homePath, isDirectory: true)
-        scanTask = Task {
-            do {
-                let result = try await coordinator.rescanHome(
+        defer {
+            isScanning = false
+            isStoppingScan = false
+        }
+        do {
+            for homePath in homePaths {
+                let root = URL(fileURLWithPath: homePath, isDirectory: true)
+                baseline = try await coordinator.rescanHome(
                     at: homePath,
                     baseline: baseline,
                     request: ScanRequest(
@@ -424,17 +503,15 @@ final class AppModel {
                         environment: ProcessInfo.processInfo.environment
                     )
                 )
-                snapshot = result
-                try? snapshotStore.save(result)
-                await refreshSkillIndex()
-            } catch is CancellationError {
-                errorMessage = localized("扫描已停止；上一次完整快照仍保留。")
-            } catch {
-                errorMessage = localized("扫描失败：%@", error.localizedDescription)
             }
-            isScanning = false
-            isStoppingScan = false
-            scanTask = nil
+            snapshot = baseline
+            try? snapshotStore.save(baseline)
+            refreshCleanupInventory()
+            await refreshSkillIndex()
+        } catch is CancellationError {
+            errorMessage = localized("扫描已停止；上一次完整快照仍保留。")
+        } catch {
+            errorMessage = localized("扫描失败：%@", error.localizedDescription)
         }
     }
 
@@ -531,6 +608,10 @@ final class AppModel {
             skillOperationMessage = localized("更新进行中，暂不能修改 Agent 环境。")
             return
         }
+        guard !isMutatingEnvironment else {
+            skillOperationMessage = localized("另一个扫描或写操作正在进行。")
+            return
+        }
         let targets = skillWriteTargets.filter { skill.missingHomeIDs.contains($0.homeID) }
         guard !targets.isEmpty else { return }
         Task {
@@ -574,6 +655,10 @@ final class AppModel {
         skillOperationMessage = nil
         guard !updateController.sessionInProgress else {
             skillOperationMessage = localized("更新进行中，暂不能修改 Agent 环境。")
+            return
+        }
+        guard !isMutatingEnvironment else {
+            skillOperationMessage = localized("另一个扫描或写操作正在进行。")
             return
         }
         Task {
@@ -750,6 +835,7 @@ final class AppModel {
                 guard let self else { return }
                 if let sample = try? await activitySampler.sample(inventory: snapshot) {
                     activitySnapshot = sample
+                    refreshCleanupInventory()
                     if historyEnabled, allows(.history),
                        lastHistoryPersistedAt.map({ sample.capturedAt.timeIntervalSince($0) >= 60 }) ?? true {
                         try? await historyStore.setEnabled(true)
@@ -835,8 +921,12 @@ final class AppModel {
         licenseTask = nil
         activityTask?.cancel()
         activityTask = nil
+        cleanupInventoryTask?.cancel()
+        cleanupInventoryTask = nil
         snapshot = nil
         skillIndex = nil
+        cleanupUnits = []
+        cleanupResults = []
         activitySnapshot = nil
         historyPoints = []
         historyEnabled = false
@@ -869,6 +959,8 @@ final class AppModel {
         licenseTask = nil
         activityTask?.cancel()
         activityTask = nil
+        cleanupInventoryTask?.cancel()
+        cleanupInventoryTask = nil
         pathMonitor.cancel()
         Task {
             var failures: [String] = []
@@ -890,6 +982,8 @@ final class AppModel {
             }
             snapshot = nil
             skillIndex = nil
+            cleanupUnits = []
+            cleanupResults = []
             activitySnapshot = nil
             historyPoints = []
             historyEnabled = false

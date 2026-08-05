@@ -54,10 +54,56 @@ extension AppModel {
         }
     }
 
+    func activityEvidenceTitle(_ evidence: ActivityEvidenceKind) -> String {
+        switch evidence {
+        case .officialMetadata: localized("Agent 官方元数据")
+        case .objectMetadata: localized("对象元数据")
+        case .contentMaximumModification: localized("内容最后修改")
+        case .rootModification: localized("根目录最后修改")
+        case .accessTimeOnly: localized("仅访问时间")
+        case .unknown: localized("未知")
+        }
+    }
+
     func cleanupMethodTitle(_ method: CleanupMethod) -> String {
         switch method {
         case .trash: localized("移到废纸篓")
         case .officialPermanentDelete: localized("官方永久删除")
+        }
+    }
+
+    func cleanupUnitTitle(_ unit: CleanupUnit) -> String {
+        guard unit.category == ArtifactCategory.sessions.rawValue,
+              let nativeID = unit.nativeID else { return unit.name }
+        return localized("会话 %@", String(nativeID.prefix(8)))
+    }
+
+    func cleanupResultStatusTitle(_ status: CleanupResultStatus) -> String {
+        switch status {
+        case .succeeded: localized("成功")
+        case .failed: localized("失败")
+        case .skipped: localized("已跳过")
+        case .cancelled: localized("已取消")
+        }
+    }
+
+    func cleanupResultCodeTitle(_ code: String) -> String {
+        switch code {
+        case "cleanup.trashed": localized("已移入废纸篓")
+        case "cleanup.officialDeleted": localized("官方删除已确认")
+        case "cleanup.generationChanged": localized("扫描结果已变化")
+        case "cleanup.protected": localized("受风险或活动保护")
+        case "cleanup.boundaryChanged": localized("Home 边界已变化")
+        case "cleanup.targetChanged", "cleanup.familyChanged": localized("目标身份或成员已变化")
+        case "cleanup.activityChanged": localized("目标当前正在使用或活动证据不足")
+        case "cleanup.officialExecutorUnavailable": localized("未找到官方清理执行器")
+        case "cleanup.officialHomeChanged": localized("官方服务返回的 Home 不一致")
+        case "cleanup.officialIdentityChanged": localized("官方会话身份或父子关系已变化")
+        case "cleanup.officialDeleteFailed": localized("官方删除未确认成功")
+        case "cleanup.officialProtocolInvalid": localized("官方清理协议不兼容")
+        case "cleanup.ioFailure": localized("文件系统操作失败")
+        case "cleanup.cancelled": localized("用户停止了后续清理")
+        default: localized("清理未完成：%@", code)
         }
     }
 

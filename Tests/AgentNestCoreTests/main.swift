@@ -3,6 +3,7 @@ import CryptoKit
 import CoreGraphics
 import Darwin
 import Foundation
+import SQLite3
 
 @main
 struct AgentNestCoreTestRunner {
@@ -13,6 +14,7 @@ struct AgentNestCoreTestRunner {
             try await testSkills()
             try await testCleanupPolicy()
             try await testCleanupInventory()
+            try await testCodexCleanupFamilies()
             try await testActivityRates()
             try testDiskUtilityParsing()
             try await testHistoryStore()
@@ -29,6 +31,13 @@ struct AgentNestCoreTestRunner {
     private static func testDefinitionCatalog() throws {
         let catalog = try AgentDefinitionCatalog.bundled()
         try expect(catalog.definitions.count == 5, "bundled definition count")
+        let codex = try unwrap(catalog.definitions.first { $0.id == "openai.codex" }, "Codex definition")
+        try expect(
+            codex.capabilities.cleanup &&
+                codex.artifacts.filter { $0.cleanup != nil }.count == 5 &&
+                codex.artifacts.filter { $0.cleanup?.unitBoundary == .adapter }.count == 2,
+            "Codex declares reviewed path roots and official session cleanup adapters"
+        )
         try expect(
             Set(catalog.definitions.filter(\.participatesInScanning).map(\.id)) ==
                 ["anthropic.claude-code", "bytedance.trae", "cursor.cursor", "openai.codex"],
@@ -53,6 +62,17 @@ struct AgentNestCoreTestRunner {
         "skills":[],"artifacts":[],"capabilities":{"space":false,"skills":false,"activity":false,"cleanup":false}}
         """.utf8)
         try expectThrows("unsafe definition path") { _ = try AgentDefinitionCatalog.load(data: unsafe) }
+        let unsafeCleanup = Data("""
+        {"schemaVersion":1,"id":"test","displayName":"Test",
+        "homeDiscovery":{"defaultPaths":["~/.test"],"environmentVariables":[]},
+        "fingerprints":{"required":[{"kind":"file","relativePath":"marker"}],"optional":[],"negative":[]},
+        "skills":[],"artifacts":[{"relativePath":"sessions","category":"sessions","cleanup":
+        {"risk":"userContent","method":"officialPermanentDelete","unitBoundary":"root"}}],
+        "capabilities":{"space":true,"skills":false,"activity":false,"cleanup":true}}
+        """.utf8)
+        try expectThrows("official cleanup requires a named adapter boundary") {
+            _ = try AgentDefinitionCatalog.load(data: unsafeCleanup)
+        }
         let unsafePattern = Data("""
         {"schemaVersion":1,"id":"test","displayName":"Test",
         "homeDiscovery":{"defaultPaths":["~/*/.test"],"environmentVariables":[]},
@@ -566,7 +586,7 @@ struct AgentNestCoreTestRunner {
             risk: ArtifactRisk = .rebuildable
         ) -> CleanupUnit {
             CleanupUnit(
-                generation: generation, path: "/fixture/home/\(name)", homePath: "/fixture/home", identity: identity, homeIdentity: homeIdentity,
+                id: "fixture-\(name)", generation: generation, productID: "fixture.agent", path: "/fixture/home/\(name)", homePath: "/fixture/home", identity: identity, homeIdentity: homeIdentity,
                 name: name, category: "cache", storage: StorageMeasurement(logicalBytes: 2_000_000_000, physicalBytes: 2_000_000_000, itemCount: 1),
                 risk: risk, activity: activity,
                 lastActivity: LastActivityEvidence(date: now.addingTimeInterval(-ageDays * 86_400), kind: evidence), method: .trash
@@ -595,7 +615,7 @@ struct AgentNestCoreTestRunner {
         try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
         let boundaryUnit = CleanupUnit(
-            generation: generation, path: outside.path, homePath: home.path,
+            id: "fixture-outside", generation: generation, productID: "fixture.agent", path: outside.path, homePath: home.path,
             identity: try physicalIdentity(outside), homeIdentity: try physicalIdentity(home),
             name: "outside", category: "cache", storage: StorageMeasurement(), risk: .rebuildable,
             activity: .inactive,
@@ -609,6 +629,26 @@ struct AgentNestCoreTestRunner {
         try expect(
             boundaryResult.first?.code == "cleanup.boundaryChanged" && FileManager.default.fileExists(atPath: outside.path),
             "cleanup cannot escape verified Home boundary"
+        )
+        let inside = home.appending(path: "cache.bin")
+        try Data("fixture".utf8).write(to: inside)
+        let insideIdentity = try physicalIdentity(inside)
+        let activityUnit = CleanupUnit(
+            id: "fixture-activity", generation: generation, productID: "fixture.agent",
+            path: inside.path, homePath: home.path, identity: insideIdentity,
+            homeIdentity: try physicalIdentity(home), name: "cache.bin", category: "cache",
+            storage: StorageMeasurement(), risk: .rebuildable, activity: .inactive,
+            lastActivity: LastActivityEvidence(date: now.addingTimeInterval(-100 * 86_400), kind: .officialMetadata),
+            method: .trash,
+            members: [CleanupUnitMember(path: inside.path, identity: insideIdentity, storage: StorageMeasurement(), modifiedAt: now)]
+        )
+        let activityResult = await CleanupExecutor().execute(
+            CleanupPlan(generation: generation, units: [activityUnit]),
+            currentGeneration: generation
+        )
+        try expect(
+            activityResult.first?.code == "cleanup.activityChanged" && FileManager.default.fileExists(atPath: inside.path),
+            "execution fails closed when current activity evidence is unavailable"
         )
     }
 
@@ -624,7 +664,7 @@ struct AgentNestCoreTestRunner {
         {"schemaVersion":1,"id":"openai.codex","displayName":"Codex",
         "homeDiscovery":{"defaultPaths":["~/.codex"],"environmentVariables":[]},
         "fingerprints":{"required":[{"kind":"jsonFile","relativePath":"version.json"}],"optional":[],"negative":[]},
-        "skills":[],"artifacts":[{"relativePath":"cache","category":"cache","cleanup":{"risk":"rebuildable","method":"trash"}}],
+        "skills":[],"artifacts":[{"relativePath":"cache","category":"cache","cleanup":{"risk":"rebuildable","method":"trash","unitBoundary":"root"}}],
         "capabilities":{"space":true,"skills":false,"activity":false,"cleanup":true}}
         """.utf8))
         let catalog = try AgentDefinitionCatalog(definitions: [definition])
@@ -635,6 +675,129 @@ struct AgentNestCoreTestRunner {
         try expect(unknown.first?.activity == .unknown && CleanupPolicy().plan(generation: snapshot.generation, selected: unknown).units.isEmpty, "missing activity evidence blocks cleanup execution")
         let inactive = useCase.execute(snapshot: snapshot, activity: activityFixture(at: Date(), cpu: 0.1))
         try expect(inactive.first?.activity == .inactive && CleanupPolicy().plan(generation: snapshot.generation, selected: inactive).units.count == 1, "verified inactive targets can enter a cleanup preview")
+    }
+
+    private static func testCodexCleanupFamilies() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "AgentNestCodexCleanup-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let home = root.appending(path: ".codex")
+        let sessions = home.appending(path: "sessions/2026/01/02")
+        let temporaryCache = home.appending(path: ".tmp")
+        try FileManager.default.createDirectory(at: sessions, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: temporaryCache, withIntermediateDirectories: true)
+        try Data("{\"version\":\"fixture\"}".utf8).write(to: home.appending(path: "version.json"))
+        try Data(repeating: 3, count: 4_096).write(to: temporaryCache.appending(path: "cache.bin"))
+        let mainID = UUID().uuidString.lowercased()
+        let childID = UUID().uuidString.lowercased()
+        let main = sessions.appending(path: "rollout-main-\(mainID).jsonl")
+        let child = sessions.appending(path: "rollout-child-\(childID).jsonl")
+        try Data(repeating: 1, count: 8_192).write(to: main)
+        try Data(repeating: 2, count: 4_096).write(to: child)
+        let officialActivity = Date().addingTimeInterval(-100 * 86_400)
+        try createCodexStateDatabase(
+            at: home.appending(path: "state_5.sqlite"),
+            records: [
+                (mainID, main.path, officialActivity),
+                (childID, child.path, officialActivity.addingTimeInterval(60)),
+            ],
+            edges: [(mainID, childID)]
+        )
+
+        let catalog = try AgentDefinitionCatalog.bundled()
+        let snapshot = try await ScanUseCase(catalog: catalog).execute(
+            request: ScanRequest(homeDirectory: root)
+        )
+        let registry = CleanupAdapterRegistry(adapters: [
+            CodexThreadCleanupAdapter(executablePaths: [], requestTimeout: 1),
+        ])
+        let inventory = CleanupInventoryUseCase(catalog: catalog, adapters: registry)
+            .execute(snapshot: snapshot, activity: activityFixture(at: Date(), cpu: 0.1))
+        let unit = try unwrap(inventory.first(where: { $0.nativeID == mainID }), "Codex cleanup family")
+        let cacheUnit = try unwrap(inventory.first(where: { $0.path == temporaryCache.path }), "Codex temporary cache unit")
+        try expect(
+            cacheUnit.members.count == 2 && cacheUnit.method == .trash &&
+                cacheUnit.risk == .rebuildable && cacheUnit.lastActivity.kind == .contentMaximumModification,
+            "declared Codex cache roots become complete recoverable directory cleanup units"
+        )
+        try expect(
+            unit.members.count == 2 && unit.method == .officialPermanentDelete &&
+                unit.risk == .userContent && unit.lastActivity.kind == .officialMetadata,
+            "Codex parent and subagent rollouts form one complete official cleanup unit"
+        )
+        try expect(
+            unit.storage.physicalBytes == unit.members.reduce(0) { $0 &+ $1.storage.physicalBytes },
+            "cleanup family preview reuses the unique physical storage ledger"
+        )
+        let cutoff = Date().addingTimeInterval(-90 * 86_400)
+        try expect(
+            CleanupPolicy().filter(units: inventory, query: CleanupQuery(inactiveBefore: cutoff)).contains { $0.id == unit.id },
+            "official last-activity metadata drives inactive-before filtering"
+        )
+        let range = officialActivity.addingTimeInterval(-60)...officialActivity.addingTimeInterval(120)
+        try expect(
+            CleanupPolicy().filter(units: inventory, query: CleanupQuery(activityRange: range)).contains { $0.id == unit.id },
+            "date-range filtering is applied to the complete cleanup unit"
+        )
+
+        let executable = root.appending(path: "fake-codex")
+        try Data("""
+        #!/usr/bin/env python3
+        import json, os, sys
+        deleted = False
+        for line in sys.stdin:
+            request = json.loads(line)
+            request_id = request.get("id")
+            method = request.get("method")
+            if request_id is None:
+                continue
+            if method == "initialize":
+                result = {"codexHome": os.environ["CODEX_HOME"], "userAgent": "codex-test"}
+                response = {"id": request_id, "result": result}
+            elif method == "thread/read":
+                if deleted:
+                    response = {"id": request_id, "error": {"code": -32602, "message": "thread not found"}}
+                else:
+                    response = {"id": request_id, "result": {"thread": {"id": "\(mainID)", "parentThreadId": None}}}
+            elif method == "thread/delete":
+                deleted = True
+                response = {"id": request_id, "result": {}}
+            else:
+                response = {"id": request_id, "error": {"code": -32601, "message": "unsupported"}}
+            print(json.dumps(response), flush=True)
+        """.utf8).write(to: executable)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
+        let liveRegistry = CleanupAdapterRegistry(adapters: [
+            CodexThreadCleanupAdapter(executablePaths: [executable.path], requestTimeout: 2),
+        ])
+        let results = await CleanupExecutor(adapters: liveRegistry).execute(
+            CleanupPolicy().plan(generation: snapshot.generation, selected: [unit]),
+            currentGeneration: snapshot.generation,
+            currentActivity: activityFixture(at: Date(), cpu: 0.1)
+        )
+        try expect(
+            results == [CleanupResult(unitID: unit.id, status: .succeeded, code: "cleanup.officialDeleted")],
+            "official Codex cleanup validates thread identity, deletes, and confirms absence"
+        )
+        let lateChildID = UUID().uuidString.lowercased()
+        let lateChild = sessions.appending(path: "rollout-child-\(lateChildID).jsonl")
+        try Data("late child".utf8).write(to: lateChild)
+        try appendCodexThread(
+            at: home.appending(path: "state_5.sqlite"),
+            id: lateChildID,
+            path: lateChild.path,
+            updatedAt: Date(),
+            parent: mainID
+        )
+        let changedResults = await CleanupExecutor(adapters: liveRegistry).execute(
+            CleanupPlan(generation: snapshot.generation, units: [unit]),
+            currentGeneration: snapshot.generation,
+            currentActivity: activityFixture(at: Date(), cpu: 0.1)
+        )
+        try expect(
+            changedResults.first?.status == .skipped &&
+                changedResults.first?.code == "cleanup.officialIdentityChanged",
+            "a relationship added after preview blocks official family deletion"
+        )
     }
 
     private static func testSkills() async throws {
@@ -871,6 +1034,73 @@ struct AgentNestCoreTestRunner {
         let fileType = value.st_mode & S_IFMT
         let kind: ResourceKind = fileType == S_IFDIR ? .directory : (fileType == S_IFREG ? .file : .other)
         return PhysicalResourceIdentity(device: UInt64(value.st_dev), inode: UInt64(value.st_ino), kind: kind)
+    }
+
+    private static func createCodexStateDatabase(
+        at url: URL,
+        records: [(id: String, path: String, updatedAt: Date)],
+        edges: [(parent: String, child: String)]
+    ) throws {
+        var database: OpaquePointer?
+        guard sqlite3_open_v2(url.path, &database, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, nil) == SQLITE_OK,
+              let database else { throw TestFailure("could not create Codex fixture database") }
+        defer { sqlite3_close(database) }
+        let schema = """
+        CREATE TABLE threads (
+          id TEXT PRIMARY KEY,
+          rollout_path TEXT NOT NULL,
+          updated_at INTEGER NOT NULL,
+          updated_at_ms INTEGER
+        );
+        CREATE TABLE thread_spawn_edges (
+          parent_thread_id TEXT NOT NULL,
+          child_thread_id TEXT NOT NULL PRIMARY KEY
+        );
+        """
+        guard sqlite3_exec(database, schema, nil, nil, nil) == SQLITE_OK else {
+            throw TestFailure("could not create Codex fixture schema")
+        }
+        for record in records {
+            let seconds = Int64(record.updatedAt.timeIntervalSince1970)
+            let milliseconds = Int64(record.updatedAt.timeIntervalSince1970 * 1_000)
+            let path = record.path.replacingOccurrences(of: "'", with: "''")
+            let sql = "INSERT INTO threads VALUES ('\(record.id)', '\(path)', \(seconds), \(milliseconds))"
+            guard sqlite3_exec(database, sql, nil, nil, nil) == SQLITE_OK else {
+                throw TestFailure("could not insert Codex fixture thread")
+            }
+        }
+        for edge in edges {
+            let sql = "INSERT INTO thread_spawn_edges VALUES ('\(edge.parent)', '\(edge.child)')"
+            guard sqlite3_exec(database, sql, nil, nil, nil) == SQLITE_OK else {
+                throw TestFailure("could not insert Codex fixture edge")
+            }
+        }
+    }
+
+    private static func appendCodexThread(
+        at url: URL,
+        id: String,
+        path: String,
+        updatedAt: Date,
+        parent: String
+    ) throws {
+        var database: OpaquePointer?
+        guard sqlite3_open_v2(url.path, &database, SQLITE_OPEN_READWRITE, nil) == SQLITE_OK,
+              let database else { throw TestFailure("could not open Codex fixture database") }
+        defer { sqlite3_close(database) }
+        let seconds = Int64(updatedAt.timeIntervalSince1970)
+        let milliseconds = Int64(updatedAt.timeIntervalSince1970 * 1_000)
+        let escapedPath = path.replacingOccurrences(of: "'", with: "''")
+        guard sqlite3_exec(
+            database,
+            "INSERT INTO threads VALUES ('\(id)', '\(escapedPath)', \(seconds), \(milliseconds))",
+            nil, nil, nil
+        ) == SQLITE_OK,
+        sqlite3_exec(
+            database,
+            "INSERT INTO thread_spawn_edges VALUES ('\(parent)', '\(id)')",
+            nil, nil, nil
+        ) == SQLITE_OK else { throw TestFailure("could not append Codex fixture relationship") }
     }
 
     private static func activityFixture(at date: Date, cpu: Double?) -> ActivitySnapshot {

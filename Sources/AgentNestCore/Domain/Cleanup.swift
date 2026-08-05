@@ -44,9 +44,34 @@ public enum CleanupMethod: String, Codable, Sendable {
     case officialPermanentDelete
 }
 
+public enum CleanupUnitBoundary: String, Codable, Sendable {
+    case root
+    case adapter
+}
+
+public struct CleanupUnitMember: Codable, Equatable, Sendable {
+    public let path: String
+    public let identity: PhysicalResourceIdentity
+    public let storage: StorageMeasurement
+    public let modifiedAt: Date?
+
+    public init(
+        path: String,
+        identity: PhysicalResourceIdentity,
+        storage: StorageMeasurement,
+        modifiedAt: Date?
+    ) {
+        self.path = path
+        self.identity = identity
+        self.storage = storage
+        self.modifiedAt = modifiedAt
+    }
+}
+
 public struct CleanupUnit: Identifiable, Codable, Equatable, Sendable {
-    public let id: UUID
+    public let id: String
     public let generation: UUID
+    public let productID: String
     public let path: String
     public let homePath: String
     public let identity: PhysicalResourceIdentity
@@ -58,10 +83,15 @@ public struct CleanupUnit: Identifiable, Codable, Equatable, Sendable {
     public let activity: ActivityProtection
     public let lastActivity: LastActivityEvidence
     public let method: CleanupMethod
+    public let members: [CleanupUnitMember]
+    public let adapterID: String?
+    public let nativeID: String?
+    public let nativeMemberIDs: [String]
 
     public init(
-        id: UUID = UUID(),
+        id: String,
         generation: UUID,
+        productID: String,
         path: String,
         homePath: String,
         identity: PhysicalResourceIdentity,
@@ -72,10 +102,15 @@ public struct CleanupUnit: Identifiable, Codable, Equatable, Sendable {
         risk: ArtifactRisk,
         activity: ActivityProtection,
         lastActivity: LastActivityEvidence,
-        method: CleanupMethod
+        method: CleanupMethod,
+        members: [CleanupUnitMember] = [],
+        adapterID: String? = nil,
+        nativeID: String? = nil,
+        nativeMemberIDs: [String] = []
     ) {
         self.id = id
         self.generation = generation
+        self.productID = productID
         self.path = path
         self.homePath = homePath
         self.identity = identity
@@ -87,18 +122,32 @@ public struct CleanupUnit: Identifiable, Codable, Equatable, Sendable {
         self.activity = activity
         self.lastActivity = lastActivity
         self.method = method
+        self.members = members
+        self.adapterID = adapterID
+        self.nativeID = nativeID
+        self.nativeMemberIDs = nativeMemberIDs
     }
 }
 
 public struct CleanupQuery: Sendable {
     public let inactiveBefore: Date?
+    public let activityRange: ClosedRange<Date>?
     public let minimumPhysicalBytes: UInt64?
     public let risks: Set<ArtifactRisk>
+    public let categories: Set<String>
 
-    public init(inactiveBefore: Date? = nil, minimumPhysicalBytes: UInt64? = nil, risks: Set<ArtifactRisk> = []) {
+    public init(
+        inactiveBefore: Date? = nil,
+        activityRange: ClosedRange<Date>? = nil,
+        minimumPhysicalBytes: UInt64? = nil,
+        risks: Set<ArtifactRisk> = [],
+        categories: Set<String> = []
+    ) {
         self.inactiveBefore = inactiveBefore
+        self.activityRange = activityRange
         self.minimumPhysicalBytes = minimumPhysicalBytes
         self.risks = risks
+        self.categories = categories
     }
 }
 
@@ -124,11 +173,11 @@ public enum CleanupResultStatus: String, Codable, Sendable {
 }
 
 public struct CleanupResult: Codable, Equatable, Sendable {
-    public let unitID: UUID
+    public let unitID: String
     public let status: CleanupResultStatus
     public let code: String
 
-    public init(unitID: UUID, status: CleanupResultStatus, code: String) {
+    public init(unitID: String, status: CleanupResultStatus, code: String) {
         self.unitID = unitID
         self.status = status
         self.code = code

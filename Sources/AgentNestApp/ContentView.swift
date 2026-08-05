@@ -684,16 +684,45 @@ private struct SkillView: View {
 }
 
 private struct StorageView: View {
+    private enum CleanupDatePreset: String, CaseIterable, Identifiable {
+        case all, today, days7, days30, days90, days180, days365, customBefore, range
+
+        var id: String { rawValue }
+        var title: String {
+            switch self {
+            case .all: "全部时间"
+            case .today: "今天活动"
+            case .days7: "7 天未活动"
+            case .days30: "30 天未活动"
+            case .days90: "90 天未活动"
+            case .days180: "180 天未活动"
+            case .days365: "365 天未活动"
+            case .customBefore: "自定义截止日期"
+            case .range: "自定义日期区间"
+            }
+        }
+    }
+
     @Bindable var model: AppModel
     @State private var selectedProductID = "*"
     @State private var selectedHomePath = "*"
     @State private var selectedCategory = "*"
     @State private var selectedVolumeDevice = "*"
-    @State private var pendingCleanup: CleanupUnit?
+    @State private var selectedRisk = "*"
+    @State private var cleanupDatePreset: CleanupDatePreset = .all
+    @State private var customCutoff = Calendar.current.date(byAdding: .day, value: -90, to: Date()) ?? Date()
+    @State private var rangeStart = Calendar.current.date(byAdding: .day, value: -30, to: Date()) ?? Date()
+    @State private var rangeEnd = Date()
+    @State private var minimumCleanupSize = "any"
+    @State private var customMinimumMegabytes = 100.0
+    @State private var selectedCleanupIDs = Set<String>()
+    @State private var pendingReviewUnits: [CleanupUnit] = []
+    @State private var showingCleanupReview = false
 
     var body: some View {
         Group {
             if let snapshot = model.snapshot {
+                let visibleCleanupUnits = filteredCleanupUnits(in: snapshot)
                 List {
                     Section {
                         Picker("Agent", selection: $selectedProductID) {
@@ -722,6 +751,13 @@ private struct StorageView: View {
                             Text("全部卷").tag("*")
                             ForEach(volumeDevices(in: snapshot), id: \.self) { device in
                                 Text(volumeTitle(device: device)).tag(String(device))
+                            }
+                        }
+
+                        Picker("风险", selection: $selectedRisk) {
+                            Text("全部风险").tag("*")
+                            ForEach([ArtifactRisk.rebuildable, .expensiveOrShared, .userContent, .protected], id: \.rawValue) { risk in
+                                Text(model.artifactRiskTitle(risk)).tag(risk.rawValue)
                             }
                         }
                     } header: {
@@ -774,28 +810,123 @@ private struct StorageView: View {
                         if let message = model.cleanupOperationMessage {
                             Text(message).font(DS.Typeface.caption).foregroundStyle(.secondary)
                         }
+                        ForEach(model.cleanupResults) { result in
+                            HStack {
+                                Text(result.name)
+                                    .lineLimit(1)
+                                Spacer()
+                                Text(model.localized(
+                                    "%@ · %@",
+                                    model.cleanupResultStatusTitle(result.status),
+                                    model.cleanupResultCodeTitle(result.code)
+                                ))
+                                    .font(.caption)
+                                    .foregroundStyle(result.status == .failed ? .red : .secondary)
+                            }
+                        }
+                        if model.isCleaning {
+                            HStack {
+                                ProgressView()
+                                Text("正在逐项执行并复验")
+                                Spacer()
+                                Button("停止后续清理") { model.cancelCleanup() }
+                            }
+                        }
                         if model.cleanupUnits.isEmpty {
                             Text("当前 Agent Definition 没有声明可清理目标。")
                                 .foregroundStyle(.secondary)
                         } else {
-                            ForEach(model.cleanupUnits) { unit in
+                            Picker("最后活动", selection: $cleanupDatePreset) {
+                                ForEach(CleanupDatePreset.allCases) { preset in
+                                    Text(model.localized(preset.title)).tag(preset)
+                                }
+                            }
+                            if cleanupDatePreset == .customBefore {
+                                DatePicker("截止日期", selection: $customCutoff, displayedComponents: .date)
+                            } else if cleanupDatePreset == .range {
+                                DatePicker("开始日期", selection: $rangeStart, displayedComponents: .date)
+                                DatePicker("结束日期", selection: $rangeEnd, in: rangeStart..., displayedComponents: .date)
+                            }
+                            Picker("最小占用", selection: $minimumCleanupSize) {
+                                Text("不限大小").tag("any")
+                                Text("超过 100 MB").tag("100m")
+                                Text("超过 500 MB").tag("500m")
+                                Text("超过 1 GB").tag("1g")
+                                Text("超过 5 GB").tag("5g")
+                                Text("自定义").tag("custom")
+                            }
+                            if minimumCleanupSize == "custom" {
+                                TextField(
+                                    "自定义最小占用（MB）",
+                                    value: $customMinimumMegabytes,
+                                    format: .number.precision(.fractionLength(0...2))
+                                )
+                            }
+
+                            HStack {
+                                Text(model.localized(
+                                    "%d 个候选 · %@",
+                                    visibleCleanupUnits.count,
+                                    bytes(visibleCleanupUnits.reduce(0) { $0 &+ $1.storage.physicalBytes })
+                                ))
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                Spacer()
+                                Button("选择可重建项") {
+                                    selectedCleanupIDs = Set(visibleCleanupUnits
+                                        .filter { isSelectable($0) && $0.risk == .rebuildable }
+                                        .map(\.id))
+                                }
+                                Button("复核所选") {
+                                    pendingReviewUnits = visibleCleanupUnits
+                                        .filter { selectedCleanupIDs.contains($0.id) && isSelectable($0) }
+                                    showingCleanupReview = !pendingReviewUnits.isEmpty
+                                }
+                                .disabled(selectedCleanupIDs.isEmpty || model.isCleaning)
+                            }
+
+                            ForEach(visibleCleanupUnits) { unit in
                                 HStack {
+                                    Toggle(model.localized("选择 %@", model.cleanupUnitTitle(unit)), isOn: Binding(
+                                        get: { selectedCleanupIDs.contains(unit.id) },
+                                        set: { selected in
+                                            if selected { selectedCleanupIDs.insert(unit.id) }
+                                            else { selectedCleanupIDs.remove(unit.id) }
+                                        }
+                                    ))
+                                        .labelsHidden()
+                                        .disabled(!isSelectable(unit) || model.isCleaning)
                                     VStack(alignment: .leading, spacing: DS.Space.x100) {
-                                        Text(unit.name).font(DS.Typeface.body)
+                                        Text(model.cleanupUnitTitle(unit))
+                                            .font(DS.Typeface.body)
                                         Text(model.localized(
                                             "%@ · %@ · %@",
                                             model.artifactCategoryTitle(ArtifactCategory(definitionValue: unit.category)),
                                             model.artifactRiskTitle(unit.risk),
                                             model.activityProtectionTitle(unit.activity)
                                         ))
-                                            .font(DS.Typeface.caption).foregroundStyle(.secondary)
+                                            .font(DS.Typeface.caption)
+                                            .foregroundStyle(.secondary)
+                                        if let date = unit.lastActivity.date {
+                                            Text(model.localized(
+                                                "最后活动：%@ · 证据：%@",
+                                                date.formatted(.dateTime.year().month().day().hour().minute().locale(model.appLocale)),
+                                                model.activityEvidenceTitle(unit.lastActivity.kind)
+                                            ))
+                                                .font(DS.Typeface.micro)
+                                                .foregroundStyle(.secondary)
+                                        } else {
+                                            Text("最后活动时间不可用")
+                                                .font(DS.Typeface.micro)
+                                                .foregroundStyle(.secondary)
+                                        }
                                     }
                                     Spacer()
-                                    Text(bytes(unit.storage.physicalBytes)).font(DS.Typeface.label).monospacedDigit()
-                                    Button("复核") { pendingCleanup = unit }
-                                        .buttonStyle(.dsAction(.accent, size: .compact))
-                                        .disabled(!model.allows(.cleanup) || unit.activity != .inactive || unit.risk == .protected)
+                                    Text(bytes(unit.storage.physicalBytes))
+                                        .font(DS.Typeface.label)
+                                        .monospacedDigit()
                                 }
+                                .privacySensitive()
                             }
                         }
                     } header: {
@@ -808,26 +939,12 @@ private struct StorageView: View {
             }
         }
         .navigationTitle("空间")
-        .alert(
-            "将目标移到废纸篓？",
-            isPresented: Binding(get: { pendingCleanup != nil }, set: { if !$0 { pendingCleanup = nil } }),
-            presenting: pendingCleanup
-        ) { unit in
-            Button("移到废纸篓", role: .destructive) {
-                model.executeCleanup(unit)
-                pendingCleanup = nil
+        .sheet(isPresented: $showingCleanupReview) {
+            CleanupReviewSheet(model: model, units: pendingReviewUnits) {
+                model.executeCleanup(pendingReviewUnits)
+                selectedCleanupIDs.subtract(pendingReviewUnits.map(\.id))
+                showingCleanupReview = false
             }
-            Button("取消", role: .cancel) { pendingCleanup = nil }
-        } message: { unit in
-            Text(model.localized(
-                "%@\n预计物理占用：%@\n风险：%@；活动：%@；方式：%@",
-                model.displayPath(unit.path),
-                bytes(unit.storage.physicalBytes),
-                model.artifactRiskTitle(unit.risk),
-                model.activityProtectionTitle(unit.activity),
-                model.cleanupMethodTitle(unit.method)
-            ))
-                .privacySensitive()
         }
     }
 
@@ -859,6 +976,73 @@ private struct StorageView: View {
             let matchesVolume = selectedVolumeDevice == "*" || String(artifact.id.device) == selectedVolumeDevice
             return matchesProduct && matchesHome && matchesCategory && matchesVolume
         }
+    }
+
+    private func filteredCleanupUnits(in snapshot: DeviceSnapshot) -> [CleanupUnit] {
+        let inactiveBefore: Date?
+        let activityRange: ClosedRange<Date>?
+        switch cleanupDatePreset {
+        case .all:
+            inactiveBefore = nil
+            activityRange = nil
+        case .today:
+            inactiveBefore = nil
+            activityRange = Calendar.current.startOfDay(for: Date())...Date()
+        case .days7, .days30, .days90, .days180, .days365:
+            let days: Int
+            switch cleanupDatePreset {
+            case .days7: days = 7
+            case .days30: days = 30
+            case .days90: days = 90
+            case .days180: days = 180
+            case .days365: days = 365
+            default: days = 0
+            }
+            inactiveBefore = Calendar.current.date(byAdding: .day, value: -days, to: Date())
+            activityRange = nil
+        case .customBefore:
+            inactiveBefore = Calendar.current.startOfDay(for: customCutoff)
+            activityRange = nil
+        case .range:
+            let start = Calendar.current.startOfDay(for: rangeStart)
+            let end = Calendar.current.date(byAdding: .day, value: 1, to: Calendar.current.startOfDay(for: rangeEnd))?
+                .addingTimeInterval(-1) ?? rangeEnd
+            inactiveBefore = nil
+            activityRange = min(start, end)...max(start, end)
+        }
+        let risks = selectedRisk == "*"
+            ? Set<ArtifactRisk>()
+            : Set([ArtifactRisk(rawValue: selectedRisk)].compactMap { $0 })
+        let query = CleanupQuery(
+            inactiveBefore: inactiveBefore,
+            activityRange: activityRange,
+            minimumPhysicalBytes: minimumPhysicalBytes,
+            risks: risks,
+            categories: selectedCategory == "*" ? [] : [selectedCategory]
+        )
+        return CleanupPolicy().filter(units: model.cleanupUnits, query: query).filter { unit in
+            let matchesProduct = selectedProductID == "*" || unit.productID == selectedProductID
+            let matchesHome = selectedHomePath == "*" || unit.homePath == selectedHomePath
+            let matchesVolume = selectedVolumeDevice == "*" || String(unit.identity.device) == selectedVolumeDevice
+            return matchesProduct && matchesHome && matchesVolume
+        }
+    }
+
+    private var minimumPhysicalBytes: UInt64? {
+        switch minimumCleanupSize {
+        case "100m": return 100 * 1_024 * 1_024
+        case "500m": return 500 * 1_024 * 1_024
+        case "1g": return 1_024 * 1_024 * 1_024
+        case "5g": return 5 * 1_024 * 1_024 * 1_024
+        case "custom":
+            guard customMinimumMegabytes.isFinite, customMinimumMegabytes > 0 else { return nil }
+            return UInt64(min(customMinimumMegabytes * 1_024 * 1_024, Double(Int64.max)))
+        default: return nil
+        }
+    }
+
+    private func isSelectable(_ unit: CleanupUnit) -> Bool {
+        model.allows(.cleanup) && unit.activity == .inactive && unit.risk != .protected
     }
 
     private func storageGroups(in snapshot: DeviceSnapshot) -> [GroupRow] {
@@ -914,6 +1098,78 @@ private struct StorageView: View {
 
     private func bytes(_ value: UInt64) -> String {
         model.formatBytes(value)
+    }
+}
+
+private struct CleanupReviewSheet: View {
+    @Bindable var model: AppModel
+    let units: [CleanupUnit]
+    let onConfirm: () -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    private var estimatedBytes: UInt64 {
+        units.reduce(0) { $0 &+ $1.storage.physicalBytes }
+    }
+
+    private var containsPermanentDeletion: Bool {
+        units.contains { $0.method == .officialPermanentDelete }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("清理复核")
+                    .font(.title2.bold())
+                Text(model.localized("%d 个完整清理单元 · 预计候选占用 %@", units.count, model.formatBytes(estimatedBytes)))
+                    .foregroundStyle(.secondary)
+                Text(model.localized(containsPermanentDeletion
+                    ? "所选项包含 Agent 官方永久删除，无法从废纸篓恢复。"
+                    : "所选项将移入系统废纸篓，可在清空废纸篓前恢复。"))
+                    .font(.callout)
+                    .foregroundStyle(containsPermanentDeletion ? .orange : .secondary)
+            }
+
+            List(units) { unit in
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        Text(model.cleanupUnitTitle(unit))
+                            .lineLimit(1)
+                        Spacer()
+                        Text(model.formatBytes(unit.storage.physicalBytes))
+                            .monospacedDigit()
+                    }
+                    Text(model.displayPath(unit.path))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                    Text(model.localized(
+                        "证据：%@ · 风险：%@ · 活动：%@ · 方式：%@",
+                        model.activityEvidenceTitle(unit.lastActivity.kind),
+                        model.artifactRiskTitle(unit.risk),
+                        model.activityProtectionTitle(unit.activity),
+                        model.cleanupMethodTitle(unit.method)
+                    ))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text(model.localized("完整单元包含 %d 个物理成员；保留该 Home 的配置、Skill 与未选单元。", unit.members.count))
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                .privacySensitive()
+            }
+            .frame(minHeight: 260)
+
+            HStack {
+                Button("取消") { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                Spacer()
+                Button("执行清理", role: .destructive, action: onConfirm)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(units.isEmpty || model.isCleaning)
+            }
+        }
+        .padding(20)
+        .frame(minWidth: 680, minHeight: 460)
     }
 }
 

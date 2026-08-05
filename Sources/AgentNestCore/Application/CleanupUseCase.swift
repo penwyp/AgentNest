@@ -7,10 +7,16 @@ public struct CleanupPolicy: Sendable {
         units.filter { unit in
             if let minimum = query.minimumPhysicalBytes, unit.storage.physicalBytes < minimum { return false }
             if !query.risks.isEmpty, !query.risks.contains(unit.risk) { return false }
+            if !query.categories.isEmpty, !query.categories.contains(unit.category) { return false }
             if let cutoff = query.inactiveBefore {
                 guard unit.lastActivity.isReliableForAutomaticCleanup,
                       let date = unit.lastActivity.date,
                       date < cutoff else { return false }
+            }
+            if let range = query.activityRange {
+                guard unit.lastActivity.isReliableForAutomaticCleanup,
+                      let date = unit.lastActivity.date,
+                      range.contains(date) else { return false }
             }
             return true
         }.sorted {
@@ -30,13 +36,18 @@ public struct CleanupPolicy: Sendable {
 }
 
 public actor CleanupExecutor {
-    public init() {}
+    private let adapters: CleanupAdapterRegistry
+
+    public init(adapters: CleanupAdapterRegistry = .live()) {
+        self.adapters = adapters
+    }
 
     public func execute(
         _ plan: CleanupPlan,
         currentGeneration: UUID,
+        currentActivity: ActivitySnapshot? = nil,
         isCancelled: @Sendable () -> Bool = { false }
-    ) -> [CleanupResult] {
+    ) async -> [CleanupResult] {
         guard plan.generation == currentGeneration else {
             return plan.units.map { CleanupResult(unitID: $0.id, status: .skipped, code: "cleanup.generationChanged") }
         }
@@ -48,10 +59,6 @@ public actor CleanupExecutor {
             }
             guard unit.activity == .inactive, unit.risk != .protected else {
                 results.append(CleanupResult(unitID: unit.id, status: .skipped, code: "cleanup.protected"))
-                continue
-            }
-            guard unit.method == .trash else {
-                results.append(CleanupResult(unitID: unit.id, status: .failed, code: "cleanup.officialExecutorUnavailable"))
                 continue
             }
             let target = URL(fileURLWithPath: unit.path).standardizedFileURL
@@ -68,9 +75,37 @@ public actor CleanupExecutor {
                     results.append(CleanupResult(unitID: unit.id, status: .skipped, code: "cleanup.targetChanged"))
                     continue
                 }
-                var resultingURL: NSURL?
-                try FileManager.default.trashItem(at: target, resultingItemURL: &resultingURL)
-                results.append(CleanupResult(unitID: unit.id, status: .succeeded, code: "cleanup.trashed"))
+                guard unit.members.allSatisfy({ member in
+                    let url = URL(fileURLWithPath: member.path).standardizedFileURL
+                    guard CanonicalPath.isEqualOrDescendant(url.path, of: home.path),
+                          let current = try? FileMetadata.read(url).node else { return false }
+                    return current.identity == member.identity && !current.isSymbolicLink
+                }) else {
+                    results.append(CleanupResult(unitID: unit.id, status: .skipped, code: "cleanup.familyChanged"))
+                    continue
+                }
+                let currentProtection = CleanupActivityEvaluator.protection(
+                    homeID: unit.homeIdentity,
+                    memberPaths: unit.adapterID == nil ? [unit.path] : unit.members.map(\.path),
+                    activity: currentActivity
+                )
+                guard currentProtection == .inactive else {
+                    results.append(CleanupResult(unitID: unit.id, status: .skipped, code: "cleanup.activityChanged"))
+                    continue
+                }
+                switch unit.method {
+                case .trash:
+                    var resultingURL: NSURL?
+                    try FileManager.default.trashItem(at: target, resultingItemURL: &resultingURL)
+                    results.append(CleanupResult(unitID: unit.id, status: .succeeded, code: "cleanup.trashed"))
+                case .officialPermanentDelete:
+                    guard let adapterID = unit.adapterID,
+                          let adapter = adapters.adapter(id: adapterID) else {
+                        results.append(CleanupResult(unitID: unit.id, status: .failed, code: "cleanup.officialExecutorUnavailable"))
+                        continue
+                    }
+                    results.append(await adapter.execute(unit))
+                }
             } catch {
                 results.append(CleanupResult(unitID: unit.id, status: .failed, code: "cleanup.ioFailure"))
             }

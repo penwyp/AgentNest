@@ -16,11 +16,59 @@
   "skills": [
     { "relativePath": "skills", "format": "directory-skill-md", "writable": true }
   ],
-  "artifacts": [],
+  "artifacts": [
+    {
+      "relativePath": "sessions",
+      "category": "sessions",
+      "cleanup": {
+        "risk": "userContent",
+        "method": "officialPermanentDelete",
+        "unitBoundary": "adapter",
+        "adapterID": "codex.thread"
+      }
+    },
+    {
+      "relativePath": "archived_sessions",
+      "category": "sessions",
+      "cleanup": {
+        "risk": "userContent",
+        "method": "officialPermanentDelete",
+        "unitBoundary": "adapter",
+        "adapterID": "codex.thread"
+      }
+    },
+    {
+      "relativePath": "plugins/cache",
+      "category": "cache",
+      "cleanup": {
+        "risk": "rebuildable",
+        "method": "trash",
+        "unitBoundary": "root"
+      }
+    },
+    {
+      "relativePath": ".tmp",
+      "category": "cache",
+      "cleanup": {
+        "risk": "rebuildable",
+        "method": "trash",
+        "unitBoundary": "root"
+      }
+    },
+    {
+      "relativePath": "log",
+      "category": "logs",
+      "cleanup": {
+        "risk": "rebuildable",
+        "method": "trash",
+        "unitBoundary": "root"
+      }
+    }
+  ],
   "capabilities": {
     "space": true,
     "skills": true,
     "activity": false,
-    "cleanup": false
+    "cleanup": true
   }
 }

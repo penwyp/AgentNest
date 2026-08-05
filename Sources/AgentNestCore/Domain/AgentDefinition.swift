@@ -54,6 +54,8 @@ public struct ArtifactRule: Codable, Equatable, Sendable {
 public struct ArtifactCleanupDefinition: Codable, Equatable, Sendable {
     public let risk: ArtifactRisk
     public let method: CleanupMethod
+    public let unitBoundary: CleanupUnitBoundary
+    public let adapterID: String?
 }
 
 public struct Capabilities: Codable, Equatable, Sendable {
