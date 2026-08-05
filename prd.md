@@ -1,9 +1,9 @@
 # AgentNest 产品需求文档
 
 > 产品名称：AgentNest  
-> 文档版本：v2.1  
+> 文档版本：v2.2
 > 文档状态：重构目标稿  
-> 更新日期：2026-08-03  
+> 更新日期：2026-08-05
 > 目标平台：macOS 14 及以上，Apple silicon 与 Intel  
 > 客户端技术：Swift 6、SwiftUI，必要处使用 AppKit  
 > 基线来源：原 FindDiskKiller PRD 及本次 Agent 管理需求  
@@ -24,7 +24,7 @@ AgentNest 不是在 FindDiskKiller 上增加几个 Agent 页面，而是一次�
 - 客户端必须使用 Swift 开发并提供原生 GUI。
 - 首页采用“一键智能扫描”心智；高级范围和权限放在二级入口，不要求普通用户先理解目录结构。
 - Agent、Agent Home、Profile 和安装实例是不同概念；同一 Agent 的多个 Home 必须分别识别和管理。
-- 深度发现覆盖用户 Home 内的隐藏目录和任意层级，不只匹配固定路径或目录名。
+- 扫描只从 Agent Definition、环境变量和用户明确添加的 Agent Home 生成候选；不递归搜索整个用户 Home。
 - Skill 以全机虚拟索引统一展示，但真实文件仍留在各 Agent 的原生位置；虚拟视图不是新的物理仓库。
 - Skill 的“Patch”是产品术语，中文主文案使用“补齐”；它是经过适配、预检和原子写入的复制，不是对旧格式打兼容补丁。
 - 按日期清理以“完整可清理单元的最后活动时间”为准，绝不逐个删除目录内较老文件。
@@ -43,7 +43,7 @@ AgentNest 不是在 FindDiskKiller 上增加几个 Agent 页面，而是一次�
 
 ### 1.1 一句话定义
 
-AgentNest 是一款原生 macOS Agent 管理工具：一键发现整台 Mac 上的 Agent、Home、Skill、会话和空间占用，解释正在发生的资源活动，并帮助用户安全地补齐 Skill、清理陈旧数据和维护 Agent 环境。
+AgentNest 是一款原生 macOS Agent 管理工具：一键发现已声明位置中的 Agent、Home、Skill、会话和空间占用，解释正在发生的资源活动，并帮助用户安全地补齐 Skill、清理陈旧数据和维护 Agent 环境。
 
 ### 1.2 用户问题
 
@@ -59,7 +59,7 @@ AgentNest 是一款原生 macOS Agent 管理工具：一键发现整台 Mac 上�
 
 ### 1.3 产品价值
 
-- **看得全**：固定目录、环境变量、自定义 Home、隐藏目录和结构相似目录统一发现。
+- **看得准**：固定目录、环境变量和用户明确添加的 Home 统一验证，不用全盘搜索换取虚假的“覆盖率”。
 - **看得懂**：将文件树转成 Agent、Skill、会话、缓存、运行时和风险级别。
 - **管得住**：Skill 增删改查、跨 Agent 补齐、陈旧数据清理和来源级重扫形成闭环。
 - **不误删**：清理前复核身份、活动、引用与路径，优先移入废纸篓，结果以重扫确认。
@@ -78,7 +78,7 @@ AgentNest 是一款原生 macOS Agent 管理工具：一键发现整台 Mac 上�
 ### 2.2 核心场景
 
 - 新用户打开 AgentNest，点击一次“扫描”，看到 Agent 数、总占用、可清理候选和 Skill 覆盖问题。
-- 用户发现 Codex 有三个符合其指纹的 Home，其中一个位于深层隐藏目录并长期未使用。
+- 用户发现 Codex 有三个符合其指纹的 Home，其中两个来自 `CODEX_HOME` 和用户明确添加的位置。
 - 用户按“90 天未活动”筛选会话/缓存，在复核后批量清理。
 - 用户按大小查看 Agent 占用，定位到某个 Agent 的会话归档或浏览器运行时。
 - 用户在全局 Skill 视图看到 `release` Skill 覆盖两个已配置 Agent Home，但第三个已配置目标缺失，点击“补齐”完成复制。
@@ -89,7 +89,7 @@ AgentNest 是一款原生 macOS Agent 管理工具：一键发现整台 Mac 上�
 
 ### 3.1 产品目标
 
-- G1：通过一次扫描建立全机 Agent 资产清单，覆盖多 Home、隐藏目录和未知相似目录。
+- G1：通过一次扫描建立已配置 Agent 资产清单，覆盖 Definition 默认路径、环境变量和用户明确添加的多 Home。
 - G2：统一衡量 Agent 空间并支持按来源、大小、类别和最后活动日期分析。
 - G3：建立全机 Skill 虚拟索引，准确表达覆盖、缺失、重复、冲突和无效状态。
 - G4：完成 Skill 的创建、查看、编辑、删除和跨 Agent 补齐闭环。
@@ -157,7 +157,7 @@ License 服务可统计试用创建、授权成功、到期和设备额度事件
 - 原生 Swift/SwiftUI macOS 应用、菜单栏入口和状态恢复；
 - 7 天试用、License 激活、设备绑定、本地签名凭证和后台续期；
 - 首页一键智能扫描、实时阶段进度、停止与重新扫描；
-- Codex 默认识别、可扩展 Agent Definition、多 Home、隐藏目录深度发现和自定义位置；
+- Codex 默认识别、可扩展 Agent Definition、多 Home、环境变量和自定义位置；
 - Agent 空间汇总、按大小分析、按日期筛选与安全清理；
 - 全机 Skill 虚拟视图、覆盖矩阵、冲突/缺失/无效状态；
 - Skill 创建、查看、编辑、删除和跨 Agent 补齐；
@@ -218,7 +218,7 @@ License 服务可统计试用创建、授权成功、到期和设备额度事件
 
 - 未知总工作量时使用不确定进度和真实计数；完成发现后才可展示可计算百分比；
 - 展示当前阶段、正在分析的 Agent/位置、已发现数量、已处理条目和字节；
-- 可停止；停止后保留已完成来源并标为“部分结果”；
+- 可停止；停止后丢弃当前 generation，立即恢复上一份完整快照；
 - 重扫期间保留旧快照可浏览，新 generation 完成后原子替换；
 - 扫描结束提供“查看结果”，并按影响排序展示结果卡片。
 
@@ -237,9 +237,9 @@ License 服务可统计试用创建、授权成功、到期和设备额度事件
 
 ### 7.1 扫描范围
 
-- FR-SCAN-01：默认扫描当前用户 Home，包含隐藏目录，不跨入其它卷。
-- FR-SCAN-02：用户可选择其它本地卷或目录；网络卷默认关闭且必须显式加入。
-- FR-SCAN-03：扫描按钮本身即为递归分析的明确授权；进入页面或启动 App 只能做非递归快速探测。
+- FR-SCAN-01：默认只检查 Agent Definition 声明的 Home 候选，并递归扫描通过指纹验证的 Agent Home。
+- FR-SCAN-02：用户可明确添加其它 Agent Home；自定义路径是精确候选，不是新的递归搜索范围。
+- FR-SCAN-03：不得将当前用户 Home、磁盘根目录或自定义候选的父目录作为通用发现根。
 - FR-SCAN-04：范围预览必须说明预计访问的位置、是否可能需要 Full Disk Access，以及不会上传内容。
 - FR-SCAN-05：支持全量扫描、单 Agent 重扫、单 Home 重扫、仅 Skill 重扫和仅空间重算。
 - FR-SCAN-06：所有任务带 generation；取消或迟到结果不得覆盖更新快照。
@@ -248,7 +248,7 @@ License 服务可统计试用创建、授权成功、到期和设备额度事件
 
 - FR-SCAN-07：先发现候选根，再对候选做浅层指纹验证，最后才读取适配器需要的元数据和内容。
 - FR-SCAN-08：文件系统遍历使用有界 I/O 并发；目录枚举、内容解析和大小测量分离，不能重复遍历整棵树。
-- FR-SCAN-09：目录索引由多个消费者共享：Agent 发现、Skill 发现和空间账本不能各扫一遍全盘。
+- FR-SCAN-09：每个已确认 Agent Home 只建立一次目录索引，并由 Skill 发现和空间账本共享。
 - FR-SCAN-10：读取失败保留其它结果，并记录路径、原因、影响范围和恢复动作。
 - FR-SCAN-11：扫描前后身份、类型、大小或修改时间变化的项标记为不稳定；相关精确结论被抑制。
 - FR-SCAN-12：扫描不执行 Agent、Skill 脚本或未知二进制，不加载动态插件代码。
@@ -271,7 +271,7 @@ License 服务可统计试用创建、授权成功、到期和设备额度事件
 
 | Agent | 定义状态 | v1.0 行为 |
 | --- | --- | --- |
-| OpenAI Codex | 已定义 | 默认候选 `~/.codex`；支持同结构自定义 Home 的深度发现；以根目录 `version.json` 为必要指纹 |
+| OpenAI Codex | 已定义 | 默认候选 `~/.codex`；支持 `CODEX_HOME` 和用户添加的精确 Home；以根目录 `version.json` 为必要指纹 |
 | Claude Code | 空定义 | 只保留稳定 ID、显示名和图标槽位；路径、指纹、Skill、空间与清理能力为空 |
 | WorkBuddy | 空定义 | 只保留稳定 ID、显示名和图标槽位；路径、指纹、Skill、空间与清理能力为空 |
 | 其它 Agent | 未定义 | 通过新增 Agent Definition 接入；未接入前最多作为用户确认的未知来源，不标注具体产品 |
@@ -286,14 +286,13 @@ License 服务可统计试用创建、授权成功、到期和设备额度事件
 - Agent 配置文件中声明的数据、XDG、Skill 或工作区目录；
 - 正在运行进程的可执行路径、参数和打开位置（只读、按权限）；
 - 用户添加的位置；
-- 用户 Home 内包含隐藏目录的递归结构发现；
-- 用户显式加入的其它本地卷。
+- 用户显式加入的 Agent Home。
 
-### 8.3 深度发现规则
+### 8.3 定向发现规则
 
-- FR-DISC-01：用户 Home 内无固定最大目录深度；隐藏目录与普通目录同等扫描。
-- FR-DISC-02：不跟随后代 symlink，不进入其它 volume，不递归 App bundle、Git object、依赖包和明确无关的大型 package 内容；但仍检查这些节点本身是否为候选 Home。
-- FR-DISC-03：候选目录先通过廉价锚点筛选，再读取有限数量的结构指纹；禁止对每个目录打开数据库或解析全部内容。
+- FR-DISC-01：候选只来自 Definition 默认路径、声明的环境变量、用户添加路径和本机确认记录。
+- FR-DISC-02：候选先做浅层指纹验证；只有已确认 Agent Home 才递归，不跟随后代 symlink、不跨 volume，并跳过 App bundle、Git object 和依赖包等明确无关内容。
+- FR-DISC-03：候选验证只读取 Definition 声明的有限结构指纹；禁止遍历候选父目录或对无关目录打开数据库。
 - FR-DISC-04：识别证据由 Agent Definition 声明为 required/optional/negative；每个已支持 Agent 必须通过正例、近似目录和反例 fixture 决定最低确认条件。
 - FR-DISC-05：只有满足定义中的全部 required 指纹且不命中 negative 指纹才标为“已确认”；单纯目录名相似只能标为“可能的 Agent Home”。
 - FR-DISC-06：用户可确认、忽略或为“可能”目录指定 Agent 类型；确认只形成本机自定义来源，不改变全局适配器。
@@ -316,8 +315,7 @@ Agent Definition 使用带 `schemaVersion` 的 JSON。每个 Agent 一份资源�
   "displayName": "Codex",
   "homeDiscovery": {
     "defaultPaths": ["~/.codex"],
-    "environmentVariables": ["CODEX_HOME"],
-    "allowDeepDiscovery": true
+    "environmentVariables": ["CODEX_HOME"]
   },
   "fingerprints": {
     "required": [
@@ -340,21 +338,21 @@ Agent Definition 使用带 `schemaVersion` 的 JSON。每个 Agent 一份资源�
 示例只固定当前已知的 Home 和必要指纹；Codex 的 Skill、Artifact 与清理规则必须在真实 fixture 验证后逐项开启，不能因发现 `version.json` 就自动开放写入或清理。
 
 - FR-ADAPTER-01：扫描器只依赖通用 Definition 模型；新增普通 Agent 不修改扫描核心或 UI switch。
-- FR-ADAPTER-02：Definition 支持 default path、环境变量、配置引用、Bundle/进程提示和深度发现，不把 Home 规则硬编码到 View。
+- FR-ADAPTER-02：Definition 支持 default path、环境变量和明确的 Home 候选，不把 Home 规则硬编码到 View。
 - FR-ADAPTER-03：指纹类型使用固定白名单，如文件/目录存在、JSON/plist 字段、SQLite 只读 schema 和有限文本模式；定义不能携带任意正则灾难模式、命令或代码。
 - FR-ADAPTER-04：空定义必须合法加载，但不参与扫描、不产生候选、不声明能力。
 - FR-ADAPTER-05：Definition schema 不兼容、字段未知或签名无效时整份拒绝，回退到最近有效内置目录。
 - FR-ADAPTER-06：在线目录更新使用离线签名，只能更新声明式数据；Swift Adapter 仍随签名 App 版本发布。
-- FR-ADAPTER-07：每个定义必须提供默认 Home、自定义 Home、深层隐藏 Home、近似目录、缺失指纹、畸形指纹和重叠根 fixture。
+- FR-ADAPTER-07：每个定义必须提供默认 Home、环境变量 Home、自定义 Home、未声明深层目录、缺失指纹、畸形指纹和重叠根 fixture。
 - FR-ADAPTER-08：外部格式或版本未知时 fail closed，显示“已发现，待适配”，不猜测关系、Skill 格式或开放清理。
 
 ### 8.5 Codex 识别规则
 
 - FR-CODEX-01：`~/.codex` 是默认候选，而不是唯一 Home。
-- FR-CODEX-02：环境变量、用户添加路径和深度扫描发现的任意目录，只要满足同一 Definition，都可成为独立 Codex Home。
+- FR-CODEX-02：环境变量和用户添加的精确路径只要满足同一 Definition，都可成为独立 Codex Home。
 - FR-CODEX-03：候选根必须包含可读取且可解析为 JSON 的 `version.json`；具体字段约束由真实 Codex fixture 补充，未确认前不在 PRD 中虚构。
 - FR-CODEX-04：仅路径名为 `.codex` 但缺少/损坏 `version.json` 时显示“疑似 Codex”，不得计入已确认 Agent 总数。
-- FR-CODEX-05：深度扫描可使用文件名索引寻找 `version.json`，随后只对其父目录运行 Codex 指纹验证，不能对每个目录解析 JSON。
+- FR-CODEX-05：未被 Definition、环境变量或用户操作声明的目录，即使包含 `version.json` 或名为 `.codex`，也不得被扫描或计入疑似结果。
 - FR-CODEX-06：多个已确认 Codex Home 分别展示来源、版本证据、物理身份和占用；同一物理根的别名只计一次。
 
 ## 9. Agent 空间占用管理
@@ -639,7 +637,7 @@ subscriptionExpiresAt?, minAppVersion?, receiptId, signature
 
 ### 15.1 设置
 
-- 扫描范围：默认 Home、其它本地卷、自定义位置、忽略位置；
+- 扫描范围：Definition 默认 Home、环境变量 Home、用户添加 Home、忽略位置；
 - Agent：查看识别依据、重命名本机标签、确认/忽略候选 Home；
 - Skill：默认创建目标、编辑器偏好、显示项目 Skill；
 - 活动：采样间隔、菜单栏指标、历史开关和保留期；
@@ -792,7 +790,7 @@ macOS APIs / fixed official CLIs / License Service
 | 已知默认 Agent 快速探测 | P95 2 秒内发布第一批候选，不等待完整空间测量 |
 | 空闲基础监控 | 平均 CPU <1%，P95 <2% |
 | 正常基础监控 | 平均 CPU <3%，P95 <6% |
-| 深度扫描 | 有界并发，UI 可交互；默认不长期占满所有性能核 |
+| Agent Home 扫描 | 流式枚举、可取消，UI 可交互；不长期占满所有性能核 |
 | 活跃追踪 | 额外 CPU P95 <8%，App + Helper 内存 <200 MB |
 | UI 快照 | 普通页面不高于 2–4 Hz，列表/图表不高于 1 Hz |
 | Helper 停止 | 2 秒内确认退出，否则强制回收 |
@@ -835,13 +833,13 @@ macOS APIs / fixed official CLIs / License Service
 1. 新设备启动，联网创建服务端试用，页面显示 7 天范围和功能边界。
 2. 首页只提供主要扫描动作和范围说明。
 3. 点击扫描后依次看到真实阶段、Agent/位置、计数和停止动作。
-4. 默认 Home 的隐藏目录被遍历；固定目录与深度发现共享索引。
+4. 只递归指纹确认后的 Agent Home；用户 Home 中未声明的深层目录不被访问。
 5. 完成后展示 Agent、Skill、空间和活动四组结果。
 6. 任一不可读目录只降低对应覆盖，不把整次扫描变成空结果。
 
 ### 21.2 多 Home 与相似目录
 
-1. Codex 默认 `~/.codex`、`CODEX_HOME` 指向的自定义 Home 和一个深层隐藏 Home 同时存在。
+1. Codex 默认 `~/.codex`、`CODEX_HOME` 指向的自定义 Home 和一个用户明确添加的 Home 同时存在。
 2. 三者均包含有效 `version.json`，分别显示来源证据和物理占用。
 3. 另一个只有 `.codex` 名称但缺少 `version.json` 的目录只能标为疑似。
 4. 两个路径指向同一物理根时只计一次。
@@ -886,8 +884,8 @@ macOS APIs / fixed official CLIs / License Service
 
 ## 22. 发布阻断门
 
-- Codex Definition 完成 `~/.codex`、自定义/深层 Home、`version.json`、近似目录和版本失配 fixture；所有空定义确认不会参与扫描或宣称支持；
-- 默认 Home、自定义 Home、隐藏深层目录、symlink、跨卷、重叠根和不可读路径测试通过；
+- Codex Definition 完成 `~/.codex`、环境变量/自定义 Home、`version.json`、未声明深层目录和版本失配 fixture；所有空定义确认不会参与扫描或宣称支持；
+- 默认 Home、环境变量 Home、自定义 Home、未声明深层目录不访问、symlink、跨卷、重叠根和不可读路径测试通过；
 - 空间物理账本、共享/未归属、硬链接、扫描中变化和逻辑/物理口径守恒；
 - Skill CRUD、Variant、覆盖矩阵、格式转换、冲突、原子写入和崩溃恢复测试通过；
 - 日期证据、活动目标保护、清理执行前复验和官方删除 fail-closed 通过；
@@ -903,7 +901,7 @@ macOS APIs / fixed official CLIs / License Service
 阶段用于控制研发顺序，不削减 v1.0 最终范围：
 
 1. **领域底座**：Snapshot、Adapter、文件索引、空间账本、写计划与安全不变量；
-2. **扫描与 Agent**：首页、进度、默认/深度发现、多 Home、适配器 fixture；
+2. **扫描与 Agent**：首页、进度、定向候选发现、多 Home、停止取消、适配器 fixture；
 3. **空间与清理**：分类、日期/大小筛选、统一复核和执行后重扫；
 4. **Skill**：虚拟索引、Variant/覆盖、CRUD、适配 materializer 和补齐；
 5. **活动整合**：Agent 归因、文件证据、追踪、卷/健康、历史与报告；
@@ -935,7 +933,7 @@ macOS APIs / fixed official CLIs / License Service
 | Codex/Claude/OpenCode 分析 | Agent Adapter | 扩展为多产品、多 Home、统一 Artifact 模型 |
 | AI 会话清理 | 统一清理 | 仍只走官方接口并 fail closed |
 | 历史分析 / 导出 | 历史 | 增加 Agent 空间增长与活动趋势 |
-| 设置 / 更新 / 卸载 | 设置 | 加入扫描范围、Skill、License 和设备解绑 |
+| 设置 / 更新 / 卸载 | 设置 | 加入 Agent Home、Skill、License 和设备解绑 |
 
 ## 26. 参考资料
 

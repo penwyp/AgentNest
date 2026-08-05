@@ -3,7 +3,7 @@
 AgentNest 是一个面向 macOS 的原生 Agent 环境管理器。本仓库当前包含：
 
 - Swift 6 / SwiftUI 客户端与可复用领域层；
-- 声明式 Agent Definition、深度扫描、物理空间账本；
+- 声明式 Agent Definition、定向 Agent Home 扫描、物理空间账本；
 - Skill 虚拟索引、安全创建/补齐执行器与统一清理策略；
 - 基础活动采样、默认关闭的 SQLite 历史和 CSV 导出；
 - Go 设备试用/License 服务、Ed25519 Receipt、支付 webhook；

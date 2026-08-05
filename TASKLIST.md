@@ -23,15 +23,15 @@
 
 ## P2 智能扫描与 Agent（FR-SCAN-01…12、FR-DISC-01…08、FR-ADAPTER-01…08、FR-CODEX-01…06）
 
-- [x] 默认递归扫描当前 Home，包含隐藏目录，不跟随后代 symlink、不跨 volume。
-- [x] 固定路径、环境变量、自定义路径和深度发现共享一次目录索引。
-- [x] 扫描阶段、真实计数、当前位置、停止、部分结果和原子快照发布可用。
+- [x] 只从 Definition 默认路径、环境变量、用户添加和本机确认生成精确候选，不遍历当前用户 Home。
+- [x] 候选先浅验证，只对已确认 Agent Home 建立一次共享目录索引；不跟随后代 symlink、不跨 volume。
+- [x] 扫描阶段、真实计数、当前位置、立即停止和原子快照发布可用；取消 generation 不发布部分结果。
 - [x] `schemaVersion: 1` Agent Definition 严格加载；未知字段/不兼容 schema 整份拒绝。
 - [x] Codex 定义以可读取且可解析的根 `version.json` 为 required 指纹。
-- [x] 默认、自定义、深层隐藏 Codex Home 分别展示；物理别名合并；相似目录只标为可能。
+- [x] 默认、环境变量和自定义 Codex Home 分别展示；物理别名合并；未声明深层目录不访问。
 - [x] “可能”Home 可在 Agent 页按路径+产品形成仅本机 `userConfirmed` 来源，或加入遍历级忽略位置；均触发新 generation 重扫。
 - [x] Claude Code、WorkBuddy 空定义合法加载但不扫描、不声明能力、不显示为已支持。
-- [~] fixture 已覆盖正例、近似目录、畸形指纹、深层目录、symlink、硬链接、忽略位置、扫描中变化与 POSIX 不可读子树；独立挂载卷仍待补。
+- [~] fixture 已覆盖正例、未声明深层目录不发现、用户确认、畸形指纹、symlink、硬链接、忽略位置、取消、扫描中变化与 POSIX 不可读子树；独立挂载卷仍待补。
 
 ## P3 空间、日期与清理（PRD 9、12）
 

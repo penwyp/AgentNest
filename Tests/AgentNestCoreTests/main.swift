@@ -19,7 +19,7 @@ struct AgentNestCoreTestRunner {
             try testHistoryPDF()
             try await testReceipts()
             try testLicenseRefreshSchedule()
-            print("AgentNestCore tests passed (79 checks)")
+            print("AgentNestCore tests passed (82 checks)")
         } catch {
             FileHandle.standardError.write(Data("AgentNestCore tests failed: \(error)\n".utf8))
             exit(1)
@@ -36,7 +36,7 @@ struct AgentNestCoreTestRunner {
 
         let unknown = Data("""
         {"schemaVersion":1,"id":"test","displayName":"Test","unexpected":true,
-        "homeDiscovery":{"defaultPaths":[],"environmentVariables":[],"allowDeepDiscovery":false},
+        "homeDiscovery":{"defaultPaths":[],"environmentVariables":[]},
         "fingerprints":{"required":[],"optional":[],"negative":[]},"skills":[],"artifacts":[],
         "capabilities":{"space":false,"skills":false,"activity":false,"cleanup":false}}
         """.utf8)
@@ -44,7 +44,7 @@ struct AgentNestCoreTestRunner {
 
         let unsafe = Data("""
         {"schemaVersion":1,"id":"test","displayName":"Test",
-        "homeDiscovery":{"defaultPaths":["~/.test"],"environmentVariables":[],"allowDeepDiscovery":true},
+        "homeDiscovery":{"defaultPaths":["~/.test"],"environmentVariables":[]},
         "fingerprints":{"required":[{"kind":"file","relativePath":"../outside"}],"optional":[],"negative":[]},
         "skills":[],"artifacts":[],"capabilities":{"space":false,"skills":false,"activity":false,"cleanup":false}}
         """.utf8)
@@ -75,16 +75,20 @@ struct AgentNestCoreTestRunner {
         try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: defaultHome)
 
         let snapshot = try await ScanUseCase(catalog: AgentDefinitionCatalog.bundled()).execute(request: ScanRequest(
-            root: root,
+            homeDirectory: root,
             customLocations: [alias],
             environment: ["CODEX_HOME": deepHome.path]
         ))
         let confirmed = snapshot.homes.filter { $0.confidence == .confirmed }
         let possible = snapshot.homes.filter { $0.confidence == .possible }
         try expect(confirmed.count == 2 && Set(confirmed.map(\.id)).count == 2, "multi-home discovery and physical alias deduplication")
-        try expect(possible.count == 1 && possible.first?.path == possibleHome.path, "similar directory remains possible")
+        try expect(possible.isEmpty, "undeclared nested directories are not searched")
+        try expect(
+            !snapshot.storageLedger.artifacts.contains(where: { $0.path == possibleHome.path || $0.path.hasPrefix(possibleHome.path + "/") }),
+            "undeclared directories never enter physical accounting"
+        )
         let userConfirmedSnapshot = try await ScanUseCase(catalog: AgentDefinitionCatalog.bundled()).execute(request: ScanRequest(
-            root: root,
+            homeDirectory: root,
             userConfirmedHomes: [possibleHome.path: "openai.codex"]
         ))
         try expect(
@@ -106,7 +110,7 @@ struct AgentNestCoreTestRunner {
         let incrementalFile = defaultHome.appending(path: "incremental.fixture")
         try Data("incremental".utf8).write(to: incrementalFile)
         let homeReplacement = try await ScanUseCase(catalog: AgentDefinitionCatalog.bundled()).execute(request: ScanRequest(
-            root: defaultHome,
+            homeDirectory: defaultHome,
             customLocations: [defaultHome]
         ))
         let reconciled = try SnapshotReconciler().replacingHome(at: defaultHome.path, in: snapshot, with: homeReplacement)
@@ -118,7 +122,7 @@ struct AgentNestCoreTestRunner {
         )
 
         let ignoredSnapshot = try await ScanUseCase(catalog: AgentDefinitionCatalog.bundled()).execute(request: ScanRequest(
-            root: root,
+            homeDirectory: root,
             ignoredLocations: [deepHome],
             environment: ["CODEX_HOME": deepHome.path]
         ))
@@ -134,9 +138,9 @@ struct AgentNestCoreTestRunner {
         try FileManager.default.createDirectory(at: unstableHome, withIntermediateDirectories: true)
         try Data("{\"version\":\"before\"}".utf8).write(to: unstableFingerprint)
         let unstableSnapshot = try await ScanUseCase(catalog: AgentDefinitionCatalog.bundled()).execute(
-            request: ScanRequest(root: unstableRoot),
+            request: ScanRequest(homeDirectory: unstableRoot),
             progress: { progress in
-                if progress.phase == .validatingHomes {
+                if progress.phase == .measuringSpace {
                     try? Data("{\"version\":\"changed-during-scan\"}".utf8).write(to: unstableFingerprint)
                 }
             }
@@ -158,30 +162,50 @@ struct AgentNestCoreTestRunner {
         try expect(snapshotMode?.intValue == 0o600, "persisted snapshot is owner-only")
 
         try Data("not-json".utf8).write(to: defaultHome.appending(path: "version.json"))
-        let malformedSnapshot = try await ScanUseCase(catalog: AgentDefinitionCatalog.bundled()).execute(request: ScanRequest(root: root))
+        let malformedSnapshot = try await ScanUseCase(catalog: AgentDefinitionCatalog.bundled()).execute(request: ScanRequest(homeDirectory: root))
         try expect(malformedSnapshot.homes.first { $0.path == defaultHome.path }?.confidence == .possible, "malformed JSON fails closed")
 
         let cancelledTask = Task {
-            try await ScanUseCase(catalog: AgentDefinitionCatalog.bundled()).execute(request: ScanRequest(root: root))
+            try await ScanUseCase(catalog: AgentDefinitionCatalog.bundled()).execute(request: ScanRequest(homeDirectory: root))
         }
         cancelledTask.cancel()
-        let partial = try await cancelledTask.value
-        try expect(partial.isPartial && partial.coverage.directories == .partial, "cancelled scan publishes a partial generation")
+        try await expectThrows("cancelled scan does not publish a partial generation") {
+            _ = try await cancelledTask.value
+        }
+
+        let cancellationProbe = ScanCancellationProbe()
+        let coordinator = ScanCoordinator(useCase: ScanUseCase(catalog: try AgentDefinitionCatalog.bundled()))
+        let coordinatedTask = Task {
+            try await coordinator.scan(request: ScanRequest(homeDirectory: root)) { progress in
+                if progress.phase == .discoveringAgents {
+                    await cancellationProbe.waitForCancellation()
+                }
+            }
+        }
+        await cancellationProbe.waitUntilStarted()
+        await coordinator.cancel()
+        try await expectThrows("coordinator cancellation terminates the active scan") {
+            _ = try await coordinatedTask.value
+        }
+        let stoppedSnapshot = await coordinator.snapshot()
+        try expect(stoppedSnapshot == nil, "a stopped generation is never published")
 
         let missingRoot = root.appending(path: "missing-scan-root")
-        let unavailable = try await ScanUseCase(catalog: AgentDefinitionCatalog.bundled()).execute(request: ScanRequest(root: missingRoot))
+        let unavailable = try await ScanUseCase(catalog: AgentDefinitionCatalog.bundled()).execute(request: ScanRequest(homeDirectory: missingRoot))
         try expect(
-            unavailable.isPartial && unavailable.coverage.unreadableLocationCount == 1,
-            "unavailable root is represented as partial coverage"
+            !unavailable.isPartial && unavailable.homes.isEmpty,
+            "a missing default candidate is treated as an absent Agent Home"
         )
 
         let permissionRoot = root.appending(path: "permission-fixture")
-        let blockedDirectory = permissionRoot.appending(path: "blocked")
+        let permissionHome = permissionRoot.appending(path: ".codex")
+        let blockedDirectory = permissionHome.appending(path: "blocked")
         try FileManager.default.createDirectory(at: blockedDirectory, withIntermediateDirectories: true)
+        try Data("{\"version\":\"fixture\"}".utf8).write(to: permissionHome.appending(path: "version.json"))
         try Data("private".utf8).write(to: blockedDirectory.appending(path: "secret"))
         guard chmod(blockedDirectory.path, 0) == 0 else { throw POSIXError(.EACCES) }
         defer { _ = chmod(blockedDirectory.path, S_IRWXU) }
-        let permissionSnapshot = try await ScanUseCase(catalog: AgentDefinitionCatalog.bundled()).execute(request: ScanRequest(root: permissionRoot))
+        let permissionSnapshot = try await ScanUseCase(catalog: AgentDefinitionCatalog.bundled()).execute(request: ScanRequest(homeDirectory: permissionRoot))
         try expect(
             permissionSnapshot.isPartial && permissionSnapshot.coverage.unreadableLocationCount >= 1,
             "an unreadable subtree preserves the scan while making affected coverage partial"
@@ -323,7 +347,7 @@ struct AgentNestCoreTestRunner {
         let attributionHome = attributionRoot.appending(path: ".codex")
         try FileManager.default.createDirectory(at: attributionHome, withIntermediateDirectories: true)
         try Data("{\"version\":\"fixture\"}".utf8).write(to: attributionHome.appending(path: "version.json"))
-        let inventory = try await ScanUseCase(catalog: AgentDefinitionCatalog.bundled()).execute(request: ScanRequest(root: attributionRoot))
+        let inventory = try await ScanUseCase(catalog: AgentDefinitionCatalog.bundled()).execute(request: ScanRequest(homeDirectory: attributionRoot))
         let attributedSampler = SystemActivitySampler(
             provider: SequencedCounterProvider(),
             evidenceProvider: WorkingDirectoryEvidenceProvider(path: attributionHome.appending(path: "workspace").path)
@@ -509,13 +533,13 @@ struct AgentNestCoreTestRunner {
         try Data(repeating: 1, count: 4_096).write(to: cache.appending(path: "item.bin"))
         let definition = try AgentDefinitionCatalog.load(data: Data("""
         {"schemaVersion":1,"id":"openai.codex","displayName":"Codex",
-        "homeDiscovery":{"defaultPaths":["~/.codex"],"environmentVariables":[],"allowDeepDiscovery":false},
+        "homeDiscovery":{"defaultPaths":["~/.codex"],"environmentVariables":[]},
         "fingerprints":{"required":[{"kind":"jsonFile","relativePath":"version.json"}],"optional":[],"negative":[]},
         "skills":[],"artifacts":[{"relativePath":"cache","category":"cache","cleanup":{"risk":"rebuildable","method":"trash"}}],
         "capabilities":{"space":true,"skills":false,"activity":false,"cleanup":true}}
         """.utf8))
         let catalog = try AgentDefinitionCatalog(definitions: [definition])
-        let snapshot = try await ScanUseCase(catalog: catalog).execute(request: ScanRequest(root: root))
+        let snapshot = try await ScanUseCase(catalog: catalog).execute(request: ScanRequest(homeDirectory: root))
         let useCase = CleanupInventoryUseCase(catalog: catalog)
         let unknown = useCase.execute(snapshot: snapshot, activity: nil)
         try expect(unknown.count == 1 && unknown.first?.risk == .rebuildable && unknown.first?.path == cache.path, "cleanup inventory only emits explicitly declared complete artifact roots")
@@ -540,11 +564,14 @@ struct AgentNestCoreTestRunner {
         try Data("fixture asset".utf8).write(to: firstSkill.appending(path: "asset.txt"))
         try Data("---\nname: release\ndescription: second\n---\n\n# Release B\n".utf8).write(to: secondSkill.appending(path: "SKILL.md"))
 
-        let snapshot = try await ScanUseCase(catalog: AgentDefinitionCatalog.bundled()).execute(request: ScanRequest(root: root))
+        let snapshot = try await ScanUseCase(catalog: AgentDefinitionCatalog.bundled()).execute(request: ScanRequest(
+            homeDirectory: root,
+            customLocations: Array(homes.dropFirst())
+        ))
         try expect(snapshot.homes.filter { $0.confidence == .confirmed }.count == 3, "skill fixture homes")
         let definitionData = Data("""
         {"schemaVersion":1,"id":"openai.codex","displayName":"Codex",
-        "homeDiscovery":{"defaultPaths":["~/.codex"],"environmentVariables":[],"allowDeepDiscovery":true},
+        "homeDiscovery":{"defaultPaths":["~/.codex"],"environmentVariables":[]},
         "fingerprints":{"required":[{"kind":"jsonFile","relativePath":"version.json"}],"optional":[],"negative":[]},
         "skills":[{"relativePath":"skills","format":"directory-skill-md"}],"artifacts":[],
         "capabilities":{"space":true,"skills":true,"activity":false,"cleanup":false}}
@@ -762,6 +789,19 @@ private final class SequencedCounterProvider: ActivityCounterProvider, @unchecke
             networkReceiveBytes: value,
             networkSendBytes: value
         )
+    }
+}
+
+private actor ScanCancellationProbe {
+    private var started = false
+
+    func waitForCancellation() async {
+        started = true
+        while !Task.isCancelled { await Task.yield() }
+    }
+
+    func waitUntilStarted() async {
+        while !started { await Task.yield() }
     }
 }
 

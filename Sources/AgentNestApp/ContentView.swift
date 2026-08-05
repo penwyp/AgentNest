@@ -93,9 +93,9 @@ private struct HomeView: View {
                 .foregroundStyle(.tint)
                 .symbolEffect(.pulse, isActive: model.isScanning && !reduceMotion)
                 .accessibilityHidden(true)
-            Text(model.isScanning ? "正在分析这台 Mac" : "发现并维护你的 Agent 环境")
+            Text(model.isScanning ? "正在分析 Agent 目录" : "发现并维护你的 Agent 环境")
                 .font(.largeTitle.bold())
-            Text("默认扫描当前用户 Home（包括隐藏目录），数据只在本机分析，不上传内容。")
+            Text("仅扫描 Agent Definition 声明和你明确添加的 Agent Home，数据只在本机分析。")
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
 
@@ -107,11 +107,12 @@ private struct HomeView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     if let location = progress.currentLocation {
-                        Text(location).font(.caption2).lineLimit(1).truncationMode(.middle).privacySensitive()
+                        Text(model.displayPath(location)).font(.caption2).lineLimit(1).truncationMode(.middle).privacySensitive()
                     }
                 }
                 .frame(maxWidth: 520)
-                Button("停止", role: .cancel) { model.stopScan() }
+                Button(model.isStoppingScan ? "正在停止…" : "停止", role: .cancel) { model.stopScan() }
+                    .disabled(model.isStoppingScan)
             } else {
                 Button(action: model.startScan) {
                     Label("扫描", systemImage: "magnifyingglass")
@@ -866,7 +867,7 @@ private struct SettingsView: View {
     var body: some View {
         Form {
             Section("扫描与隐私") {
-                LabeledContent("默认范围", value: "当前用户 Home，不跨卷")
+                LabeledContent("默认范围", value: "Agent Definition 声明的候选目录")
                 ForEach(model.customScanPaths, id: \.self) { path in
                     HStack {
                         Text(model.displayPath(path)).lineLimit(1).truncationMode(.middle).privacySensitive()
@@ -874,7 +875,7 @@ private struct SettingsView: View {
                         Button("移除", role: .destructive) { model.removeCustomScanLocation(path) }
                     }
                 }
-                Button("加入其它目录或本地卷") { model.addCustomScanLocations() }
+                Button("加入 Agent Home 目录") { model.addCustomScanLocations() }
                 if !model.ignoredScanPaths.isEmpty {
                     Text("忽略位置（优先于其它扫描范围）").font(.caption.bold())
                 }

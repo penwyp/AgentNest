@@ -49,7 +49,6 @@ public enum DiscoverySource: String, Codable, Sendable {
     case defaultPath
     case environment
     case custom
-    case deepScan
     case userConfirmed
 }
 
@@ -205,20 +204,20 @@ public struct DeviceSnapshot: Identifiable, Codable, Equatable, Sendable {
 }
 
 public struct ScanRequest: Sendable {
-    public let root: URL
+    public let homeDirectory: URL
     public let customLocations: [URL]
     public let ignoredLocations: [URL]
     public let userConfirmedHomes: [String: String]
     public let environment: [String: String]
 
     public init(
-        root: URL,
+        homeDirectory: URL,
         customLocations: [URL] = [],
         ignoredLocations: [URL] = [],
         userConfirmedHomes: [String: String] = [:],
         environment: [String: String] = [:]
     ) {
-        self.root = root.standardizedFileURL
+        self.homeDirectory = homeDirectory.standardizedFileURL
         self.customLocations = customLocations.map(\.standardizedFileURL)
         self.ignoredLocations = ignoredLocations.map(\.standardizedFileURL)
         self.userConfirmedHomes = userConfirmedHomes

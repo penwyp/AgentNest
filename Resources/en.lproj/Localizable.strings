@@ -13,10 +13,11 @@
 "需要试用或激活" = "Trial or activation required";
 "AgentNest" = "AgentNest";
 "发现并维护你的 Agent 环境" = "Discover and maintain your Agent environments";
-"正在分析这台 Mac" = "Analyzing this Mac";
-"默认扫描当前用户 Home（包括隐藏目录），数据只在本机分析，不上传内容。" = "The default scan covers the current user's Home, including hidden folders. Analysis stays on this Mac and no content is uploaded.";
+"正在分析 Agent 目录" = "Analyzing Agent folders";
+"仅扫描 Agent Definition 声明和你明确添加的 Agent Home，数据只在本机分析。" = "Only Agent Homes declared by Agent Definitions or explicitly added by you are scanned. Analysis stays on this Mac.";
 "扫描" = "Scan";
 "停止" = "Stop";
+"正在停止…" = "Stopping…";
 "发现 Agent" = "Discovering Agents";
 "验证 Home / Profile" = "Validating Homes and Profiles";
 "索引 Skill" = "Indexing Skills";
@@ -56,7 +57,7 @@
 "导出 CSV" = "Export CSV";
 "扫描与隐私" = "Scan and privacy";
 "默认范围" = "Default scope";
-"当前用户 Home，不跨卷" = "Current user Home; do not cross volumes";
+"Agent Definition 声明的候选目录" = "Candidate folders declared by Agent Definitions";
 "卷" = "Volume";
 "全部卷" = "All volumes";
 "保存脱敏历史聚合" = "Save privacy-preserving history aggregates";
@@ -100,8 +101,8 @@
 "关于" = "About";
 "当前筛选没有资源" = "No resources match the current filters";
 "物理设备指标不可用" = "Physical-device metrics are unavailable";
-"加入其它目录或本地卷" = "Add another folder or local volume";
-"加入扫描范围" = "Add to scan scope";
+"加入 Agent Home 目录" = "Add Agent Home folder";
+"加入 Agent Home" = "Add Agent Home";
 "加入忽略位置" = "Add ignored location";
 "忽略位置（优先于其它扫描范围）" = "Ignored locations (take precedence over other scan scopes)";
 "隐藏敏感路径" = "Hide sensitive paths";

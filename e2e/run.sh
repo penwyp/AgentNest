@@ -34,8 +34,12 @@ SCAN_OUTPUT="$E2E_DIR/scan.json"
 "$CLI_PATH" scan --root "$HOME_FIXTURE" --codex-home "$DEEP_HOME" > "$SCAN_OUTPUT"
 CONFIRMED_COUNT=$(grep -c '"confidence" : "confirmed"' "$SCAN_OUTPUT" || true)
 POSSIBLE_COUNT=$(grep -c '"confidence" : "possible"' "$SCAN_OUTPUT" || true)
-if [[ "$CONFIRMED_COUNT" -ne 2 || "$POSSIBLE_COUNT" -ne 1 ]]; then
+if [[ "$CONFIRMED_COUNT" -ne 2 || "$POSSIBLE_COUNT" -ne 0 ]]; then
   echo "unexpected scan result: confirmed=$CONFIRMED_COUNT possible=$POSSIBLE_COUNT" >&2
+  exit 1
+fi
+if grep -F "$POSSIBLE_HOME" "$SCAN_OUTPUT" >/dev/null; then
+  echo "undeclared nested Agent Home was scanned" >&2
   exit 1
 fi
 
@@ -165,4 +169,4 @@ if "$CLI_PATH" license-refresh --server "$SERVER_URL" --machine-id "e2e-device-t
   exit 1
 fi
 
-echo "E2E passed: scan/ignore, persistent trial, offline expiry, anti-replay, activation, tamper/device binding, seat release, revocation"
+echo "E2E passed: targeted scan/ignore, persistent trial, offline expiry, anti-replay, activation, tamper/device binding, seat release, revocation"

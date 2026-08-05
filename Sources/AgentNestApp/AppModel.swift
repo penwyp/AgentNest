@@ -43,6 +43,7 @@ final class AppModel {
 
     var selection: Destination? = .home
     private(set) var isScanning = false
+    private(set) var isStoppingScan = false
     private(set) var progress: ScanProgress?
     private(set) var snapshot: DeviceSnapshot?
     private(set) var errorMessage: String?
@@ -200,13 +201,14 @@ final class AppModel {
             return
         }
         isScanning = true
+        isStoppingScan = false
         errorMessage = nil
         let root = FileManager.default.homeDirectoryForCurrentUser
         scanTask = Task {
             do {
                 let result = try await coordinator.scan(
                     request: ScanRequest(
-                        root: root,
+                        homeDirectory: root,
                         customLocations: customScanPaths.map { URL(fileURLWithPath: $0, isDirectory: true) },
                         ignoredLocations: ignoredScanPaths.map { URL(fileURLWithPath: $0, isDirectory: true) },
                         userConfirmedHomes: userConfirmedHomes,
@@ -231,11 +233,15 @@ final class AppModel {
                 errorMessage = String(format: localize("扫描失败：%@"), error.localizedDescription)
             }
             isScanning = false
+            isStoppingScan = false
             scanTask = nil
         }
     }
 
     func stopScan() {
+        guard isScanning, !isStoppingScan else { return }
+        isStoppingScan = true
+        scanTask?.cancel()
         Task { await coordinator?.cancel() }
     }
 
@@ -244,7 +250,7 @@ final class AppModel {
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
         panel.allowsMultipleSelection = true
-        panel.prompt = localize("加入扫描范围")
+        panel.prompt = localize("加入 Agent Home")
         guard panel.runModal() == .OK else { return }
         var seen = Set(customScanPaths)
         for url in panel.urls.map({ $0.resolvingSymlinksInPath().standardizedFileURL }) {
@@ -383,6 +389,7 @@ final class AppModel {
     private func rescanHome(at homePath: String) {
         guard !isScanning, let coordinator, let baseline = snapshot else { return }
         isScanning = true
+        isStoppingScan = false
         errorMessage = nil
         let root = URL(fileURLWithPath: homePath, isDirectory: true)
         scanTask = Task {
@@ -391,7 +398,7 @@ final class AppModel {
                     at: homePath,
                     baseline: baseline,
                     request: ScanRequest(
-                        root: root,
+                        homeDirectory: root,
                         customLocations: [root],
                         ignoredLocations: ignoredScanPaths.map { URL(fileURLWithPath: $0, isDirectory: true) },
                         userConfirmedHomes: userConfirmedHomes,
@@ -407,6 +414,7 @@ final class AppModel {
                 errorMessage = String(format: localize("扫描失败：%@"), error.localizedDescription)
             }
             isScanning = false
+            isStoppingScan = false
             scanTask = nil
         }
     }

@@ -4,8 +4,7 @@
   "displayName": "Codex",
   "homeDiscovery": {
     "defaultPaths": ["~/.codex"],
-    "environmentVariables": ["CODEX_HOME"],
-    "allowDeepDiscovery": true
+    "environmentVariables": ["CODEX_HOME"]
   },
   "fingerprints": {
     "required": [

@@ -4,8 +4,7 @@
   "displayName": "WorkBuddy",
   "homeDiscovery": {
     "defaultPaths": [],
-    "environmentVariables": [],
-    "allowDeepDiscovery": false
+    "environmentVariables": []
   },
   "fingerprints": { "required": [], "optional": [], "negative": [] },
   "skills": [],

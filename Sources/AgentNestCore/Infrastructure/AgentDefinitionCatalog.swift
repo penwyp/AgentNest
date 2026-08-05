@@ -56,7 +56,7 @@ public struct AgentDefinitionCatalog: Sendable {
             "skills", "artifacts", "capabilities",
         ], path: "$")
         try validateObject(root["homeDiscovery"], allowed: [
-            "defaultPaths", "environmentVariables", "allowDeepDiscovery",
+            "defaultPaths", "environmentVariables",
         ], path: "$.homeDiscovery")
         try validateObject(root["fingerprints"], allowed: ["required", "optional", "negative"], path: "$.fingerprints")
         if let fingerprints = root["fingerprints"] as? [String: Any] {

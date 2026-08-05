@@ -11,14 +11,13 @@ public struct AgentDefinition: Codable, Equatable, Sendable {
     public let capabilities: Capabilities
 
     public var participatesInScanning: Bool {
-        !fingerprints.required.isEmpty && (!homeDiscovery.defaultPaths.isEmpty || homeDiscovery.allowDeepDiscovery)
+        !fingerprints.required.isEmpty
     }
 }
 
 public struct HomeDiscovery: Codable, Equatable, Sendable {
     public let defaultPaths: [String]
     public let environmentVariables: [String]
-    public let allowDeepDiscovery: Bool
 }
 
 public struct Fingerprints: Codable, Equatable, Sendable {

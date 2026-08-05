@@ -44,7 +44,7 @@ struct AgentNestCLI {
         let catalog = try AgentDefinitionCatalog.bundled()
         let snapshot = try await ScanUseCase(catalog: catalog).execute(
             request: ScanRequest(
-                root: root,
+                homeDirectory: root,
                 customLocations: customLocations,
                 ignoredLocations: ignoredLocations,
                 environment: environment

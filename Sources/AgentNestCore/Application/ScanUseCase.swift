@@ -14,42 +14,67 @@ public struct ScanUseCase: Sendable {
         generation: UUID = UUID(),
         progress: @escaping @Sendable (ScanProgress) async -> Void = { _ in }
     ) async throws -> DeviceSnapshot {
+        try Task.checkCancellation()
         var processedCount = 0
         var processedBytes: UInt64 = 0
         await progress(ScanProgress(generation: generation, phase: .discoveringAgents))
+        try Task.checkCancellation()
         let ignoredLocations = request.ignoredLocations.map { $0.resolvingSymlinksInPath().standardizedFileURL }
         var userConfirmedHomes: [String: String] = [:]
         for (path, productID) in request.userConfirmedHomes {
             userConfirmedHomes[URL(fileURLWithPath: path).resolvingSymlinksInPath().standardizedFileURL.path] = productID
         }
 
-        var indexes: [DirectoryIndex] = []
-        let rootIndex = try await indexer.index(root: request.root, ignoredLocations: ignoredLocations) { path, count, bytes in
-            await progress(ScanProgress(
-                generation: generation,
-                phase: .discoveringAgents,
-                currentLocation: path,
-                discoveredCount: count,
-                processedCount: count,
-                processedBytes: bytes
-            ))
+        let scanningDefinitions = catalog.definitions.filter(\.participatesInScanning)
+        let candidateCount = scanningDefinitions.reduce(0) { count, definition in
+            count + candidateHomes(
+                definition: definition,
+                request: request,
+                userConfirmedHomes: userConfirmedHomes,
+                ignoredLocations: ignoredLocations
+            ).count
         }
-        indexes.append(rootIndex)
-        processedCount += rootIndex.nodes.count
-        processedBytes &+= rootIndex.nodes.reduce(0) { $0 &+ $1.physicalBytes }
+        await progress(ScanProgress(generation: generation, phase: .validatingHomes, discoveredCount: candidateCount))
+        try Task.checkCancellation()
 
-        let externalRoots = candidateExternalRoots(request: request, userConfirmedHomes: userConfirmedHomes)
-            .filter { !isWithin($0, root: rootIndex.root) && !isIgnored($0, ignoredLocations: ignoredLocations) }
-        for external in uniquePaths(externalRoots) where !rootIndex.isPartial && FileManager.default.fileExists(atPath: external.path) {
-            if Task.isCancelled { break }
+        var homes: [AgentHome] = []
+        var seenHomeIdentities: Set<PhysicalResourceIdentity> = []
+        for definition in scanningDefinitions {
+            let candidates = candidateHomes(
+                definition: definition,
+                request: request,
+                userConfirmedHomes: userConfirmedHomes,
+                ignoredLocations: ignoredLocations
+            )
+            for candidate in candidates {
+                try Task.checkCancellation()
+                guard let home = try validate(
+                    candidate: candidate,
+                    definition: definition,
+                    userConfirmedHomes: userConfirmedHomes
+                ) else { continue }
+                guard seenHomeIdentities.insert(home.id).inserted else { continue }
+                homes.append(home)
+            }
+        }
+
+        let confirmedRoots = homes
+            .filter { $0.confidence == .confirmed }
+            .map { URL(fileURLWithPath: $0.path, isDirectory: true) }
+        await progress(ScanProgress(generation: generation, phase: .indexingSkills, discoveredCount: confirmedRoots.count))
+        try Task.checkCancellation()
+
+        var indexes: [DirectoryIndex] = []
+        for root in confirmedRoots {
+            try Task.checkCancellation()
             let baseProcessedCount = processedCount
             let baseProcessedBytes = processedBytes
-            let index = try await indexer.index(root: external, ignoredLocations: ignoredLocations) { path, count, bytes in
+            let index = try await indexer.index(root: root, ignoredLocations: ignoredLocations) { path, count, bytes in
                 await progress(ScanProgress(
                     generation: generation,
-                    phase: .discoveringAgents,
+                    phase: .indexingSkills,
                     currentLocation: path,
-                    discoveredCount: baseProcessedCount + count,
+                    discoveredCount: confirmedRoots.count,
                     processedCount: baseProcessedCount + count,
                     processedBytes: baseProcessedBytes &+ bytes
                 ))
@@ -61,38 +86,12 @@ public struct ScanUseCase: Sendable {
 
         await progress(ScanProgress(
             generation: generation,
-            phase: .validatingHomes,
-            discoveredCount: processedCount,
+            phase: .measuringSpace,
+            discoveredCount: homes.count,
             processedCount: processedCount,
             processedBytes: processedBytes
         ))
-
-        var homes: [AgentHome] = []
-        var seenHomeIdentities: Set<PhysicalResourceIdentity> = []
-        var wasCancelled = indexes.contains(where: \.isPartial) || Task.isCancelled
-        let scanningDefinitions = catalog.definitions.filter(\.participatesInScanning)
-        validationLoop:
-        for definition in scanningDefinitions {
-            let candidates = candidateHomes(
-                definition: definition,
-                request: request,
-                indexes: indexes,
-                userConfirmedHomes: userConfirmedHomes,
-                ignoredLocations: ignoredLocations
-            )
-            for candidate in candidates {
-                if Task.isCancelled { wasCancelled = true; break validationLoop }
-                guard let home = try validate(
-                    candidate: candidate,
-                    definition: definition,
-                    indexes: indexes,
-                    userConfirmedHomes: userConfirmedHomes
-                ) else { continue }
-                guard seenHomeIdentities.insert(home.id).inserted else { continue }
-                homes.append(home)
-            }
-        }
-
+        try Task.checkCancellation()
         let unstablePaths = detectUnstablePaths(in: indexes)
         homes = reconcileHomes(homes, definitions: scanningDefinitions, indexes: indexes, unstablePaths: unstablePaths)
         homes.sort {
@@ -102,9 +101,6 @@ public struct ScanUseCase: Sendable {
             }
             return $0.path.localizedStandardCompare($1.path) == .orderedAscending
         }
-
-        await progress(ScanProgress(generation: generation, phase: .indexingSkills, discoveredCount: homes.count))
-        await progress(ScanProgress(generation: generation, phase: .measuringSpace, discoveredCount: homes.count, processedBytes: processedBytes))
 
         let products = buildProducts(homes: homes, definitions: scanningDefinitions)
         let storageLedger = buildStorageLedger(
@@ -132,9 +128,11 @@ public struct ScanUseCase: Sendable {
             ))
         }
         await progress(ScanProgress(generation: generation, phase: .generatingFindings, discoveredCount: homes.count))
+        try Task.checkCancellation()
         await progress(ScanProgress(generation: generation, phase: .reconciling, discoveredCount: homes.count, processedBytes: storageLedger.total.physicalBytes))
+        try Task.checkCancellation()
 
-        let isPartial = wasCancelled || unreadableCount > 0 || !unstablePaths.isEmpty
+        let isPartial = unreadableCount > 0 || !unstablePaths.isEmpty
         let directoryCoverage: CoverageState = isPartial ? .partial : .complete
         return DeviceSnapshot(
             generation: generation,
@@ -159,29 +157,17 @@ public struct ScanUseCase: Sendable {
         let source: DiscoverySource
     }
 
-    private func candidateExternalRoots(request: ScanRequest, userConfirmedHomes: [String: String]) -> [URL] {
-        var roots = request.customLocations
-        roots.append(contentsOf: userConfirmedHomes.keys.map { URL(fileURLWithPath: $0, isDirectory: true) })
-        for definition in catalog.definitions where definition.participatesInScanning {
-            for variable in definition.homeDiscovery.environmentVariables {
-                if let value = request.environment[variable], !value.isEmpty {
-                    roots.append(URL(fileURLWithPath: value))
-                }
-            }
-        }
-        return roots.map { $0.resolvingSymlinksInPath().standardizedFileURL }
-    }
-
     private func candidateHomes(
         definition: AgentDefinition,
         request: ScanRequest,
-        indexes: [DirectoryIndex],
         userConfirmedHomes: [String: String],
         ignoredLocations: [URL]
     ) -> [Candidate] {
         var candidates: [Candidate] = []
         for rawPath in definition.homeDiscovery.defaultPaths {
-            let path = rawPath == "~" ? request.root.path : rawPath.replacingOccurrences(of: "~/", with: request.root.path + "/")
+            let path = rawPath == "~"
+                ? request.homeDirectory.path
+                : rawPath.replacingOccurrences(of: "~/", with: request.homeDirectory.path + "/")
             candidates.append(Candidate(url: URL(fileURLWithPath: path), source: .defaultPath))
         }
         for variable in definition.homeDiscovery.environmentVariables {
@@ -193,13 +179,6 @@ public struct ScanUseCase: Sendable {
         candidates.append(contentsOf: userConfirmedHomes.compactMap { path, productID in
             productID == definition.id ? Candidate(url: URL(fileURLWithPath: path), source: .userConfirmed) : nil
         })
-        if definition.homeDiscovery.allowDeepDiscovery {
-            for index in indexes {
-                candidates.append(contentsOf: index.jsonAnchorParents.map { Candidate(url: $0, source: .deepScan) })
-                candidates.append(contentsOf: index.suspiciousDirectoryPaths.map { Candidate(url: $0, source: .deepScan) })
-            }
-        }
-
         var seen: Set<String> = []
         return candidates.compactMap { candidate in
             let resolved = candidate.url.resolvingSymlinksInPath().standardizedFileURL
@@ -211,7 +190,6 @@ public struct ScanUseCase: Sendable {
     private func validate(
         candidate: Candidate,
         definition: AgentDefinition,
-        indexes: [DirectoryIndex],
         userConfirmedHomes: [String: String]
     ) throws -> AgentHome? {
         var isDirectory: ObjCBool = false
@@ -249,7 +227,7 @@ public struct ScanUseCase: Sendable {
             source: isUserConfirmed ? .userConfirmed : candidate.source,
             confidence: confidence,
             evidence: evidence,
-            storage: measurement(for: candidate.url, indexes: indexes)
+            storage: StorageMeasurement(logicalBytes: 0, physicalBytes: 0, itemCount: 0)
         )
     }
 
@@ -407,15 +385,6 @@ public struct ScanUseCase: Sendable {
         }
     }
 
-    private func uniquePaths(_ urls: [URL]) -> [URL] {
-        var seen: Set<String> = []
-        return urls.filter { seen.insert($0.standardizedFileURL.path).inserted }
-    }
-
-    private func isWithin(_ url: URL, root: URL) -> Bool {
-        CanonicalPath.isEqualOrDescendant(url.path, of: root.path)
-    }
-
     private func isIgnored(_ url: URL, ignoredLocations: [URL]) -> Bool {
         ignoredLocations.contains { CanonicalPath.isEqualOrDescendant(url.path, of: $0.path) }
     }
@@ -440,14 +409,20 @@ public actor ScanCoordinator {
         currentGeneration = generation
         let task = Task { try await useCase.execute(request: request, generation: generation, progress: progress) }
         currentTask = task
-        let snapshot = try await task.value
-        guard currentGeneration == generation else { throw CancellationError() }
-        publishedSnapshot = snapshot
-        currentTask = nil
-        return snapshot
+        do {
+            let snapshot = try await task.value
+            guard currentGeneration == generation else { throw CancellationError() }
+            publishedSnapshot = snapshot
+            currentTask = nil
+            return snapshot
+        } catch {
+            if currentGeneration == generation { currentTask = nil }
+            throw error
+        }
     }
 
     public func cancel() {
+        currentGeneration = nil
         currentTask?.cancel()
     }
 
@@ -465,11 +440,16 @@ public actor ScanCoordinator {
             return try SnapshotReconciler().replacingHome(at: homePath, in: baseline, with: replacement)
         }
         currentTask = task
-        let snapshot = try await task.value
-        guard currentGeneration == generation else { throw CancellationError() }
-        publishedSnapshot = snapshot
-        currentTask = nil
-        return snapshot
+        do {
+            let snapshot = try await task.value
+            guard currentGeneration == generation else { throw CancellationError() }
+            publishedSnapshot = snapshot
+            currentTask = nil
+            return snapshot
+        } catch {
+            if currentGeneration == generation { currentTask = nil }
+            throw error
+        }
     }
 
     public func snapshot() -> DeviceSnapshot? {
