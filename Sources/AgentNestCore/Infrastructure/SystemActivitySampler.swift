@@ -297,12 +297,6 @@ public struct DarwinSystemActivityEvidenceProvider: SystemActivityEvidenceProvid
                   )?.takeRetainedValue() as? [String: Any],
                   let read = statistics[kIOBlockStorageDriverStatisticsBytesReadKey] as? NSNumber,
                   let written = statistics[kIOBlockStorageDriverStatisticsBytesWrittenKey] as? NSNumber else { continue }
-            let name = IORegistryEntryCreateCFProperty(
-                service,
-                kIOPropertyProductNameKey as CFString,
-                kCFAllocatorDefault,
-                0
-            )?.takeRetainedValue() as? String ?? "存储设备"
             let bsdName = IORegistryEntrySearchCFProperty(
                 service,
                 kIOServicePlane,
@@ -310,6 +304,12 @@ public struct DarwinSystemActivityEvidenceProvider: SystemActivityEvidenceProvid
                 kCFAllocatorDefault,
                 IOOptionBits(kIORegistryIterateRecursively)
             ) as? String
+            let name = IORegistryEntryCreateCFProperty(
+                service,
+                kIOPropertyProductNameKey as CFString,
+                kCFAllocatorDefault,
+                0
+            )?.takeRetainedValue() as? String ?? bsdName ?? "device-\(registryID)"
             result.append(CumulativeDeviceObservation(
                 id: registryID,
                 name: name,

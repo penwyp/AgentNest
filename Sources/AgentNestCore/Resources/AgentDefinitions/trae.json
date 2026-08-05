@@ -1,15 +1,15 @@
 {
   "schemaVersion": 1,
-  "id": "anthropic.claude-code",
-  "displayName": "Claude Code",
+  "id": "bytedance.trae",
+  "displayName": "Trae",
   "homeDiscovery": {
-    "defaultPaths": ["~/.claude"],
-    "environmentVariables": ["CLAUDE_CONFIG_DIR"]
+    "defaultPaths": ["~/.trae"],
+    "environmentVariables": []
   },
   "fingerprints": {
     "required": [],
     "optional": [
-      { "kind": "jsonFile", "relativePath": "settings.json" },
+      { "kind": "jsonFile", "relativePath": "argv.json" },
       { "kind": "directory", "relativePath": "skills" }
     ],
     "negative": []

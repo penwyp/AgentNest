@@ -164,14 +164,14 @@ private struct ImpactCards: View {
             }
             GridRow {
                 card(
-                    title: "空间",
+                    title: model.localized("空间"),
                     value: model.formatBytes(snapshot.totalStorage.physicalBytes),
                     detail: largestStorageCategory(snapshot),
                     icon: "internaldrive",
                     destination: .storage
                 )
                 card(
-                    title: "活动",
+                    title: model.localized("活动"),
                     value: activityValue,
                     detail: activityDetail,
                     icon: "waveform.path.ecg",
@@ -332,7 +332,11 @@ private struct SkillView: View {
                                                 Button("重命名目录") { beginRename(installation) }
                                                 Button("移到废纸篓", role: .destructive) { deleting = installation }
                                             }
-                                            .disabled(!model.allows(.skillWrite) || installation.state != .valid)
+                                            .disabled(
+                                                !model.allows(.skillWrite) ||
+                                                    installation.state != .valid ||
+                                                    !installation.isWritable
+                                            )
                                         }
                                         .padding(.vertical, 4)
                                     }
@@ -364,7 +368,7 @@ private struct SkillView: View {
                 ContentUnavailableView(
                     "已扫描，但没有已适配的 Skill 来源",
                     systemImage: "hammer",
-                    description: Text("Codex Skill 路径和格式 fixture 尚未确认，因此不会猜测路径或开放写入。")
+                    description: Text("已确认的 Agent Home 中没有可识别的 SKILL.md。")
                 )
             }
         }
@@ -725,7 +729,7 @@ private struct ActivityView: View {
                         Text("首个样本只建立基线；计数器回退、睡眠或过长间隔会重新建立基线，不显示为尖峰。")
                         Text("进程请求写入与物理设备写入不是同一指标；不可用数据不会显示为 0。")
                         if snapshot.droppedEvidenceCount > 0 {
-                            Text("本轮有 \(snapshot.droppedEvidenceCount) 个进程证据因权限、退出或预算未采集。")
+                            Text(model.localized("本轮有 %d 个进程证据因权限、退出或预算未采集。", snapshot.droppedEvidenceCount))
                                 .foregroundStyle(.orange)
                         }
                     }
@@ -746,9 +750,13 @@ private struct ActivityView: View {
                                     Text(model.displayPath(path)).font(.caption2).foregroundStyle(.secondary).privacySensitive()
                                 }
                                 if let workingDirectory = process.workingDirectoryPath {
-                                    Text("工作目录：\(model.displayPath(workingDirectory))").font(.caption2).foregroundStyle(.secondary).privacySensitive()
+                                    Text(model.localized("工作目录：%@", model.displayPath(workingDirectory))).font(.caption2).foregroundStyle(.secondary).privacySensitive()
                                 }
-                                Text("请求读取 \(metricText(process.requestedReadBytesPerSecond, format: .bytesPerSecond)) · 请求写入 \(metricText(process.requestedWriteBytesPerSecond, format: .bytesPerSecond))")
+                                Text(model.localized(
+                                    "请求读取 %@ · 请求写入 %@",
+                                    metricText(process.requestedReadBytesPerSecond, format: .bytesPerSecond),
+                                    metricText(process.requestedWriteBytesPerSecond, format: .bytesPerSecond)
+                                ))
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                                 if process.attribution == .agent {
@@ -784,8 +792,8 @@ private struct ActivityView: View {
                                 HStack {
                                     Text(device.name)
                                     Spacer()
-                                    Text("读 \(metricText(device.readBytesPerSecond, format: .bytesPerSecond))")
-                                    Text("写 \(metricText(device.writeBytesPerSecond, format: .bytesPerSecond))")
+                                    Text(model.localized("读 %@", metricText(device.readBytesPerSecond, format: .bytesPerSecond)))
+                                    Text(model.localized("写 %@", metricText(device.writeBytesPerSecond, format: .bytesPerSecond)))
                                 }
                             }
                         }
@@ -796,7 +804,7 @@ private struct ActivityView: View {
                                 HStack {
                                     Text(volume.name)
                                     Spacer()
-                                    Text(volume.health == .unavailable ? "健康字段不可用" : volume.health.rawValue)
+                                    Text(volume.health == .unavailable ? model.localized("健康字段不可用") : model.deviceHealthTitle(volume.health))
                                         .font(.caption)
                                 }
                                 Text(model.displayPath(volume.mountPath)).font(.caption2).foregroundStyle(.secondary).privacySensitive()
@@ -817,8 +825,8 @@ private struct ActivityView: View {
     private func metricRow(_ title: String, metric: MetricValue, format: MetricFormat) -> some View {
         HStack {
             VStack(alignment: .leading) {
-                Text(title)
-                Text("覆盖率 \(metric.coverage, format: .percent) · 观测 \(metric.observedSeconds, format: .number.precision(.fractionLength(1))) 秒")
+                Text(model.localized(title))
+                Text(model.localized("覆盖率 %@ · 观测 %@ 秒", model.formatPercent(metric.coverage), metric.observedSeconds.formatted(.number.precision(.fractionLength(1)).locale(model.appLocale))))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -829,23 +837,23 @@ private struct ActivityView: View {
 
     private func metricText(_ metric: MetricValue, format: MetricFormat) -> String {
         guard let value = metric.value else {
-            return metric.availability == .partial ? String(localized: "部分可用") : String(localized: "不可用")
+            return model.localized(metric.availability == .partial ? "部分可用" : "不可用")
         }
         switch format {
-        case .percent: return value.formatted(.percent.precision(.fractionLength(1)))
+        case .percent: return model.formatPercent(value)
         case .bytesPerSecond:
-            return ByteCountFormatter.string(fromByteCount: Int64(value), countStyle: .file) + "/s"
+            return model.localized("%@/s", model.formatBytes(UInt64(max(0, value))))
         }
     }
 
     private func volumeDescription(_ volume: MountedVolume) -> String {
         let available = volume.availableBytes.map {
-            ByteCountFormatter.string(fromByteCount: Int64($0), countStyle: .file) + " 可用"
-        } ?? "容量不可用"
-        let locality = volume.isLocal.map { $0 ? "本地" : "非本地" } ?? "本地属性未知"
-        let writable = volume.isWritable.map { $0 ? "可写" : "只读" } ?? "写入属性未知"
-        let removable = volume.isRemovable.map { $0 ? "可移除" : "不可移除" } ?? "移除属性未知"
-        return "\(available) · \(locality) · \(writable) · \(removable)"
+            model.localized("%@ 可用", model.formatBytes($0))
+        } ?? model.localized("容量不可用")
+        let locality = volume.isLocal.map { model.localized($0 ? "本地" : "非本地") } ?? model.localized("本地属性未知")
+        let writable = volume.isWritable.map { model.localized($0 ? "可写" : "只读") } ?? model.localized("写入属性未知")
+        let removable = volume.isRemovable.map { model.localized($0 ? "可移除" : "不可移除") } ?? model.localized("移除属性未知")
+        return model.localized("%@ · %@ · %@ · %@", available, locality, writable, removable)
     }
 }
 
@@ -857,7 +865,7 @@ private struct SettingsView: View {
     var body: some View {
         Form {
             Section("扫描与隐私") {
-                LabeledContent("默认范围", value: "Agent Definition 声明的候选目录")
+                LabeledContent("默认范围", value: model.localized("Agent Definition 声明的候选目录"))
                 ForEach(model.customScanPaths, id: \.self) { path in
                     HStack {
                         Text(model.displayPath(path)).lineLimit(1).truncationMode(.middle).privacySensitive()
@@ -912,12 +920,12 @@ private struct SettingsView: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section("活动") {
-                Stepper("采样间隔：\(Int(sampleInterval)) 秒", value: $sampleInterval, in: 1...60)
+                Stepper(model.localized("采样间隔：%d 秒", Int(sampleInterval)), value: $sampleInterval, in: 1...60)
             }
             Section("权限") {
-                LabeledContent("Full Disk Access", value: "请在系统设置查看真实状态")
+                LabeledContent("Full Disk Access", value: model.localized("请在系统设置查看真实状态"))
                 Button("打开 Full Disk Access 设置") { model.openFullDiskAccessSettings() }
-                LabeledContent("Trace Helper", value: "未安装")
+                LabeledContent("Trace Helper", value: model.localized("未安装"))
                 LabeledContent("登录项", value: model.loginItemStatusText)
                 HStack {
                     Button("启用登录项") { model.setLoginItemEnabled(true) }
@@ -944,7 +952,7 @@ private struct SettingsView: View {
             Section("更新") {
                 Button("检查更新") { model.checkForUpdates() }
                     .disabled(!model.updateAvailable || model.isMutatingEnvironment)
-                Text(model.updateAvailable ? "更新包必须同时通过 HTTPS、Sparkle Ed25519 与 Apple 代码签名验证。" : "发布构建尚未配置 HTTPS appcast 与 Sparkle 公钥。")
+                Text(model.localized(model.updateAvailable ? "更新包必须同时通过 HTTPS、Sparkle Ed25519 与 Apple 代码签名验证。" : "发布构建尚未配置 HTTPS appcast 与 Sparkle 公钥。"))
                     .font(.caption).foregroundStyle(.secondary)
             }
         }
@@ -973,8 +981,8 @@ private struct HistoryView: View {
                     HStack {
                         Text(point.capturedAt, format: .dateTime.month().day().hour().minute().second())
                         Spacer()
-                        Text(point.cpuFraction?.formatted(.percent.precision(.fractionLength(1))) ?? "CPU 不可用")
-                        Text("覆盖率 \(point.coverage, format: .percent)").foregroundStyle(.secondary)
+                        Text(point.cpuFraction.map { model.formatPercent($0) } ?? model.localized("CPU 不可用"))
+                        Text(model.localized("覆盖率 %@", model.formatPercent(point.coverage))).foregroundStyle(.secondary)
                     }
                 }
             }
@@ -988,15 +996,5 @@ private struct HistoryView: View {
             .disabled(!model.historyEnabled || !model.allows(.export))
         }
         .task { await model.refreshHistory() }
-    }
-}
-
-private struct PlaceholderView: View {
-    let title: String
-    let message: String
-
-    var body: some View {
-        ContentUnavailableView(title, systemImage: "shippingbox", description: Text(message))
-            .navigationTitle(title)
     }
 }

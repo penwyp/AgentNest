@@ -11,7 +11,9 @@ public struct AgentDefinition: Codable, Equatable, Sendable {
     public let capabilities: Capabilities
 
     public var participatesInScanning: Bool {
-        !fingerprints.required.isEmpty
+        !homeDiscovery.defaultPaths.isEmpty ||
+            !homeDiscovery.environmentVariables.isEmpty ||
+            !fingerprints.required.isEmpty
     }
 }
 
@@ -40,6 +42,7 @@ public struct FingerprintRule: Codable, Equatable, Sendable {
 public struct SkillLocation: Codable, Equatable, Sendable {
     public let relativePath: String
     public let format: String
+    public let writable: Bool
 }
 
 public struct ArtifactRule: Codable, Equatable, Sendable {

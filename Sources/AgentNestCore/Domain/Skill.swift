@@ -22,6 +22,7 @@ public struct SkillInstallation: Identifiable, Codable, Equatable, Sendable {
     public let homeID: PhysicalResourceIdentity
     public let scope: SkillScope
     public let format: String
+    public let isWritable: Bool
     public let contentHash: String
     public let totalBytes: UInt64
     public let fileCount: Int
@@ -38,6 +39,7 @@ public struct SkillInstallation: Identifiable, Codable, Equatable, Sendable {
         homeID: PhysicalResourceIdentity,
         scope: SkillScope,
         format: String,
+        isWritable: Bool,
         contentHash: String,
         totalBytes: UInt64,
         fileCount: Int,
@@ -53,6 +55,7 @@ public struct SkillInstallation: Identifiable, Codable, Equatable, Sendable {
         self.homeID = homeID
         self.scope = scope
         self.format = format
+        self.isWritable = isWritable
         self.contentHash = contentHash
         self.totalBytes = totalBytes
         self.fileCount = fileCount

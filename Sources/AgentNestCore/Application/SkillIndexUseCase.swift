@@ -29,16 +29,23 @@ public struct SkillIndexUseCase: Sendable {
                   definition.capabilities.skills else { continue }
             for location in definition.skills {
                 let root = URL(fileURLWithPath: home.path).appending(path: location.relativePath)
-                guard let children = try? FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil) else { continue }
-                for child in children.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
-                    if let installation = indexSkill(at: child, home: home, format: location.format) {
+                for child in discoverSkillRoots(in: root) {
+                    if let installation = indexSkill(
+                        at: child,
+                        home: home,
+                        format: location.format,
+                        isWritable: location.writable && isDirectChild(child, of: root)
+                    ) {
                         installations.append(installation)
                     }
                 }
             }
         }
 
-        let allHomeIDs = Set(homes.filter { $0.confidence == .confirmed }.map(\.id))
+        let skillCapableProductIDs = Set(catalog.definitions.filter { $0.capabilities.skills }.map(\.id))
+        let allHomeIDs = Set(homes.filter {
+            $0.confidence == .confirmed && skillCapableProductIDs.contains($0.productID)
+        }.map(\.id))
         let logicalGroups = Dictionary(grouping: installations, by: \.logicalID)
         let logicalSkills = logicalGroups.map { logicalID, group -> LogicalSkill in
             let variantGroups = Dictionary(grouping: group, by: \.contentHash)
@@ -59,14 +66,50 @@ public struct SkillIndexUseCase: Sendable {
         )
     }
 
-    private func indexSkill(at root: URL, home: AgentHome, format: String) -> SkillInstallation? {
+    private func discoverSkillRoots(in root: URL) -> [URL] {
+        guard let enumerator = FileManager.default.enumerator(
+            at: root,
+            includingPropertiesForKeys: nil,
+            options: [.skipsPackageDescendants]
+        ) else { return [] }
+        var roots: [URL] = []
+        while let candidate = enumerator.nextObject() as? URL {
+            guard let metadata = try? FileMetadata.read(candidate).node else {
+                enumerator.skipDescendants()
+                continue
+            }
+            if metadata.isSymbolicLink || metadata.identity.kind == .other {
+                enumerator.skipDescendants()
+                continue
+            }
+            guard metadata.identity.kind == .directory else { continue }
+            var isDirectory: ObjCBool = false
+            if FileManager.default.fileExists(
+                atPath: candidate.appending(path: "SKILL.md").path,
+                isDirectory: &isDirectory
+            ), !isDirectory.boolValue {
+                roots.append(candidate)
+                enumerator.skipDescendants()
+            }
+        }
+        return roots.sorted { $0.path.localizedStandardCompare($1.path) == .orderedAscending }
+    }
+
+    private func indexSkill(at root: URL, home: AgentHome, format: String, isWritable: Bool) -> SkillInstallation? {
         guard let rootMetadata = try? FileMetadata.read(root).node,
               rootMetadata.identity.kind == .directory,
               !rootMetadata.isSymbolicLink else { return nil }
         let mainFile = root.appending(path: "SKILL.md")
         var isDirectory: ObjCBool = false
         guard FileManager.default.fileExists(atPath: mainFile.path, isDirectory: &isDirectory), !isDirectory.boolValue else {
-            return invalidInstallation(root: root, metadata: rootMetadata, home: home, format: format, diagnostic: "skill.missingMainFile")
+            return invalidInstallation(
+                root: root,
+                metadata: rootMetadata,
+                home: home,
+                format: format,
+                isWritable: isWritable,
+                diagnostic: "skill.missingMainFile"
+            )
         }
 
         var files: [(String, Data)] = []
@@ -99,7 +142,14 @@ public struct SkillIndexUseCase: Sendable {
         guard let mainData = files.first(where: { $0.0 == "SKILL.md" })?.1,
               let mainText = String(data: mainData, encoding: .utf8) else {
             diagnostics.append("skill.invalidMainFile")
-            return invalidInstallation(root: root, metadata: rootMetadata, home: home, format: format, diagnostic: diagnostics.first ?? "skill.invalid")
+            return invalidInstallation(
+                root: root,
+                metadata: rootMetadata,
+                home: home,
+                format: format,
+                isWritable: isWritable,
+                diagnostic: diagnostics.first ?? "skill.invalid"
+            )
         }
         let manifest = parseFrontmatter(mainText)
         let name = manifest["name"] ?? root.lastPathComponent
@@ -115,6 +165,7 @@ public struct SkillIndexUseCase: Sendable {
             homeID: home.id,
             scope: .global,
             format: format,
+            isWritable: isWritable,
             contentHash: contentHash,
             totalBytes: UInt64(totalBytes),
             fileCount: files.count,
@@ -129,6 +180,7 @@ public struct SkillIndexUseCase: Sendable {
         metadata: IndexedNode,
         home: AgentHome,
         format: String,
+        isWritable: Bool,
         diagnostic: String
     ) -> SkillInstallation {
         SkillInstallation(
@@ -140,6 +192,7 @@ public struct SkillIndexUseCase: Sendable {
             homeID: home.id,
             scope: .global,
             format: format,
+            isWritable: isWritable,
             contentHash: "",
             totalBytes: 0,
             fileCount: 0,
@@ -190,5 +243,9 @@ public struct SkillIndexUseCase: Sendable {
 
     private func isSafeRelativePath(_ path: String) -> Bool {
         !path.hasPrefix("/") && path.split(separator: "/").allSatisfy { $0 != ".." }
+    }
+
+    private func isDirectChild(_ child: URL, of parent: URL) -> Bool {
+        child.deletingLastPathComponent().standardizedFileURL.path == parent.standardizedFileURL.path
     }
 }

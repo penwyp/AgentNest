@@ -19,7 +19,7 @@ struct AgentNestCoreTestRunner {
             try testHistoryPDF()
             try await testReceipts()
             try testLicenseRefreshSchedule()
-            print("AgentNestCore tests passed (82 checks)")
+            print("AgentNestCore tests passed")
         } catch {
             FileHandle.standardError.write(Data("AgentNestCore tests failed: \(error)\n".utf8))
             exit(1)
@@ -28,8 +28,12 @@ struct AgentNestCoreTestRunner {
 
     private static func testDefinitionCatalog() throws {
         let catalog = try AgentDefinitionCatalog.bundled()
-        try expect(catalog.definitions.count == 3, "bundled definition count")
-        try expect(catalog.definitions.filter(\.participatesInScanning).map(\.id) == ["openai.codex"], "only Codex scans")
+        try expect(catalog.definitions.count == 5, "bundled definition count")
+        try expect(
+            Set(catalog.definitions.filter(\.participatesInScanning).map(\.id)) ==
+                ["anthropic.claude-code", "bytedance.trae", "cursor.cursor", "openai.codex"],
+            "all supported agents participate in scanning"
+        )
         try expect(catalog.definitions.filter { !$0.participatesInScanning }.allSatisfy {
             !$0.capabilities.space && !$0.capabilities.skills && !$0.capabilities.activity && !$0.capabilities.cleanup
         }, "empty definitions expose no capabilities")
@@ -49,6 +53,15 @@ struct AgentNestCoreTestRunner {
         "skills":[],"artifacts":[],"capabilities":{"space":false,"skills":false,"activity":false,"cleanup":false}}
         """.utf8)
         try expectThrows("unsafe definition path") { _ = try AgentDefinitionCatalog.load(data: unsafe) }
+        let unsafePattern = Data("""
+        {"schemaVersion":1,"id":"test","displayName":"Test",
+        "homeDiscovery":{"defaultPaths":["~/*/.test"],"environmentVariables":[]},
+        "fingerprints":{"required":[],"optional":[],"negative":[]},
+        "skills":[],"artifacts":[],"capabilities":{"space":false,"skills":false,"activity":false,"cleanup":false}}
+        """.utf8)
+        try expectThrows("default Home glob can only match one directory level") {
+            _ = try AgentDefinitionCatalog.load(data: unsafePattern)
+        }
         try expect(
             CanonicalPath.isEqualOrDescendant("/tmp/fixture", of: "/") &&
                 CanonicalPath.isDescendant("/foo/child", of: "/foo") &&
@@ -106,6 +119,82 @@ struct AgentNestCoreTestRunner {
             "snapshot total conserves artifact physical bytes"
         )
         try expect(snapshot.storageLedger.artifacts.allSatisfy { $0.category == .unattributed }, "undefined artifact rules do not guess categories")
+
+        let supportedRoot = root.appending(path: "supported-agents")
+        let supportedHomes: [(path: String, skillRoot: String)] = [
+            (".codex", "skills"),
+            (".codex-work", "skills"),
+            (".codex.team", "skills"),
+            (".claude", "skills"),
+            (".cursor", "skills"),
+            (".trae", "skills"),
+        ]
+        for (index, fixture) in supportedHomes.enumerated() {
+            let home = supportedRoot.appending(path: fixture.path)
+            let skill = home.appending(path: "\(fixture.skillRoot)/fixture-\(index)")
+            try FileManager.default.createDirectory(at: skill, withIntermediateDirectories: true)
+            try Data("---\nname: fixture-\(index)\ndescription: fixture\n---\n".utf8)
+                .write(to: skill.appending(path: "SKILL.md"))
+            if fixture.path.hasPrefix(".codex") {
+                try Data("{\"version\":\"fixture\"}".utf8).write(to: home.appending(path: "version.json"))
+            }
+        }
+        let nestedSystemSkill = supportedRoot.appending(path: ".codex/skills/.system/system-fixture")
+        try FileManager.default.createDirectory(at: nestedSystemSkill, withIntermediateDirectories: true)
+        try Data("---\nname: system-fixture\ndescription: nested\n---\n".utf8)
+            .write(to: nestedSystemSkill.appending(path: "SKILL.md"))
+        let cursorManagedSkill = supportedRoot.appending(path: ".cursor/skills-cursor/managed-fixture")
+        try FileManager.default.createDirectory(at: cursorManagedSkill, withIntermediateDirectories: true)
+        try Data("---\nname: managed-fixture\ndescription: managed\n---\n".utf8)
+            .write(to: cursorManagedSkill.appending(path: "SKILL.md"))
+        for name in [".codexpotter", ".codex-broken"] {
+            try FileManager.default.createDirectory(at: supportedRoot.appending(path: name), withIntermediateDirectories: true)
+        }
+        try Data("{\"version\":\"not-codex\"}".utf8)
+            .write(to: supportedRoot.appending(path: ".codexpotter/version.json"))
+
+        let supportedSnapshot = try await ScanUseCase(catalog: AgentDefinitionCatalog.bundled()).execute(
+            request: ScanRequest(homeDirectory: supportedRoot)
+        )
+        let supportedPaths = Set(supportedSnapshot.homes.filter { $0.confidence == .confirmed }.map {
+            URL(fileURLWithPath: $0.path).lastPathComponent
+        })
+        try expect(
+            supportedPaths == Set(supportedHomes.map(\.path)),
+            "Codex glob Homes and Claude Code, Cursor, and Trae default Homes are discovered without prefix false positives"
+        )
+        try expect(
+            supportedSnapshot.homes.first(where: { $0.path == supportedRoot.appending(path: ".codex-broken").path })?.confidence == .possible,
+            "a matching Codex Home without its fingerprint remains possible"
+        )
+        let supportedSkillIndex = await SkillIndexUseCase(catalog: try AgentDefinitionCatalog.bundled())
+            .execute(homes: supportedSnapshot.homes)
+        try expect(
+            supportedSkillIndex.installationCount == supportedHomes.count + 2 &&
+                supportedSkillIndex.logicalSkills.contains(where: { $0.id == "system-fixture" }),
+            "bundled definitions recognize top-level and nested SKILL.md packages for every supported agent"
+        )
+        try expect(
+            supportedSkillIndex.logicalSkills.first(where: { $0.id == "managed-fixture" })?
+                .variants.first?.installations.first?.isWritable == false,
+            "managed Cursor skills are indexed without exposing write operations"
+        )
+        try expect(
+            supportedSkillIndex.logicalSkills.allSatisfy { $0.missingHomeIDs.count == supportedHomes.count - 1 },
+            "Skill coverage only includes confirmed skill-capable Homes"
+        )
+        let arbitraryCustomHome = supportedRoot.appending(path: "arbitrary-custom-home")
+        try FileManager.default.createDirectory(at: arbitraryCustomHome, withIntermediateDirectories: true)
+        let arbitraryCustomSnapshot = try await ScanUseCase(catalog: AgentDefinitionCatalog.bundled()).execute(
+            request: ScanRequest(
+                homeDirectory: supportedRoot.appending(path: "empty-user-home"),
+                customLocations: [arbitraryCustomHome]
+            )
+        )
+        try expect(
+            arbitraryCustomSnapshot.homes.isEmpty,
+            "fingerprintless agents do not claim arbitrary custom locations"
+        )
 
         let incrementalFile = defaultHome.appending(path: "incremental.fixture")
         try Data("incremental".utf8).write(to: incrementalFile)
@@ -573,7 +662,7 @@ struct AgentNestCoreTestRunner {
         {"schemaVersion":1,"id":"openai.codex","displayName":"Codex",
         "homeDiscovery":{"defaultPaths":["~/.codex"],"environmentVariables":[]},
         "fingerprints":{"required":[{"kind":"jsonFile","relativePath":"version.json"}],"optional":[],"negative":[]},
-        "skills":[{"relativePath":"skills","format":"directory-skill-md"}],"artifacts":[],
+        "skills":[{"relativePath":"skills","format":"directory-skill-md","writable":true}],"artifacts":[],
         "capabilities":{"space":true,"skills":true,"activity":false,"cleanup":false}}
         """.utf8)
         let skillCatalog = try AgentDefinitionCatalog(definitions: [AgentDefinitionCatalog.load(data: definitionData)])
@@ -583,8 +672,45 @@ struct AgentNestCoreTestRunner {
         try expect(release.variants.count == 2, "same-name content becomes separate variants")
         try expect(release.missingHomeIDs.count == 1, "coverage reports missing home")
 
+        let nestedSkill = homes[0].appending(path: "skills/.system/nested-fixture")
+        try FileManager.default.createDirectory(at: nestedSkill, withIntermediateDirectories: true)
+        try Data("---\nname: nested-fixture\ndescription: nested\n---\n".utf8)
+            .write(to: nestedSkill.appending(path: "SKILL.md"))
+        let nestedIndex = await indexer.execute(homes: snapshot.homes)
+        try expect(
+            nestedIndex.logicalSkills.contains(where: { $0.id == "nested-fixture" }) &&
+                nestedIndex.logicalSkills.first(where: { $0.id == "nested-fixture" })?.variants.first?.installations.first?.isWritable == false,
+            "nested directory SKILL.md packages are indexed without inheriting direct-child write access"
+        )
+
         let writer = SkillWriteUseCase()
         let generation = snapshot.generation
+        let emptyHome = root.appending(path: "empty-home")
+        try FileManager.default.createDirectory(at: emptyHome, withIntermediateDirectories: true)
+        let provisionedRoot = try await writer.ensureSkillRoot(
+            home: emptyHome,
+            expectedHomeIdentity: physicalIdentity(emptyHome),
+            relativePath: "skills"
+        )
+        try expect(
+            provisionedRoot.path == emptyHome.appending(path: "skills").path &&
+                FileManager.default.fileExists(atPath: provisionedRoot.path),
+            "a writable Skill root can be provisioned inside an unchanged confirmed Home"
+        )
+        try await expectThrows("Skill root provisioning rejects a changed Home identity") {
+            _ = try await writer.ensureSkillRoot(
+                home: emptyHome,
+                expectedHomeIdentity: physicalIdentity(homes[0]),
+                relativePath: "other-skills"
+            )
+        }
+        try await expectThrows("Skill root provisioning rejects nested paths") {
+            _ = try await writer.ensureSkillRoot(
+                home: emptyHome,
+                expectedHomeIdentity: physicalIdentity(emptyHome),
+                relativePath: "nested/skills"
+            )
+        }
         let thirdSkillRoot = homes[2].appending(path: "skills")
         let patchPlan = try await writer.planPatch(
             generation: generation,

@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "id": "cursor.cursor",
+  "displayName": "Cursor",
+  "homeDiscovery": {
+    "defaultPaths": ["~/.cursor"],
+    "environmentVariables": []
+  },
+  "fingerprints": {
+    "required": [],
+    "optional": [
+      { "kind": "jsonFile", "relativePath": "argv.json" },
+      { "kind": "directory", "relativePath": "skills" },
+      { "kind": "directory", "relativePath": "skills-cursor" }
+    ],
+    "negative": []
+  },
+  "skills": [
+    { "relativePath": "skills", "format": "directory-skill-md", "writable": true },
+    { "relativePath": "skills-cursor", "format": "directory-skill-md", "writable": false }
+  ],
+  "artifacts": [],
+  "capabilities": { "space": true, "skills": true, "activity": false, "cleanup": false }
+}

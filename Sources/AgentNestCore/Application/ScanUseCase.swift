@@ -165,10 +165,9 @@ public struct ScanUseCase: Sendable {
     ) -> [Candidate] {
         var candidates: [Candidate] = []
         for rawPath in definition.homeDiscovery.defaultPaths {
-            let path = rawPath == "~"
-                ? request.homeDirectory.path
-                : rawPath.replacingOccurrences(of: "~/", with: request.homeDirectory.path + "/")
-            candidates.append(Candidate(url: URL(fileURLWithPath: path), source: .defaultPath))
+            candidates.append(contentsOf: expandDefaultPath(rawPath, homeDirectory: request.homeDirectory).map {
+                Candidate(url: $0, source: .defaultPath)
+            })
         }
         for variable in definition.homeDiscovery.environmentVariables {
             if let value = request.environment[variable], !value.isEmpty {
@@ -198,24 +197,29 @@ public struct ScanUseCase: Sendable {
         }
         let metadata = try FileMetadata.read(candidate.url).node
         var evidence: [String] = []
-        var requiredValid = true
+        var requiredValid = !definition.fingerprints.required.isEmpty
         for rule in definition.fingerprints.required {
             let target = candidate.url.appending(path: rule.relativePath)
             let valid = validateFingerprint(rule, at: target)
             requiredValid = requiredValid && valid
             if valid { evidence.append("required:\(rule.kind.rawValue):\(rule.relativePath)") }
         }
+        for rule in definition.fingerprints.optional where validateFingerprint(rule, at: candidate.url.appending(path: rule.relativePath)) {
+            evidence.append("optional:\(rule.kind.rawValue):\(rule.relativePath)")
+        }
         let negativeHit = definition.fingerprints.negative.contains { rule in
             validateFingerprint(rule, at: candidate.url.appending(path: rule.relativePath))
         }
         let confidence: AgentHomeConfidence
         let isUserConfirmed = userConfirmedHomes[candidate.url.path] == definition.id
-        if (requiredValid || isUserConfirmed) && !negativeHit {
+        let isDeclaredFingerprintlessHome = definition.fingerprints.required.isEmpty &&
+            (candidate.source == .defaultPath || candidate.source == .environment)
+        if (requiredValid || isDeclaredFingerprintlessHome || isUserConfirmed) && !negativeHit {
             confidence = .confirmed
             if isUserConfirmed { evidence.append("user-confirmed:\(definition.id)") }
-        } else if candidate.url.lastPathComponent.lowercased() == ".codex" && definition.id == "openai.codex" {
+        } else if candidate.source == .defaultPath && !negativeHit {
             confidence = .possible
-            evidence.append("name:.codex")
+            evidence.append("declared-default:\(candidate.url.lastPathComponent)")
         } else {
             return nil
         }
@@ -246,6 +250,52 @@ public struct ScanUseCase: Sendable {
                   let object = try? JSONSerialization.jsonObject(with: data) else { return false }
             return object is [String: Any]
         }
+    }
+
+    private func expandDefaultPath(_ rawPath: String, homeDirectory: URL) -> [URL] {
+        if rawPath == "~" { return [homeDirectory] }
+        let relativePath = String(rawPath.dropFirst(2))
+        guard relativePath.contains("*") else {
+            return [homeDirectory.appending(path: relativePath)]
+        }
+        let components = relativePath.split(separator: "/").map(String.init)
+        guard let pattern = components.last else { return [] }
+        let parentRelativePath = components.dropLast().joined(separator: "/")
+        let parent = parentRelativePath.isEmpty ? homeDirectory : homeDirectory.appending(path: parentRelativePath)
+        guard let children = try? FileManager.default.contentsOfDirectory(
+            at: parent,
+            includingPropertiesForKeys: nil,
+            options: [.skipsSubdirectoryDescendants]
+        ) else { return [] }
+        return children.filter { wildcardMatch($0.lastPathComponent, pattern: pattern) }
+    }
+
+    private func wildcardMatch(_ value: String, pattern: String) -> Bool {
+        let value = Array(value)
+        let pattern = Array(pattern)
+        var valueIndex = 0
+        var patternIndex = 0
+        var starIndex: Int?
+        var retryValueIndex = 0
+
+        while valueIndex < value.count {
+            if patternIndex < pattern.count, pattern[patternIndex] == value[valueIndex] {
+                valueIndex += 1
+                patternIndex += 1
+            } else if patternIndex < pattern.count, pattern[patternIndex] == "*" {
+                starIndex = patternIndex
+                patternIndex += 1
+                retryValueIndex = valueIndex
+            } else if let starIndex {
+                retryValueIndex += 1
+                valueIndex = retryValueIndex
+                patternIndex = starIndex + 1
+            } else {
+                return false
+            }
+        }
+        while patternIndex < pattern.count, pattern[patternIndex] == "*" { patternIndex += 1 }
+        return patternIndex == pattern.count
     }
 
     private func measurement(

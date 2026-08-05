@@ -8,6 +8,7 @@ import ServiceManagement
 struct SkillWriteTarget: Identifiable, Hashable {
     let homeID: PhysicalResourceIdentity
     let homePath: String
+    let relativePath: String
     let rootPath: String
     let format: String
 
@@ -354,12 +355,19 @@ final class AppModel {
                   let definition = catalog.definitions.first(where: { $0.id == home.productID }),
                   definition.capabilities.skills else { return [] }
             return definition.skills.compactMap { location in
+                guard location.writable else { return nil }
                 let root = URL(fileURLWithPath: home.path).appending(path: location.relativePath).standardizedFileURL
                 var isDirectory: ObjCBool = false
-                guard FileManager.default.fileExists(atPath: root.path, isDirectory: &isDirectory), isDirectory.boolValue else {
+                if FileManager.default.fileExists(atPath: root.path, isDirectory: &isDirectory), !isDirectory.boolValue {
                     return nil
                 }
-                return SkillWriteTarget(homeID: home.id, homePath: home.path, rootPath: root.path, format: location.format)
+                return SkillWriteTarget(
+                    homeID: home.id,
+                    homePath: home.path,
+                    relativePath: location.relativePath,
+                    rootPath: root.path,
+                    format: location.format
+                )
             }
         }.sorted { $0.rootPath.localizedStandardCompare($1.rootPath) == .orderedAscending }
     }
@@ -442,9 +450,14 @@ final class AppModel {
             return
         }
         runSkillOperation { writer in
+            let root = try await writer.ensureSkillRoot(
+                home: URL(fileURLWithPath: target.homePath),
+                expectedHomeIdentity: target.homeID,
+                relativePath: target.relativePath
+            )
             let plan = try await writer.planCreate(
                 generation: generation,
-                skillRoot: URL(fileURLWithPath: target.rootPath),
+                skillRoot: root,
                 name: name,
                 description: description
             )
@@ -453,7 +466,7 @@ final class AppModel {
     }
 
     func editSkill(_ installation: SkillInstallation, mainDocument: String) {
-        guard allows(.skillWrite), let generation = snapshot?.generation else {
+        guard installation.isWritable, allows(.skillWrite), let generation = snapshot?.generation else {
             skillOperationMessage = localized("当前 License 不包含 Skill 写入。")
             return
         }
@@ -471,7 +484,7 @@ final class AppModel {
     }
 
     func renameSkillInstallation(_ installation: SkillInstallation, destinationName: String) {
-        guard allows(.skillWrite), let generation = snapshot?.generation else {
+        guard installation.isWritable, allows(.skillWrite), let generation = snapshot?.generation else {
             skillOperationMessage = localized("当前 License 不包含 Skill 写入。")
             return
         }
@@ -489,7 +502,7 @@ final class AppModel {
     }
 
     func deleteSkillInstallation(_ installation: SkillInstallation) {
-        guard allows(.skillWrite), let generation = snapshot?.generation else {
+        guard installation.isWritable, allows(.skillWrite), let generation = snapshot?.generation else {
             skillOperationMessage = localized("当前 License 不包含 Skill 写入。")
             return
         }
@@ -524,9 +537,14 @@ final class AppModel {
             do {
                 var plans: [SkillWritePlan] = []
                 for target in targets {
+                    let root = try await writer.ensureSkillRoot(
+                        home: URL(fileURLWithPath: target.homePath),
+                        expectedHomeIdentity: target.homeID,
+                        relativePath: target.relativePath
+                    )
                     plans.append(try await writer.planPatch(
                         generation: generation,
-                        skillRoot: URL(fileURLWithPath: target.rootPath),
+                        skillRoot: root,
                         destinationName: URL(fileURLWithPath: source.path).lastPathComponent,
                         sourceSkill: URL(fileURLWithPath: source.path),
                         conflictResolution: .skip
@@ -578,6 +596,7 @@ final class AppModel {
             var recovered = 0
             var failed = 0
             for target in skillWriteTargets {
+                guard FileManager.default.fileExists(atPath: target.rootPath) else { continue }
                 do {
                     let results = try await writer.recoverAbandonedStaging(in: URL(fileURLWithPath: target.rootPath))
                     recovered += results.filter { $0.status == .succeeded }.count
