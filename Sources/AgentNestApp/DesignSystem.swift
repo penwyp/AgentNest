@@ -207,6 +207,44 @@ extension View {
     }
 }
 
+/// 骨架屏：数据未就绪时的占位列表。
+/// 精确镜像列表页的信息架构（分组 + 行结构），固定尺寸防止数据到达时布局跳动；
+/// 装饰性占位对无障碍隐藏、不接收命中。
+struct DSSkeletonList: View {
+    var sections: [Int] = [3, 5]
+
+    var body: some View {
+        List {
+            ForEach(Array(sections.enumerated()), id: \.offset) { _, rowCount in
+                Section {
+                    ForEach(0..<rowCount, id: \.self) { _ in
+                        HStack(spacing: DS.Space.x300) {
+                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                .fill(Color.primary.opacity(0.06))
+                                .frame(width: 26, height: 26)
+                            VStack(alignment: .leading, spacing: DS.Space.x150) {
+                                RoundedRectangle(cornerRadius: 3, style: .continuous)
+                                    .fill(Color.primary.opacity(0.09))
+                                    .frame(height: 12)
+                                    .frame(maxWidth: 260, alignment: .leading)
+                                RoundedRectangle(cornerRadius: 3, style: .continuous)
+                                    .fill(Color.primary.opacity(0.05))
+                                    .frame(height: 10)
+                                    .frame(maxWidth: 180, alignment: .leading)
+                            }
+                            Spacer()
+                        }
+                        .padding(.vertical, DS.Space.x100)
+                    }
+                }
+            }
+        }
+        .dsInstrumentList()
+        .accessibilityHidden(true)
+        .allowsHitTesting(false)
+    }
+}
+
 /// 页面首部：把标题、说明、状态图标和主操作固定为同一信息层级。
 struct DSPageHeader<Accessory: View>: View {
     let title: String

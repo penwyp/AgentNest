@@ -18,15 +18,19 @@ struct ContentView: View {
         } detail: {
             ZStack {
                 DSCanvasBackground()
-                switch model.selection ?? .home {
-                case .home: HomeView(model: model)
-                case .agents: AgentListView(model: model)
-                case .skills: SkillView(model: model)
-                case .storage: StorageView(model: model)
-                case .activity: ActivityView(model: model)
-                case .history: HistoryView(model: model)
-                case .settings: SettingsView(model: model)
+                Group {
+                    switch model.selection ?? .home {
+                    case .home: HomeView(model: model)
+                    case .agents: AgentListView(model: model)
+                    case .skills: SkillView(model: model)
+                    case .storage: StorageView(model: model)
+                    case .activity: ActivityView(model: model)
+                    case .history: HistoryView(model: model)
+                    case .settings: SettingsView(model: model)
+                    }
                 }
+                .id(model.selection)
+                .transition(.opacity)
             }
         }
         .navigationSplitViewStyle(.balanced)
@@ -100,13 +104,20 @@ private struct SidebarRow: View {
     @Bindable var model: AppModel
     let item: AppModel.Destination
     @State private var isHovering = false
+    @State private var locallySelected = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.controlActiveState) private var controlActiveState
 
-    private var isSelected: Bool { model.selection == item }
+    private var isSelected: Bool { locallySelected || model.selection == item }
 
     var body: some View {
-        Button { model.selection = item } label: {
+        Button {
+            // 交互响应优先：选中视觉本地先行（当前帧出现），模型导航状态随后提交。
+            locallySelected = true
+            withAnimation(reduceMotion ? nil : .easeInOut(duration: DS.Motion.state)) {
+                model.selection = item
+            }
+        } label: {
             HStack(spacing: DS.Space.x250) {
                 Image(systemName: item.systemImage)
                     .font(.system(size: DS.IconSize.navigation, weight: .medium))
@@ -140,6 +151,9 @@ private struct SidebarRow: View {
         }
         .onChange(of: controlActiveState) { _, state in
             if state != .active { isHovering = false }
+        }
+        .onChange(of: model.selection) { _, newValue in
+            if newValue != item { locallySelected = false }
         }
     }
 
@@ -456,7 +470,10 @@ private struct AgentListView: View {
 
     var body: some View {
         Group {
-            if let snapshot = model.snapshot, !snapshot.homes.isEmpty {
+            if let snapshot = model.snapshot {
+                if snapshot.homes.isEmpty {
+                    ContentUnavailableView("尚无 Agent 结果", systemImage: "cpu", description: Text("先在首页扫描。"))
+                } else {
                 List(snapshot.homes) { home in
                     VStack(alignment: .leading, spacing: DS.Space.x150) {
                         HStack(spacing: DS.Space.x200) {
@@ -489,8 +506,9 @@ private struct AgentListView: View {
                     .padding(.vertical, DS.Space.x150)
                 }
                 .dsInstrumentList()
+                }
             } else {
-                ContentUnavailableView("尚无 Agent 结果", systemImage: "cpu", description: Text("先在首页扫描。"))
+                DSSkeletonList(sections: [3, 4])
             }
         }
         .navigationTitle(model.localized("Agent"))
@@ -579,8 +597,8 @@ private struct SkillView: View {
                     }
                 }
                 .dsInstrumentList()
-            } else if model.snapshot == nil {
-                ContentUnavailableView("尚无 Skill 索引", systemImage: "hammer", description: Text("先在首页扫描。"))
+            } else if model.snapshot == nil || model.skillIndex == nil {
+                DSSkeletonList(sections: [2, 3])
             } else {
                 ContentUnavailableView(
                     "已扫描，但没有已适配的 Skill 来源",
@@ -708,31 +726,182 @@ private struct SkillView: View {
     }
 }
 
-private struct StorageView: View {
-    private enum CleanupDatePreset: String, CaseIterable, Identifiable {
-        case all, today, days7, days30, days90, days180, days365, customBefore, range
+/// 空间页清理候选的日期筛选预设。
+private enum StorageCleanupDatePreset: String, CaseIterable, Identifiable {
+    case all, today, days7, days30, days90, days180, days365, customBefore, range
 
-        var id: String { rawValue }
-        var title: String {
-            switch self {
-            case .all: "全部时间"
-            case .today: "今天活动"
-            case .days7: "7 天未活动"
-            case .days30: "30 天未活动"
-            case .days90: "90 天未活动"
-            case .days180: "180 天未活动"
-            case .days365: "365 天未活动"
-            case .customBefore: "自定义截止日期"
-            case .range: "自定义日期区间"
-            }
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .all: "全部时间"
+        case .today: "今天活动"
+        case .days7: "7 天未活动"
+        case .days30: "30 天未活动"
+        case .days90: "90 天未活动"
+        case .days180: "180 天未活动"
+        case .days365: "365 天未活动"
+        case .customBefore: "自定义截止日期"
+        case .range: "自定义日期区间"
         }
     }
+}
 
+/// 空间页派生数据（纯数据、Sendable，可在后台计算）。
+private struct StorageGroupData: Identifiable, Sendable {
+    enum OwnerKind: String, Sendable { case shared, home, unattributed }
+    let key: String
+    let ownerKind: OwnerKind
+    let ownerPath: String
+    let category: ArtifactCategory
+    let volumeDevice: UInt64
+    let itemCount: Int
+    let physicalBytes: UInt64
+    var id: String { key }
+}
+
+private struct StorageDerived: Sendable {
+    let totalPhysicalBytes: UInt64
+    let groups: [StorageGroupData]
+    let visibleCleanupUnits: [CleanupUnit]
+    let selectableCleanupIDs: Set<String>
+}
+
+/// 纯数据派生计算（无 UI 依赖，可安全后台执行）：过滤、合计、分组、清理候选与可选项。
+private func computeStorageDerived(
+    snapshot: DeviceSnapshot,
+    scope: StorageOwnershipScope,
+    category: String,
+    risk: String,
+    datePreset: StorageCleanupDatePreset,
+    customCutoff: Date,
+    rangeStart: Date,
+    rangeEnd: Date,
+    minimumSize: String,
+    customMegabytes: Double,
+    units: [CleanupUnit],
+    allowsCleanup: Bool
+) -> StorageDerived {
+    let ownership = StorageOwnershipFilter(scope: scope, snapshot: snapshot)
+    let artifacts = snapshot.storageLedger.artifacts.filter { artifact in
+        let matchesCategory = category == "*" || artifact.category.rawValue == category
+        return ownership.includes(artifact) && matchesCategory
+    }
+    let totalPhysicalBytes = artifacts.reduce(UInt64(0)) { $0 &+ $1.storage.physicalBytes }
+
+    let homesByID = Dictionary(uniqueKeysWithValues: snapshot.homes.map { ($0.id, $0) })
+    var groups: [String: (StorageGroupData.OwnerKind, String, ArtifactCategory, UInt64, Int, UInt64)] = [:]
+    for artifact in artifacts {
+        let ownerKey: String
+        let ownerKind: StorageGroupData.OwnerKind
+        let ownerPath: String
+        if artifact.attribution == .shared {
+            ownerKey = "shared"
+            ownerKind = .shared
+            ownerPath = ""
+        } else if let home = artifact.homeIDs.first.flatMap({ homesByID[$0] }) {
+            ownerKey = "home:\(home.path)"
+            ownerKind = .home
+            ownerPath = home.path
+        } else {
+            ownerKey = "unattributed"
+            ownerKind = .unattributed
+            ownerPath = ""
+        }
+        let key = "\(artifact.id.device)|\(ownerKey)|\(artifact.category.rawValue)"
+        let current = groups[key] ?? (ownerKind, ownerPath, artifact.category, artifact.id.device, 0, 0)
+        groups[key] = (current.0, current.1, current.2, current.3, current.4 + 1, current.5 &+ artifact.storage.physicalBytes)
+    }
+    let groupRows = groups.map { key, value in
+        StorageGroupData(
+            key: key,
+            ownerKind: value.0,
+            ownerPath: value.1,
+            category: value.2,
+            volumeDevice: value.3,
+            itemCount: value.4,
+            physicalBytes: value.5
+        )
+    }.sorted {
+        if $0.physicalBytes != $1.physicalBytes { return $0.physicalBytes > $1.physicalBytes }
+        return $0.key < $1.key
+    }
+
+    let inactiveBefore: Date?
+    let activityRange: ClosedRange<Date>?
+    switch datePreset {
+    case .all:
+        inactiveBefore = nil
+        activityRange = nil
+    case .today:
+        inactiveBefore = nil
+        activityRange = Calendar.current.startOfDay(for: Date())...Date()
+    case .days7, .days30, .days90, .days180, .days365:
+        let days: Int
+        switch datePreset {
+        case .days7: days = 7
+        case .days30: days = 30
+        case .days90: days = 90
+        case .days180: days = 180
+        case .days365: days = 365
+        default: days = 0
+        }
+        inactiveBefore = Calendar.current.date(byAdding: .day, value: -days, to: Date())
+        activityRange = nil
+    case .customBefore:
+        inactiveBefore = Calendar.current.startOfDay(for: customCutoff)
+        activityRange = nil
+    case .range:
+        let start = Calendar.current.startOfDay(for: rangeStart)
+        let end = Calendar.current.date(byAdding: .day, value: 1, to: Calendar.current.startOfDay(for: rangeEnd))?
+            .addingTimeInterval(-1) ?? rangeEnd
+        inactiveBefore = nil
+        activityRange = min(start, end)...max(start, end)
+    }
+    let risks = risk == "*"
+        ? Set<ArtifactRisk>()
+        : Set([ArtifactRisk(rawValue: risk)].compactMap { $0 })
+    let query = CleanupQuery(
+        inactiveBefore: inactiveBefore,
+        activityRange: activityRange,
+        minimumPhysicalBytes: storageMinimumPhysicalBytes(size: minimumSize, customMegabytes: customMegabytes),
+        risks: risks,
+        categories: category == "*" ? [] : [category]
+    )
+    let ownershipForUnits = StorageOwnershipFilter(scope: scope, snapshot: snapshot)
+    let visibleCleanupUnits = CleanupPolicy().filter(units: units, query: query).filter { unit in
+        ownershipForUnits.includes(unit)
+    }
+    let selectableCleanupIDs = Set(visibleCleanupUnits.filter {
+        allowsCleanup && $0.activity == .inactive && $0.risk != .protected
+    }.map(\.id))
+
+    return StorageDerived(
+        totalPhysicalBytes: totalPhysicalBytes,
+        groups: groupRows,
+        visibleCleanupUnits: visibleCleanupUnits,
+        selectableCleanupIDs: selectableCleanupIDs
+    )
+}
+
+private func storageMinimumPhysicalBytes(size: String, customMegabytes: Double) -> UInt64? {
+    switch size {
+    case "100m": return 100 * 1_024 * 1_024
+    case "500m": return 500 * 1_024 * 1_024
+    case "1g": return 1_024 * 1_024 * 1_024
+    case "5g": return 5 * 1_024 * 1_024 * 1_024
+    case "custom":
+        guard customMegabytes.isFinite, customMegabytes > 0 else { return nil }
+        return UInt64(min(customMegabytes * 1_024 * 1_024, Double(Int64.max)))
+    default: return nil
+    }
+}
+
+private struct StorageView: View {
     @Bindable var model: AppModel
     @State private var selectedScope: StorageOwnershipScope = .all
     @State private var selectedCategory = "*"
     @State private var selectedRisk = "*"
-    @State private var cleanupDatePreset: CleanupDatePreset = .all
+    @State private var cleanupDatePreset: StorageCleanupDatePreset = .all
     @State private var customCutoff = Calendar.current.date(byAdding: .day, value: -90, to: Date()) ?? Date()
     @State private var rangeStart = Calendar.current.date(byAdding: .day, value: -30, to: Date()) ?? Date()
     @State private var rangeEnd = Date()
@@ -741,269 +910,19 @@ private struct StorageView: View {
     @State private var selectedCleanupIDs = Set<String>()
     @State private var pendingReviewUnits: [CleanupUnit] = []
     @State private var showingCleanupReview = false
+    /// 派生数据缓存：过滤/分组/清理候选在后台计算，切页与筛选不阻塞主线程。
+    @State private var derived: StorageDerived?
 
     var body: some View {
         Group {
-            if let snapshot = model.snapshot {
-                let visibleCleanupUnits = filteredCleanupUnits(in: snapshot)
-                let selectableCleanupIDs = Set(visibleCleanupUnits.filter(isSelectable).map(\.id))
-                let selectedVisibleUnits = visibleCleanupUnits.filter { selectedCleanupIDs.contains($0.id) && isSelectable($0) }
-                List {
-                    Section {
-                        Picker("范围", selection: $selectedScope) {
-                            Text("全部 Agent 与 Home").tag(StorageOwnershipScope.all)
-                            ForEach(snapshot.products) { product in
-                                Text(model.localized("%@ · 全部 Home", product.displayName))
-                                    .tag(StorageOwnershipScope.product(product.id))
-                                ForEach(product.homes.sorted {
-                                    $0.path.localizedStandardCompare($1.path) == .orderedAscending
-                                }) { home in
-                                    Text(model.localized(
-                                        "%@ · %@",
-                                        product.displayName,
-                                        model.homeDisplayTitle(
-                                            productID: product.id,
-                                            homeIdentity: home.id,
-                                            homePath: home.path
-                                        )
-                                    ))
-                                        .tag(StorageOwnershipScope.home(home.id))
-                                }
-                            }
-                        }
-
-                        Picker("类别", selection: $selectedCategory) {
-                            Text("全部类别").tag("*")
-                            ForEach(ArtifactCategory.allCases, id: \.rawValue) { category in
-                                Text(model.artifactCategoryTitle(category)).tag(category.rawValue)
-                            }
-                        }
-
-                    } header: {
-                        Text("筛选").font(DS.Typeface.section)
-                    }
-
-                    Section {
-                        HStack {
-                            Text("合计").font(DS.Typeface.body)
-                            Spacer()
-                            Text(bytes(filteredArtifacts(in: snapshot).reduce(0) { $0 &+ $1.storage.physicalBytes }))
-                                .font(DS.Typeface.title)
-                                .monospacedDigit()
-                                .foregroundStyle(DS.Semantic.accentPrimary)
-                        }
-                        Text("每个 device/inode/type 只记一次；共享对象不会重复摊入多个 Home。")
-                            .font(DS.Typeface.caption)
-                            .foregroundStyle(.secondary)
-                    } header: {
-                        Text("唯一物理占用").font(DS.Typeface.section)
-                    }
-
-                    Section {
-                        if storageGroups(in: snapshot).isEmpty {
-                            Text("当前筛选没有资源")
-                                .foregroundStyle(.secondary)
-                        } else {
-                            ForEach(storageGroups(in: snapshot)) { group in
-                                HStack {
-                                    VStack(alignment: .leading, spacing: DS.Space.x100) {
-                                        Text(group.ownerIsPath ? model.displayPath(group.ownerTitle) : group.ownerTitle)
-                                            .font(DS.Typeface.body)
-                                        Text(model.localized("%@ · %@ · %d 项", group.volumeTitle, model.artifactCategoryTitle(group.category), group.itemCount))
-                                            .font(DS.Typeface.caption)
-                                            .foregroundStyle(.secondary)
-                                    }
-                                    Spacer()
-                                    Text(bytes(group.physicalBytes))
-                                        .font(DS.Typeface.label)
-                                        .monospacedDigit()
-                                }
-                                .padding(.vertical, DS.Space.x100)
-                            }
-                        }
-                    } header: {
-                        Text("归属与类别").font(DS.Typeface.section)
-                    }
-
-                    Section {
-                        if let message = model.cleanupOperationMessage {
-                            Text(message).font(DS.Typeface.caption).foregroundStyle(.secondary)
-                        }
-                        ForEach(model.cleanupResults) { result in
-                            HStack(alignment: .top) {
-                                VStack(alignment: .leading, spacing: DS.Space.x100) {
-                                    Text(result.name)
-                                        .lineLimit(1)
-                                    if let owner = model.cleanupResultOwnerTitle(result) {
-                                        Text(owner)
-                                            .font(DS.Typeface.micro)
-                                            .foregroundStyle(.secondary)
-                                            .lineLimit(1)
-                                            .privacySensitive()
-                                    }
-                                }
-                                Spacer()
-                                Text(model.localized(
-                                    "%@ · %@",
-                                    model.cleanupResultStatusTitle(result.status),
-                                    model.cleanupResultCodeTitle(result.code)
-                                ))
-                                    .font(DS.Typeface.caption)
-                                    .foregroundStyle(result.status == .failed ? DS.Semantic.statusCritical : Color.secondary)
-                            }
-                        }
-                        if model.isCleaning {
-                            HStack {
-                                Image(systemName: "gearshape.2")
-                                    .font(.system(size: DS.IconSize.navigation, weight: .medium))
-                                    .foregroundStyle(DS.Semantic.accentPrimary)
-                                    .accessibilityHidden(true)
-                                Text("正在逐项执行并复验")
-                                Spacer()
-                                Button("停止后续清理") { model.cancelCleanup() }
-                            }
-                        }
-                        if model.cleanupUnits.isEmpty {
-                            Text("当前 Agent Definition 没有声明可清理目标。")
-                                .foregroundStyle(.secondary)
-                        } else {
-                            Picker("最后活动", selection: $cleanupDatePreset) {
-                                ForEach(CleanupDatePreset.allCases) { preset in
-                                    Text(model.localized(preset.title)).tag(preset)
-                                }
-                            }
-                            if cleanupDatePreset == .customBefore {
-                                DatePicker("截止日期", selection: $customCutoff, displayedComponents: .date)
-                            } else if cleanupDatePreset == .range {
-                                DatePicker("开始日期", selection: $rangeStart, displayedComponents: .date)
-                                DatePicker("结束日期", selection: $rangeEnd, in: rangeStart..., displayedComponents: .date)
-                            }
-                            Picker("最小占用", selection: $minimumCleanupSize) {
-                                Text("不限大小").tag("any")
-                                Text("超过 100 MB").tag("100m")
-                                Text("超过 500 MB").tag("500m")
-                                Text("超过 1 GB").tag("1g")
-                                Text("超过 5 GB").tag("5g")
-                                Text("自定义").tag("custom")
-                            }
-                            if minimumCleanupSize == "custom" {
-                                TextField(
-                                    "自定义最小占用（MB）",
-                                    value: $customMinimumMegabytes,
-                                    format: .number.precision(.fractionLength(0...2))
-                                )
-                            }
-                            Picker("风险", selection: $selectedRisk) {
-                                Text("全部风险").tag("*")
-                                ForEach([ArtifactRisk.rebuildable, .expensiveOrShared, .userContent, .protected], id: \.rawValue) { risk in
-                                    Text(model.artifactRiskTitle(risk)).tag(risk.rawValue)
-                                }
-                            }
-
-                            HStack {
-                                VStack(alignment: .leading, spacing: DS.Space.x050) {
-                                    Text(model.localized(
-                                        "%d 个候选 · %@",
-                                        visibleCleanupUnits.count,
-                                        bytes(visibleCleanupUnits.reduce(0) { $0 &+ $1.storage.physicalBytes })
-                                    ))
-                                    if !selectedVisibleUnits.isEmpty {
-                                        Text(model.localized(
-                                            "已选择 %d 项 · %@",
-                                            selectedVisibleUnits.count,
-                                            bytes(selectedVisibleUnits.reduce(0) { $0 &+ $1.storage.physicalBytes })
-                                        ))
-                                            .foregroundStyle(DS.Semantic.accentPrimary)
-                                    }
-                                }
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                Spacer()
-                                Button("选择可重建项") {
-                                    selectedCleanupIDs = Set(visibleCleanupUnits
-                                        .filter { isSelectable($0) && $0.risk == .rebuildable }
-                                        .map(\.id))
-                                }
-                                .disabled(model.isCleaning)
-                                Button("复核所选") {
-                                    pendingReviewUnits = selectedVisibleUnits
-                                    showingCleanupReview = !pendingReviewUnits.isEmpty
-                                }
-                                .disabled(selectedVisibleUnits.isEmpty || model.isCleaning)
-                            }
-
-                            ForEach(visibleCleanupUnits) { unit in
-                                let selected = selectedCleanupIDs.contains(unit.id)
-                                Toggle(isOn: cleanupSelectionBinding(for: unit)) {
-                                    HStack {
-                                        VStack(alignment: .leading, spacing: DS.Space.x100) {
-                                            Text(model.cleanupUnitTitle(unit))
-                                                .font(DS.Typeface.body)
-                                            Text(model.cleanupUnitOwnerTitle(unit))
-                                                .font(DS.Typeface.caption)
-                                                .foregroundStyle(DS.Semantic.accentPrimary)
-                                                .lineLimit(1)
-                                                .privacySensitive()
-                                            Text(model.localized(
-                                                "%@ · %@ · %@",
-                                                model.artifactCategoryTitle(ArtifactCategory(definitionValue: unit.category)),
-                                                model.artifactRiskTitle(unit.risk),
-                                                model.activityProtectionTitle(unit.activity)
-                                            ))
-                                                .font(DS.Typeface.caption)
-                                                .foregroundStyle(.secondary)
-                                            if let date = unit.lastActivity.date {
-                                                Text(model.localized(
-                                                    "最后活动：%@ · 证据：%@",
-                                                    date.formatted(.dateTime.year().month().day().hour().minute().locale(model.appLocale)),
-                                                    model.activityEvidenceTitle(unit.lastActivity.kind)
-                                                ))
-                                                    .font(DS.Typeface.micro)
-                                                    .foregroundStyle(.secondary)
-                                            } else {
-                                                Text("最后活动时间不可用")
-                                                .font(DS.Typeface.micro)
-                                                .foregroundStyle(.secondary)
-                                            }
-                                        }
-                                        Spacer()
-                                        Text(bytes(unit.storage.physicalBytes))
-                                            .font(DS.Typeface.label)
-                                            .monospacedDigit()
-                                    }
-                                }
-                                .toggleStyle(.checkbox)
-                                .disabled(!isSelectable(unit) || model.isCleaning)
-                                .contentShape(Rectangle())
-                                .listRowBackground(selected ? DS.Semantic.accentPrimary.opacity(0.08) : Color.clear)
-                                .accessibilityLabel(model.localized(
-                                    "%@ · %@",
-                                    model.cleanupUnitTitle(unit),
-                                    model.cleanupUnitOwnerTitle(unit)
-                                ))
-                                .accessibilityValue(model.localized(selected ? "已选择" : "未选择"))
-                                .privacySensitive()
-                            }
-                        }
-                    } header: {
-                        Text("安全清理候选").font(DS.Typeface.section)
-                    }
-                }
-                .dsInstrumentList()
-                .onChange(of: selectableCleanupIDs) { _, allowedIDs in
-                    selectedCleanupIDs.formIntersection(allowedIDs)
-                }
-                .onChange(of: snapshot.generation) { _, _ in
-                    if !scopeIsAvailable(in: snapshot) { selectedScope = .all }
-                    selectedCleanupIDs.removeAll()
-                    pendingReviewUnits = []
-                    showingCleanupReview = false
-                }
+            if let snapshot = model.snapshot, let derived {
+                storageContent(snapshot: snapshot, derived: derived)
             } else {
-                ContentUnavailableView("尚无空间账本", systemImage: "internaldrive", description: Text("空间数字仅来自一次完整索引。"))
+                DSSkeletonList(sections: [3, 4, 3])
             }
         }
         .navigationTitle(model.localized("空间"))
+        .task(id: deriveKey) { await recomputeDerived() }
         .sheet(isPresented: $showingCleanupReview) {
             CleanupReviewSheet(model: model, units: pendingReviewUnits) {
                 model.executeCleanup(pendingReviewUnits)
@@ -1013,87 +932,278 @@ private struct StorageView: View {
         }
     }
 
-    private struct GroupRow: Identifiable {
-        let id: String
-        let ownerTitle: String
-        let ownerIsPath: Bool
-        let category: ArtifactCategory
-        let volumeTitle: String
-        let itemCount: Int
-        let physicalBytes: UInt64
-    }
-
-    private func filteredArtifacts(in snapshot: DeviceSnapshot) -> [ArtifactRecord] {
-        let ownership = StorageOwnershipFilter(scope: selectedScope, snapshot: snapshot)
-        return snapshot.storageLedger.artifacts.filter { artifact in
-            let matchesCategory = selectedCategory == "*" || artifact.category.rawValue == selectedCategory
-            return ownership.includes(artifact) && matchesCategory
-        }
-    }
-
-    private func filteredCleanupUnits(in snapshot: DeviceSnapshot) -> [CleanupUnit] {
-        let inactiveBefore: Date?
-        let activityRange: ClosedRange<Date>?
-        switch cleanupDatePreset {
-        case .all:
-            inactiveBefore = nil
-            activityRange = nil
-        case .today:
-            inactiveBefore = nil
-            activityRange = Calendar.current.startOfDay(for: Date())...Date()
-        case .days7, .days30, .days90, .days180, .days365:
-            let days: Int
-            switch cleanupDatePreset {
-            case .days7: days = 7
-            case .days30: days = 30
-            case .days90: days = 90
-            case .days180: days = 180
-            case .days365: days = 365
-            default: days = 0
+    private func storageContent(snapshot: DeviceSnapshot, derived: StorageDerived) -> some View {
+        let visibleCleanupUnits = derived.visibleCleanupUnits
+        let selectableCleanupIDs = derived.selectableCleanupIDs
+        let selectedVisibleUnits = visibleCleanupUnits.filter { selectedCleanupIDs.contains($0.id) && selectableCleanupIDs.contains($0.id) }
+        return List {
+            Section {
+                scopePicker
+                Picker("类别", selection: $selectedCategory) {
+                    Text("全部类别").tag("*")
+                    ForEach(ArtifactCategory.allCases, id: \.rawValue) { category in
+                        Text(model.artifactCategoryTitle(category)).tag(category.rawValue)
+                    }
+                }
+            } header: {
+                Text("筛选").font(DS.Typeface.section)
             }
-            inactiveBefore = Calendar.current.date(byAdding: .day, value: -days, to: Date())
-            activityRange = nil
-        case .customBefore:
-            inactiveBefore = Calendar.current.startOfDay(for: customCutoff)
-            activityRange = nil
-        case .range:
-            let start = Calendar.current.startOfDay(for: rangeStart)
-            let end = Calendar.current.date(byAdding: .day, value: 1, to: Calendar.current.startOfDay(for: rangeEnd))?
-                .addingTimeInterval(-1) ?? rangeEnd
-            inactiveBefore = nil
-            activityRange = min(start, end)...max(start, end)
+
+            Section {
+                HStack {
+                    Text("合计").font(DS.Typeface.body)
+                    Spacer()
+                    Text(bytes(derived.totalPhysicalBytes))
+                        .font(DS.Typeface.title)
+                        .monospacedDigit()
+                        .foregroundStyle(DS.Semantic.accentPrimary)
+                }
+                Text("每个 device/inode/type 只记一次；共享对象不会重复摊入多个 Home。")
+                    .font(DS.Typeface.caption)
+                    .foregroundStyle(.secondary)
+            } header: {
+                Text("唯一物理占用").font(DS.Typeface.section)
+            }
+
+            Section {
+                if derived.groups.isEmpty {
+                    Text("当前筛选没有资源")
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(derived.groups) { group in
+                        let owner = groupOwnerDisplay(group)
+                        HStack {
+                            VStack(alignment: .leading, spacing: DS.Space.x100) {
+                                Text(owner.isPath ? model.displayPath(owner.title) : owner.title)
+                                    .font(DS.Typeface.body)
+                                Text(model.localized("%@ · %@ · %d 项", volumeTitle(device: group.volumeDevice), model.artifactCategoryTitle(group.category), group.itemCount))
+                                    .font(DS.Typeface.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Text(bytes(group.physicalBytes))
+                                .font(DS.Typeface.label)
+                                .monospacedDigit()
+                        }
+                        .padding(.vertical, DS.Space.x100)
+                    }
+                }
+            } header: {
+                Text("归属与类别").font(DS.Typeface.section)
+            }
+
+            Section {
+                if let message = model.cleanupOperationMessage {
+                    Text(message).font(DS.Typeface.caption).foregroundStyle(.secondary)
+                }
+                ForEach(model.cleanupResults) { result in
+                    cleanupResultRow(result)
+                }
+                if model.isCleaning {
+                    HStack {
+                        Image(systemName: "gearshape.2")
+                            .font(.system(size: DS.IconSize.navigation, weight: .medium))
+                            .foregroundStyle(DS.Semantic.accentPrimary)
+                            .accessibilityHidden(true)
+                        Text("正在逐项执行并复验")
+                        Spacer()
+                        Button("停止后续清理") { model.cancelCleanup() }
+                    }
+                }
+                if model.cleanupUnits.isEmpty {
+                    Text("当前 Agent Definition 没有声明可清理目标。")
+                        .foregroundStyle(.secondary)
+                } else {
+                    Picker("最后活动", selection: $cleanupDatePreset) {
+                        ForEach(StorageCleanupDatePreset.allCases) { preset in
+                            Text(model.localized(preset.title)).tag(preset)
+                        }
+                    }
+                    if cleanupDatePreset == .customBefore {
+                        DatePicker("截止日期", selection: $customCutoff, displayedComponents: .date)
+                    } else if cleanupDatePreset == .range {
+                        DatePicker("开始日期", selection: $rangeStart, displayedComponents: .date)
+                        DatePicker("结束日期", selection: $rangeEnd, in: rangeStart..., displayedComponents: .date)
+                    }
+                    Picker("最小占用", selection: $minimumCleanupSize) {
+                        Text("不限大小").tag("any")
+                        Text("超过 100 MB").tag("100m")
+                        Text("超过 500 MB").tag("500m")
+                        Text("超过 1 GB").tag("1g")
+                        Text("超过 5 GB").tag("5g")
+                        Text("自定义").tag("custom")
+                    }
+                    if minimumCleanupSize == "custom" {
+                        customMinimumField
+                    }
+                    Picker("风险", selection: $selectedRisk) {
+                        Text("全部风险").tag("*")
+                        ForEach([ArtifactRisk.rebuildable, .expensiveOrShared, .userContent, .protected], id: \.rawValue) { risk in
+                            Text(model.artifactRiskTitle(risk)).tag(risk.rawValue)
+                        }
+                    }
+
+                    HStack {
+                        VStack(alignment: .leading, spacing: DS.Space.x050) {
+                            Text(model.localized(
+                                "%d 个候选 · %@",
+                                visibleCleanupUnits.count,
+                                bytes(visibleCleanupUnits.reduce(0) { $0 &+ $1.storage.physicalBytes })
+                            ))
+                            if !selectedVisibleUnits.isEmpty {
+                                Text(model.localized(
+                                    "已选择 %d 项 · %@",
+                                    selectedVisibleUnits.count,
+                                    bytes(selectedVisibleUnits.reduce(0) { $0 &+ $1.storage.physicalBytes })
+                                ))
+                                    .foregroundStyle(DS.Semantic.accentPrimary)
+                            }
+                        }
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        Spacer()
+                        Button("选择可重建项") {
+                            selectedCleanupIDs = Set(visibleCleanupUnits
+                                .filter { selectableCleanupIDs.contains($0.id) && $0.risk == .rebuildable }
+                                .map(\.id))
+                        }
+                        .disabled(model.isCleaning)
+                        Button("复核所选") {
+                            pendingReviewUnits = selectedVisibleUnits
+                            showingCleanupReview = !pendingReviewUnits.isEmpty
+                        }
+                        .disabled(selectedVisibleUnits.isEmpty || model.isCleaning)
+                    }
+
+                    ForEach(visibleCleanupUnits) { unit in
+                        cleanupUnitToggle(unit)
+                    }
+                }
+            } header: {
+                Text("安全清理候选").font(DS.Typeface.section)
+            }
         }
-        let risks = selectedRisk == "*"
-            ? Set<ArtifactRisk>()
-            : Set([ArtifactRisk(rawValue: selectedRisk)].compactMap { $0 })
-        let query = CleanupQuery(
-            inactiveBefore: inactiveBefore,
-            activityRange: activityRange,
-            minimumPhysicalBytes: minimumPhysicalBytes,
-            risks: risks,
-            categories: selectedCategory == "*" ? [] : [selectedCategory]
-        )
-        let ownership = StorageOwnershipFilter(scope: selectedScope, snapshot: snapshot)
-        return CleanupPolicy().filter(units: model.cleanupUnits, query: query).filter { unit in
-            ownership.includes(unit)
+        .dsInstrumentList()
+        .onChange(of: derived.selectableCleanupIDs) { _, allowedIDs in
+            selectedCleanupIDs.formIntersection(allowedIDs)
+        }
+        .onChange(of: snapshot.generation) { _, _ in
+            if !scopeIsAvailable(in: snapshot) { selectedScope = .all }
+            selectedCleanupIDs.removeAll()
+            pendingReviewUnits = []
+            showingCleanupReview = false
         }
     }
 
-    private var minimumPhysicalBytes: UInt64? {
-        switch minimumCleanupSize {
-        case "100m": return 100 * 1_024 * 1_024
-        case "500m": return 500 * 1_024 * 1_024
-        case "1g": return 1_024 * 1_024 * 1_024
-        case "5g": return 5 * 1_024 * 1_024 * 1_024
-        case "custom":
-            guard customMinimumMegabytes.isFinite, customMinimumMegabytes > 0 else { return nil }
-            return UInt64(min(customMinimumMegabytes * 1_024 * 1_024, Double(Int64.max)))
-        default: return nil
+    private var scopePicker: some View {
+        Picker("范围", selection: $selectedScope) {
+            Text("全部 Agent 与 Home").tag(StorageOwnershipScope.all)
+            ForEach(model.snapshot?.products ?? []) { product in
+                Text(model.localized("%@ · 全部 Home", product.displayName))
+                    .tag(StorageOwnershipScope.product(product.id))
+                ForEach(product.homes.sorted {
+                    $0.path.localizedStandardCompare($1.path) == .orderedAscending
+                }) { home in
+                    Text(model.localized(
+                        "%@ · %@",
+                        product.displayName,
+                        model.homeDisplayTitle(
+                            productID: product.id,
+                            homeIdentity: home.id,
+                            homePath: home.path
+                        )
+                    ))
+                        .tag(StorageOwnershipScope.home(home.id))
+                }
+            }
         }
     }
 
-    private func isSelectable(_ unit: CleanupUnit) -> Bool {
-        model.allows(.cleanup) && unit.activity == .inactive && unit.risk != .protected
+    /// 拆分为独立子表达式，避免 ViewBuilder 内联格式化类型推断过慢。
+    private var customMinimumField: some View {
+        let format = FloatingPointFormatStyle<Double>.number.precision(.fractionLength(0...2))
+        return TextField("自定义最小占用（MB）", value: $customMinimumMegabytes, format: format)
+    }
+
+    private func cleanupResultRow(_ result: CleanupResultRow) -> some View {
+        HStack(alignment: .top) {
+            VStack(alignment: .leading, spacing: DS.Space.x100) {
+                Text(result.name)
+                    .lineLimit(1)
+                if let owner = model.cleanupResultOwnerTitle(result) {
+                    Text(owner)
+                        .font(DS.Typeface.micro)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .privacySensitive()
+                }
+            }
+            Spacer()
+            Text(model.localized(
+                "%@ · %@",
+                model.cleanupResultStatusTitle(result.status),
+                model.cleanupResultCodeTitle(result.code)
+            ))
+                .font(DS.Typeface.caption)
+                .foregroundStyle(result.status == .failed ? DS.Semantic.statusCritical : Color.secondary)
+        }
+    }
+
+    private func cleanupUnitToggle(_ unit: CleanupUnit) -> some View {
+        let selected = selectedCleanupIDs.contains(unit.id)
+        return Toggle(isOn: cleanupSelectionBinding(for: unit)) {
+            cleanupUnitRow(unit)
+        }
+        .toggleStyle(.checkbox)
+        .disabled(!(derived?.selectableCleanupIDs ?? []).contains(unit.id) || model.isCleaning)
+        .contentShape(Rectangle())
+        .listRowBackground(selected ? DS.Semantic.accentPrimary.opacity(0.08) : Color.clear)
+        .accessibilityLabel(model.localized(
+            "%@ · %@",
+            model.cleanupUnitTitle(unit),
+            model.cleanupUnitOwnerTitle(unit)
+        ))
+        .accessibilityValue(model.localized(selected ? "已选择" : "未选择"))
+        .privacySensitive()
+    }
+
+    private func cleanupUnitRow(_ unit: CleanupUnit) -> some View {
+        HStack {
+            VStack(alignment: .leading, spacing: DS.Space.x100) {
+                Text(model.cleanupUnitTitle(unit))
+                    .font(DS.Typeface.body)
+                Text(model.cleanupUnitOwnerTitle(unit))
+                    .font(DS.Typeface.caption)
+                    .foregroundStyle(DS.Semantic.accentPrimary)
+                    .lineLimit(1)
+                    .privacySensitive()
+                Text(model.localized(
+                    "%@ · %@ · %@",
+                    model.artifactCategoryTitle(ArtifactCategory(definitionValue: unit.category)),
+                    model.artifactRiskTitle(unit.risk),
+                    model.activityProtectionTitle(unit.activity)
+                ))
+                    .font(DS.Typeface.caption)
+                    .foregroundStyle(.secondary)
+                if let date = unit.lastActivity.date {
+                    Text(model.localized(
+                        "最后活动：%@ · 证据：%@",
+                        date.formatted(.dateTime.year().month().day().hour().minute().locale(model.appLocale)),
+                        model.activityEvidenceTitle(unit.lastActivity.kind)
+                    ))
+                        .font(DS.Typeface.micro)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("最后活动时间不可用")
+                        .font(DS.Typeface.micro)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            Spacer()
+            Text(bytes(unit.storage.physicalBytes))
+                .font(DS.Typeface.label)
+                .monospacedDigit()
+        }
     }
 
     private func cleanupSelectionBinding(for unit: CleanupUnit) -> Binding<Bool> {
@@ -1117,44 +1227,68 @@ private struct StorageView: View {
         }
     }
 
-    private func storageGroups(in snapshot: DeviceSnapshot) -> [GroupRow] {
-        let homesByID = Dictionary(uniqueKeysWithValues: snapshot.homes.map { ($0.id, $0) })
-        var groups: [String: (String, Bool, ArtifactCategory, String, Int, UInt64)] = [:]
-        for artifact in filteredArtifacts(in: snapshot) {
-            let ownerKey: String
-            let ownerTitle: String
-            let ownerIsPath: Bool
-            if artifact.attribution == .shared {
-                ownerKey = "shared"
-                ownerTitle = model.localized("共享资源")
-                ownerIsPath = false
-            } else if let home = artifact.homeIDs.first.flatMap({ homesByID[$0] }) {
-                ownerKey = "home:\(home.path)"
-                ownerTitle = home.path
-                ownerIsPath = true
-            } else {
-                ownerKey = "unattributed"
-                ownerTitle = model.localized("未归属资源")
-                ownerIsPath = false
-            }
-            let key = "\(artifact.id.device)|\(ownerKey)|\(artifact.category.rawValue)"
-            let current = groups[key] ?? (ownerTitle, ownerIsPath, artifact.category, volumeTitle(device: artifact.id.device), 0, 0)
-            groups[key] = (current.0, current.1, current.2, current.3, current.4 + 1, current.5 &+ artifact.storage.physicalBytes)
+    private func groupOwnerDisplay(_ group: StorageGroupData) -> (title: String, isPath: Bool) {
+        switch group.ownerKind {
+        case .shared: return (model.localized("共享资源"), false)
+        case .unattributed: return (model.localized("未归属资源"), false)
+        case .home: return (group.ownerPath, true)
         }
-        return groups.map { key, value in
-            GroupRow(
-                id: key,
-                ownerTitle: value.0,
-                ownerIsPath: value.1,
-                category: value.2,
-                volumeTitle: value.3,
-                itemCount: value.4,
-                physicalBytes: value.5
+    }
+
+    /// 派生计算输入签名：任一输入变化都会触发后台重算（快照 generation、筛选参数、清理库存）。
+    private var deriveKey: String {
+        let unitsSignature = model.cleanupUnits
+            .map { "\($0.id):\($0.storage.physicalBytes):\($0.activity.rawValue)" }
+            .joined(separator: ",")
+        return [
+            "\(model.snapshot?.generation.uuidString ?? "nil")",
+            String(describing: selectedScope),
+            selectedCategory,
+            selectedRisk,
+            cleanupDatePreset.rawValue,
+            minimumCleanupSize,
+            "\(customMinimumMegabytes)",
+            "\(customCutoff.timeIntervalSince1970)",
+            "\(rangeStart.timeIntervalSince1970)",
+            "\(rangeEnd.timeIntervalSince1970)",
+            unitsSignature,
+        ].joined(separator: "|")
+    }
+
+    @MainActor
+    private func recomputeDerived() async {
+        guard let snapshot = model.snapshot else {
+            derived = nil
+            return
+        }
+        let allowsCleanup = model.allows(.cleanup)
+        let cleanupUnits = model.cleanupUnits
+        let scope = selectedScope
+        let category = selectedCategory
+        let risk = selectedRisk
+        let datePreset = cleanupDatePreset
+        let cutoff = customCutoff
+        let start = rangeStart
+        let end = rangeEnd
+        let minimumSize = minimumCleanupSize
+        let customMegabytes = customMinimumMegabytes
+        let result = await Task.detached(priority: .utility) {
+            computeStorageDerived(
+                snapshot: snapshot,
+                scope: scope,
+                category: category,
+                risk: risk,
+                datePreset: datePreset,
+                customCutoff: cutoff,
+                rangeStart: start,
+                rangeEnd: end,
+                minimumSize: minimumSize,
+                customMegabytes: customMegabytes,
+                units: cleanupUnits,
+                allowsCleanup: allowsCleanup
             )
-        }.sorted {
-            if $0.physicalBytes != $1.physicalBytes { return $0.physicalBytes > $1.physicalBytes }
-            return $0.id < $1.id
-        }
+        }.value
+        derived = result
     }
 
     private func volumeTitle(device: UInt64) -> String {
