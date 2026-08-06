@@ -729,10 +729,8 @@ private struct StorageView: View {
     }
 
     @Bindable var model: AppModel
-    @State private var selectedProductID = "*"
-    @State private var selectedHomePath = "*"
+    @State private var selectedScope: StorageOwnershipScope = .all
     @State private var selectedCategory = "*"
-    @State private var selectedVolumeDevice = "*"
     @State private var selectedRisk = "*"
     @State private var cleanupDatePreset: CleanupDatePreset = .all
     @State private var customCutoff = Calendar.current.date(byAdding: .day, value: -90, to: Date()) ?? Date()
@@ -748,20 +746,29 @@ private struct StorageView: View {
         Group {
             if let snapshot = model.snapshot {
                 let visibleCleanupUnits = filteredCleanupUnits(in: snapshot)
+                let selectableCleanupIDs = Set(visibleCleanupUnits.filter(isSelectable).map(\.id))
+                let selectedVisibleUnits = visibleCleanupUnits.filter { selectedCleanupIDs.contains($0.id) && isSelectable($0) }
                 List {
                     Section {
-                        Picker("Agent", selection: $selectedProductID) {
-                            Text("全部 Agent").tag("*")
+                        Picker("范围", selection: $selectedScope) {
+                            Text("全部 Agent 与 Home").tag(StorageOwnershipScope.all)
                             ForEach(snapshot.products) { product in
-                                Text(product.displayName).tag(product.id)
-                            }
-                        }
-                        .onChange(of: selectedProductID) { _, _ in selectedHomePath = "*" }
-
-                        Picker("Home", selection: $selectedHomePath) {
-                            Text("全部 Home").tag("*")
-                            ForEach(availableHomes(in: snapshot)) { home in
-                                Text(model.displayPath(home.path)).tag(home.path)
+                                Text(model.localized("%@ · 全部 Home", product.displayName))
+                                    .tag(StorageOwnershipScope.product(product.id))
+                                ForEach(product.homes.sorted {
+                                    $0.path.localizedStandardCompare($1.path) == .orderedAscending
+                                }) { home in
+                                    Text(model.localized(
+                                        "%@ · %@",
+                                        product.displayName,
+                                        model.homeDisplayTitle(
+                                            productID: product.id,
+                                            homeIdentity: home.id,
+                                            homePath: home.path
+                                        )
+                                    ))
+                                        .tag(StorageOwnershipScope.home(home.id))
+                                }
                             }
                         }
 
@@ -772,19 +779,6 @@ private struct StorageView: View {
                             }
                         }
 
-                        Picker("卷", selection: $selectedVolumeDevice) {
-                            Text("全部卷").tag("*")
-                            ForEach(volumeDevices(in: snapshot), id: \.self) { device in
-                                Text(volumeTitle(device: device)).tag(String(device))
-                            }
-                        }
-
-                        Picker("风险", selection: $selectedRisk) {
-                            Text("全部风险").tag("*")
-                            ForEach([ArtifactRisk.rebuildable, .expensiveOrShared, .userContent, .protected], id: \.rawValue) { risk in
-                                Text(model.artifactRiskTitle(risk)).tag(risk.rawValue)
-                            }
-                        }
                     } header: {
                         Text("筛选").font(DS.Typeface.section)
                     }
@@ -836,9 +830,18 @@ private struct StorageView: View {
                             Text(message).font(DS.Typeface.caption).foregroundStyle(.secondary)
                         }
                         ForEach(model.cleanupResults) { result in
-                            HStack {
-                                Text(result.name)
-                                    .lineLimit(1)
+                            HStack(alignment: .top) {
+                                VStack(alignment: .leading, spacing: DS.Space.x100) {
+                                    Text(result.name)
+                                        .lineLimit(1)
+                                    if let owner = model.cleanupResultOwnerTitle(result) {
+                                        Text(owner)
+                                            .font(DS.Typeface.micro)
+                                            .foregroundStyle(.secondary)
+                                            .lineLimit(1)
+                                            .privacySensitive()
+                                    }
+                                }
                                 Spacer()
                                 Text(model.localized(
                                     "%@ · %@",
@@ -890,70 +893,95 @@ private struct StorageView: View {
                                     format: .number.precision(.fractionLength(0...2))
                                 )
                             }
+                            Picker("风险", selection: $selectedRisk) {
+                                Text("全部风险").tag("*")
+                                ForEach([ArtifactRisk.rebuildable, .expensiveOrShared, .userContent, .protected], id: \.rawValue) { risk in
+                                    Text(model.artifactRiskTitle(risk)).tag(risk.rawValue)
+                                }
+                            }
 
                             HStack {
-                                Text(model.localized(
-                                    "%d 个候选 · %@",
-                                    visibleCleanupUnits.count,
-                                    bytes(visibleCleanupUnits.reduce(0) { $0 &+ $1.storage.physicalBytes })
-                                ))
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
+                                VStack(alignment: .leading, spacing: DS.Space.x050) {
+                                    Text(model.localized(
+                                        "%d 个候选 · %@",
+                                        visibleCleanupUnits.count,
+                                        bytes(visibleCleanupUnits.reduce(0) { $0 &+ $1.storage.physicalBytes })
+                                    ))
+                                    if !selectedVisibleUnits.isEmpty {
+                                        Text(model.localized(
+                                            "已选择 %d 项 · %@",
+                                            selectedVisibleUnits.count,
+                                            bytes(selectedVisibleUnits.reduce(0) { $0 &+ $1.storage.physicalBytes })
+                                        ))
+                                            .foregroundStyle(DS.Semantic.accentPrimary)
+                                    }
+                                }
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
                                 Spacer()
                                 Button("选择可重建项") {
                                     selectedCleanupIDs = Set(visibleCleanupUnits
                                         .filter { isSelectable($0) && $0.risk == .rebuildable }
                                         .map(\.id))
                                 }
+                                .disabled(model.isCleaning)
                                 Button("复核所选") {
-                                    pendingReviewUnits = visibleCleanupUnits
-                                        .filter { selectedCleanupIDs.contains($0.id) && isSelectable($0) }
+                                    pendingReviewUnits = selectedVisibleUnits
                                     showingCleanupReview = !pendingReviewUnits.isEmpty
                                 }
-                                .disabled(selectedCleanupIDs.isEmpty || model.isCleaning)
+                                .disabled(selectedVisibleUnits.isEmpty || model.isCleaning)
                             }
 
                             ForEach(visibleCleanupUnits) { unit in
-                                HStack {
-                                    Toggle(model.localized("选择 %@", model.cleanupUnitTitle(unit)), isOn: Binding(
-                                        get: { selectedCleanupIDs.contains(unit.id) },
-                                        set: { selected in
-                                            if selected { selectedCleanupIDs.insert(unit.id) }
-                                            else { selectedCleanupIDs.remove(unit.id) }
-                                        }
-                                    ))
-                                        .labelsHidden()
-                                        .disabled(!isSelectable(unit) || model.isCleaning)
-                                    VStack(alignment: .leading, spacing: DS.Space.x100) {
-                                        Text(model.cleanupUnitTitle(unit))
-                                            .font(DS.Typeface.body)
-                                        Text(model.localized(
-                                            "%@ · %@ · %@",
-                                            model.artifactCategoryTitle(ArtifactCategory(definitionValue: unit.category)),
-                                            model.artifactRiskTitle(unit.risk),
-                                            model.activityProtectionTitle(unit.activity)
-                                        ))
-                                            .font(DS.Typeface.caption)
-                                            .foregroundStyle(.secondary)
-                                        if let date = unit.lastActivity.date {
+                                let selected = selectedCleanupIDs.contains(unit.id)
+                                Toggle(isOn: cleanupSelectionBinding(for: unit)) {
+                                    HStack {
+                                        VStack(alignment: .leading, spacing: DS.Space.x100) {
+                                            Text(model.cleanupUnitTitle(unit))
+                                                .font(DS.Typeface.body)
+                                            Text(model.cleanupUnitOwnerTitle(unit))
+                                                .font(DS.Typeface.caption)
+                                                .foregroundStyle(DS.Semantic.accentPrimary)
+                                                .lineLimit(1)
+                                                .privacySensitive()
                                             Text(model.localized(
-                                                "最后活动：%@ · 证据：%@",
-                                                date.formatted(.dateTime.year().month().day().hour().minute().locale(model.appLocale)),
-                                                model.activityEvidenceTitle(unit.lastActivity.kind)
+                                                "%@ · %@ · %@",
+                                                model.artifactCategoryTitle(ArtifactCategory(definitionValue: unit.category)),
+                                                model.artifactRiskTitle(unit.risk),
+                                                model.activityProtectionTitle(unit.activity)
                                             ))
+                                                .font(DS.Typeface.caption)
+                                                .foregroundStyle(.secondary)
+                                            if let date = unit.lastActivity.date {
+                                                Text(model.localized(
+                                                    "最后活动：%@ · 证据：%@",
+                                                    date.formatted(.dateTime.year().month().day().hour().minute().locale(model.appLocale)),
+                                                    model.activityEvidenceTitle(unit.lastActivity.kind)
+                                                ))
+                                                    .font(DS.Typeface.micro)
+                                                    .foregroundStyle(.secondary)
+                                            } else {
+                                                Text("最后活动时间不可用")
                                                 .font(DS.Typeface.micro)
                                                 .foregroundStyle(.secondary)
-                                        } else {
-                                            Text("最后活动时间不可用")
-                                                .font(DS.Typeface.micro)
-                                                .foregroundStyle(.secondary)
+                                            }
                                         }
+                                        Spacer()
+                                        Text(bytes(unit.storage.physicalBytes))
+                                            .font(DS.Typeface.label)
+                                            .monospacedDigit()
                                     }
-                                    Spacer()
-                                    Text(bytes(unit.storage.physicalBytes))
-                                        .font(DS.Typeface.label)
-                                        .monospacedDigit()
                                 }
+                                .toggleStyle(.checkbox)
+                                .disabled(!isSelectable(unit) || model.isCleaning)
+                                .contentShape(Rectangle())
+                                .listRowBackground(selected ? DS.Semantic.accentPrimary.opacity(0.08) : Color.clear)
+                                .accessibilityLabel(model.localized(
+                                    "%@ · %@",
+                                    model.cleanupUnitTitle(unit),
+                                    model.cleanupUnitOwnerTitle(unit)
+                                ))
+                                .accessibilityValue(model.localized(selected ? "已选择" : "未选择"))
                                 .privacySensitive()
                             }
                         }
@@ -962,6 +990,15 @@ private struct StorageView: View {
                     }
                 }
                 .dsInstrumentList()
+                .onChange(of: selectableCleanupIDs) { _, allowedIDs in
+                    selectedCleanupIDs.formIntersection(allowedIDs)
+                }
+                .onChange(of: snapshot.generation) { _, _ in
+                    if !scopeIsAvailable(in: snapshot) { selectedScope = .all }
+                    selectedCleanupIDs.removeAll()
+                    pendingReviewUnits = []
+                    showingCleanupReview = false
+                }
             } else {
                 ContentUnavailableView("尚无空间账本", systemImage: "internaldrive", description: Text("空间数字仅来自一次完整索引。"))
             }
@@ -986,23 +1023,11 @@ private struct StorageView: View {
         let physicalBytes: UInt64
     }
 
-    private func availableHomes(in snapshot: DeviceSnapshot) -> [AgentHome] {
-        snapshot.homes.filter {
-            selectedProductID == "*" || $0.productID == selectedProductID
-        }.sorted { $0.path.localizedStandardCompare($1.path) == .orderedAscending }
-    }
-
     private func filteredArtifacts(in snapshot: DeviceSnapshot) -> [ArtifactRecord] {
-        let selectedHomeID = snapshot.homes.first { $0.path == selectedHomePath }?.id
-        let productHomeIDs = Set(snapshot.homes.filter {
-            selectedProductID == "*" || $0.productID == selectedProductID
-        }.map(\.id))
+        let ownership = StorageOwnershipFilter(scope: selectedScope, snapshot: snapshot)
         return snapshot.storageLedger.artifacts.filter { artifact in
-            let matchesProduct = selectedProductID == "*" || artifact.homeIDs.contains { productHomeIDs.contains($0) }
-            let matchesHome = selectedHomeID == nil || artifact.homeIDs.contains(selectedHomeID!)
             let matchesCategory = selectedCategory == "*" || artifact.category.rawValue == selectedCategory
-            let matchesVolume = selectedVolumeDevice == "*" || String(artifact.id.device) == selectedVolumeDevice
-            return matchesProduct && matchesHome && matchesCategory && matchesVolume
+            return ownership.includes(artifact) && matchesCategory
         }
     }
 
@@ -1048,11 +1073,9 @@ private struct StorageView: View {
             risks: risks,
             categories: selectedCategory == "*" ? [] : [selectedCategory]
         )
+        let ownership = StorageOwnershipFilter(scope: selectedScope, snapshot: snapshot)
         return CleanupPolicy().filter(units: model.cleanupUnits, query: query).filter { unit in
-            let matchesProduct = selectedProductID == "*" || unit.productID == selectedProductID
-            let matchesHome = selectedHomePath == "*" || unit.homePath == selectedHomePath
-            let matchesVolume = selectedVolumeDevice == "*" || String(unit.identity.device) == selectedVolumeDevice
-            return matchesProduct && matchesHome && matchesVolume
+            ownership.includes(unit)
         }
     }
 
@@ -1071,6 +1094,27 @@ private struct StorageView: View {
 
     private func isSelectable(_ unit: CleanupUnit) -> Bool {
         model.allows(.cleanup) && unit.activity == .inactive && unit.risk != .protected
+    }
+
+    private func cleanupSelectionBinding(for unit: CleanupUnit) -> Binding<Bool> {
+        Binding(
+            get: { selectedCleanupIDs.contains(unit.id) },
+            set: { selected in
+                if selected { selectedCleanupIDs.insert(unit.id) }
+                else { selectedCleanupIDs.remove(unit.id) }
+            }
+        )
+    }
+
+    private func scopeIsAvailable(in snapshot: DeviceSnapshot) -> Bool {
+        switch selectedScope {
+        case .all:
+            true
+        case .product(let productID):
+            snapshot.products.contains { $0.id == productID }
+        case .home(let homeID):
+            snapshot.homes.contains { $0.id == homeID }
+        }
     }
 
     private func storageGroups(in snapshot: DeviceSnapshot) -> [GroupRow] {
@@ -1111,10 +1155,6 @@ private struct StorageView: View {
             if $0.physicalBytes != $1.physicalBytes { return $0.physicalBytes > $1.physicalBytes }
             return $0.id < $1.id
         }
-    }
-
-    private func volumeDevices(in snapshot: DeviceSnapshot) -> [UInt64] {
-        Array(Set(snapshot.storageLedger.artifacts.map { $0.id.device })).sorted()
     }
 
     private func volumeTitle(device: UInt64) -> String {
@@ -1170,6 +1210,11 @@ private struct CleanupReviewSheet: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
+                    Text(model.cleanupUnitOwnerTitle(unit))
+                        .font(.caption)
+                        .foregroundStyle(DS.Semantic.accentPrimary)
+                        .lineLimit(1)
+                        .privacySensitive()
                     Text(model.localized(
                         "证据：%@ · 风险：%@ · 活动：%@ · 方式：%@",
                         model.activityEvidenceTitle(unit.lastActivity.kind),

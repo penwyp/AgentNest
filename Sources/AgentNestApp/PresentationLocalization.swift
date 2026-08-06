@@ -78,6 +78,45 @@ extension AppModel {
         return localized("会话 %@", String(nativeID.prefix(8)))
     }
 
+    func cleanupUnitOwnerTitle(_ unit: CleanupUnit) -> String {
+        cleanupOwnerTitle(productID: unit.productID, homeIdentity: unit.homeIdentity, homePath: unit.homePath)
+    }
+
+    func cleanupResultOwnerTitle(_ result: CleanupResultRow) -> String? {
+        guard !result.productID.isEmpty, !result.homePath.isEmpty else { return nil }
+        return cleanupOwnerTitle(productID: result.productID, homeIdentity: result.homeIdentity, homePath: result.homePath)
+    }
+
+    private func cleanupOwnerTitle(
+        productID: String,
+        homeIdentity: PhysicalResourceIdentity?,
+        homePath: String
+    ) -> String {
+        let productName = snapshot?.products.first { $0.id == productID }?.displayName ?? productID
+        let homeName = homeDisplayTitle(
+            productID: productID,
+            homeIdentity: homeIdentity,
+            homePath: homePath
+        )
+        return localized("Agent：%@ · Home：%@", productName, homeName)
+    }
+
+    func homeDisplayTitle(
+        productID: String,
+        homeIdentity: PhysicalResourceIdentity?,
+        homePath: String
+    ) -> String {
+        if hideSensitivePaths,
+           let product = snapshot?.products.first(where: { $0.id == productID }),
+           let homeIdentity,
+           let index = product.homes.sorted(by: { $0.path.localizedStandardCompare($1.path) == .orderedAscending })
+               .firstIndex(where: { $0.id == homeIdentity }) {
+            return localized("Home %d（路径已隐藏）", index + 1)
+        } else {
+            return displayPath(homePath)
+        }
+    }
+
     func cleanupResultStatusTitle(_ status: CleanupResultStatus) -> String {
         switch status {
         case .succeeded: localized("成功")

@@ -13,6 +13,7 @@ struct AgentNestCoreTestRunner {
             try await testScan()
             try await testSkills()
             try await testCleanupPolicy()
+            try testStorageOwnershipScope()
             try await testCleanupInventory()
             try await testCodexCleanupFamilies()
             try await testActivityRates()
@@ -649,6 +650,115 @@ struct AgentNestCoreTestRunner {
         try expect(
             activityResult.first?.code == "cleanup.activityChanged" && FileManager.default.fileExists(atPath: inside.path),
             "execution fails closed when current activity evidence is unavailable"
+        )
+    }
+
+    private static func testStorageOwnershipScope() throws {
+        let generation = UUID()
+        let capabilities = try unwrap(
+            AgentDefinitionCatalog.bundled().definitions.first?.capabilities,
+            "bundled capabilities"
+        )
+        let homeAID = PhysicalResourceIdentity(device: 1, inode: 10, kind: .directory)
+        let homeBID = PhysicalResourceIdentity(device: 1, inode: 20, kind: .directory)
+        let homeCID = PhysicalResourceIdentity(device: 1, inode: 30, kind: .directory)
+        func home(id: PhysicalResourceIdentity, productID: String, path: String) -> AgentHome {
+            AgentHome(
+                id: id,
+                productID: productID,
+                displayName: productID,
+                path: path,
+                source: .defaultPath,
+                confidence: .confirmed,
+                evidence: [],
+                storage: StorageMeasurement()
+            )
+        }
+        let homeA = home(id: homeAID, productID: "agent.a", path: "/agents/a/default")
+        let homeB = home(id: homeBID, productID: "agent.a", path: "/agents/a/custom")
+        let homeC = home(id: homeCID, productID: "agent.b", path: "/agents/b/default")
+        let products = [
+            AgentProduct(
+                id: "agent.a", displayName: "Agent A", definitionVersion: 1,
+                supportState: .supported, capabilities: capabilities,
+                installations: [], homes: [homeA, homeB], profiles: []
+            ),
+            AgentProduct(
+                id: "agent.b", displayName: "Agent B", definitionVersion: 1,
+                supportState: .supported, capabilities: capabilities,
+                installations: [], homes: [homeC], profiles: []
+            ),
+        ]
+        func artifact(inode: UInt64, path: String, homeIDs: [PhysicalResourceIdentity]) -> ArtifactRecord {
+            ArtifactRecord(
+                id: PhysicalResourceIdentity(device: 1, inode: inode, kind: .file),
+                path: path,
+                category: .sessions,
+                attribution: homeIDs.count > 1 ? .shared : .home,
+                homeIDs: homeIDs,
+                storage: StorageMeasurement(physicalBytes: 1),
+                evidence: [],
+                modifiedAt: nil
+            )
+        }
+        let artifactA = artifact(inode: 101, path: "/agents/a/default/session", homeIDs: [homeAID])
+        let artifactB = artifact(inode: 102, path: "/agents/b/default/session", homeIDs: [homeCID])
+        let shared = artifact(inode: 103, path: "/agents/shared", homeIDs: [homeAID, homeCID])
+        let snapshot = DeviceSnapshot(
+            generation: generation,
+            createdAt: Date(),
+            isPartial: false,
+            products: products,
+            storageLedger: StorageLedger(artifacts: [artifactA, artifactB, shared]),
+            coverage: SnapshotCoverage(
+                directories: .complete,
+                agents: .complete,
+                space: .complete,
+                skills: .complete,
+                activity: .complete,
+                unreadableLocationCount: 0
+            ),
+            findings: []
+        )
+        func cleanupUnit(id: String, inode: UInt64, productID: String, home: AgentHome) -> CleanupUnit {
+            CleanupUnit(
+                id: id,
+                generation: generation,
+                productID: productID,
+                path: "\(home.path)/session",
+                homePath: home.path,
+                identity: PhysicalResourceIdentity(device: 1, inode: inode, kind: .file),
+                homeIdentity: home.id,
+                name: id,
+                category: "sessions",
+                storage: StorageMeasurement(physicalBytes: 1),
+                risk: .userContent,
+                activity: .inactive,
+                lastActivity: LastActivityEvidence(date: Date(), kind: .officialMetadata),
+                method: .officialPermanentDelete
+            )
+        }
+        let unitA = cleanupUnit(id: "unit-a", inode: 201, productID: "agent.a", home: homeA)
+        let unitC = cleanupUnit(id: "unit-c", inode: 202, productID: "agent.b", home: homeC)
+        let samePathDifferentIdentity = cleanupUnit(
+            id: "unit-same-path",
+            inode: 203,
+            productID: "agent.a",
+            home: home(id: PhysicalResourceIdentity(device: 2, inode: 10, kind: .directory), productID: "agent.a", path: homeA.path)
+        )
+
+        let all = StorageOwnershipFilter(scope: .all, snapshot: snapshot)
+        try expect(all.includes(artifactA) && all.includes(artifactB) && all.includes(unitA) && all.includes(unitC), "all ownership scope includes every item")
+
+        let productA = StorageOwnershipFilter(scope: .product("agent.a"), snapshot: snapshot)
+        try expect(productA.includes(artifactA) && productA.includes(shared) && !productA.includes(artifactB), "product scope includes all of the product's Homes")
+        try expect(productA.includes(unitA) && !productA.includes(unitC), "product scope filters cleanup units by product")
+
+        let onlyHomeA = StorageOwnershipFilter(scope: .home(homeAID), snapshot: snapshot)
+        try expect(onlyHomeA.includes(artifactA) && onlyHomeA.includes(shared) && !onlyHomeA.includes(artifactB), "Home scope uses stable physical ownership")
+        try expect(
+            onlyHomeA.includes(unitA) && !onlyHomeA.includes(unitC) && !onlyHomeA.includes(samePathDifferentIdentity),
+            "Home scope filters cleanup units by stable Home identity rather than path"
         )
     }
 

@@ -272,11 +272,16 @@
 "%@：%@。%@" = "%@: %@. %@";
 "%@ CPU" = "%@ CPU";
 "%@ · %@" = "%@ · %@";
+"%@ · 全部 Home" = "%@ · All Homes";
 "%@ · %@ · %@" = "%@ · %@ · %@";
 "%@ · %@ · %@ · %@" = "%@ · %@ · %@ · %@";
 "%@（%@）" = "%@ (%@)";
 "%@/s" = "%@/s";
 "风险" = "Risk";
+"范围" = "Scope";
+"全部 Agent 与 Home" = "All Agents and Homes";
+"Agent：%@ · Home：%@" = "Agent: %@ · Home: %@";
+"Home %d（路径已隐藏）" = "Home %d (path hidden)";
 "全部风险" = "All risks";
 "全部时间" = "All activity dates";
 "今天活动" = "Active today";
@@ -300,6 +305,9 @@
 "自定义" = "Custom";
 "自定义最小占用（MB）" = "Custom minimum storage (MB)";
 "%d 个候选 · %@" = "%d candidates · %@";
+"已选择 %d 项 · %@" = "%d selected · %@";
+"已选择" = "Selected";
+"未选择" = "Not selected";
 "选择可重建项" = "Select rebuildable";
 "选择 %@" = "Select %@";
 "复核所选" = "Review selected";

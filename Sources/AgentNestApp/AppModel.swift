@@ -18,6 +18,9 @@ struct SkillWriteTarget: Identifiable, Hashable {
 struct CleanupResultRow: Identifiable {
     let id: String
     let name: String
+    let productID: String
+    let homeIdentity: PhysicalResourceIdentity?
+    let homePath: String
     let status: CleanupResultStatus
     let code: String
 }
@@ -437,9 +440,13 @@ final class AppModel {
             let cancelled = results.count { $0.status == .cancelled }
             let unitsByID = Dictionary(uniqueKeysWithValues: plan.units.map { ($0.id, $0) })
             cleanupResults = results.map { result in
-                CleanupResultRow(
+                let unit = unitsByID[result.unitID]
+                return CleanupResultRow(
                     id: result.unitID,
-                    name: unitsByID[result.unitID].map(cleanupUnitTitle) ?? result.unitID,
+                    name: unit.map(cleanupUnitTitle) ?? result.unitID,
+                    productID: unit?.productID ?? "",
+                    homeIdentity: unit?.homeIdentity,
+                    homePath: unit?.homePath ?? "",
                     status: result.status,
                     code: result.code
                 )

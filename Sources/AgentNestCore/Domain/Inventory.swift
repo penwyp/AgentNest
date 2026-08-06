@@ -112,6 +112,12 @@ public enum StorageAttribution: String, Codable, Sendable {
     case unattributed
 }
 
+public enum StorageOwnershipScope: Hashable, Sendable {
+    case all
+    case product(String)
+    case home(PhysicalResourceIdentity)
+}
+
 public struct ArtifactRecord: Identifiable, Codable, Equatable, Sendable {
     public let id: PhysicalResourceIdentity
     public let path: String

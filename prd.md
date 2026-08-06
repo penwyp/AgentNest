@@ -362,7 +362,7 @@ Agent Definition 使用带 `schemaVersion` 的 JSON。每个 Agent 一份资源�
 - FR-SPACE-01：展示 Agent 总占用、按 Agent/Home/Profile/卷分布、可清理候选和最近增长。
 - FR-SPACE-02：支持列表、分组条形图和大小排序；首版不以复杂 Treemap 作为唯一入口。
 - FR-SPACE-03：任一数字可下钻到会话、缓存、日志、运行时、浏览器、数据库、Skill、配置、未归属和目录开销。
-- FR-SPACE-04：支持最小大小阈值、类别、Agent、Home、卷、风险和活动状态筛选。
+- FR-SPACE-04：使用一个统一范围控件选择全部、Agent 或具体 Home，并支持最小大小阈值、类别、风险和活动状态筛选；卷只作为物理归属与安全复验证据展示，不作为结果页过滤项。
 - FR-SPACE-05：扫描结果显示逻辑大小与物理分配大小，默认排序使用物理分配大小。
 - FR-SPACE-06：Agent 在 Home 外创建的 worktree、项目环境、容器对象、Simulator 或构建缓存仅在存在可验证关系时显示为 Linked Artifact；没有关系证据时留在未归属，不因“最近由 Agent 进程打开”就取得所有权。
 - FR-SPACE-07：Linked Artifact 的宿主文件物理占用与 Docker/Podman/Simulator 等 Provider 报告值分开显示，禁止相加为虚假总量。
