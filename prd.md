@@ -360,9 +360,9 @@ Agent Definition 使用带 `schemaVersion` 的 JSON。每个 Agent 一份资源�
 ### 9.1 空间总览
 
 - FR-SPACE-01：展示 Agent 总占用、按 Agent/Home/Profile/卷分布、可清理候选和最近增长。
-- FR-SPACE-02：支持列表、分组条形图和大小排序；首版不以复杂 Treemap 作为唯一入口。
+- FR-SPACE-02：支持紧凑卡片、分组条形图和大小排序；归属、类别、占用与物理卷在同一卡片内形成清晰层级，首版不以复杂 Treemap 作为唯一入口。
 - FR-SPACE-03：任一数字可下钻到会话、缓存、日志、运行时、浏览器、数据库、Skill、配置、未归属和目录开销。
-- FR-SPACE-04：使用一个统一范围控件选择全部、Agent 或具体 Home，并支持最小大小阈值、类别、风险和活动状态筛选；卷只作为物理归属与安全复验证据展示，不作为结果页过滤项。
+- FR-SPACE-04：使用一个统一范围控件选择全部、Agent 或具体 Home，并支持最小大小阈值、类别和最后活动时间筛选；卷只作为物理归属与安全复验证据展示，不作为结果页过滤项。清理候选列表只展示通过活动保护与删除保护判定、当前可选择的完整 Cleanup Unit，不展示灰色伪候选。
 - FR-SPACE-05：扫描结果显示逻辑大小与物理分配大小，默认排序使用物理分配大小。
 - FR-SPACE-06：Agent 在 Home 外创建的 worktree、项目环境、容器对象、Simulator 或构建缓存仅在存在可验证关系时显示为 Linked Artifact；没有关系证据时留在未归属，不因“最近由 Agent 进程打开”就取得所有权。
 - FR-SPACE-07：Linked Artifact 的宿主文件物理占用与 Docker/Podman/Simulator 等 Provider 报告值分开显示，禁止相加为虚假总量。
@@ -514,7 +514,7 @@ Agent Definition 使用带 `schemaVersion` 的 JSON。每个 Agent 一份资源�
 
 - FR-CLEAN-01：只有具备真实 `CleanupTarget`、明确边界和验证策略的 Artifact 才可选择。
 - FR-CLEAN-02：按日期和按大小只负责筛选，不降低风险等级。
-- FR-CLEAN-03：所有清理进入复核页，列出目标、证据、预计候选占用、活动状态、删除方式、可恢复性和保留数据。
+- FR-CLEAN-03：所有清理进入复核页，列出目标、Agent/Home 归属、类别、最后活动时间、预计候选占用、删除方式、可恢复性和保留数据；风险与底层证据只参与内部安全判定，不作为结果页字段展示。
 - FR-CLEAN-04：执行前重新验证 volume/device/inode、类型、symlink、路径边界、Home 身份、引用和活动状态。
 - FR-CLEAN-05：路径目标优先移入系统废纸篓；Agent 官方对象使用官方 API/CLI；官方永久删除不得描述为废纸篓。
 - FR-CLEAN-06：Agent 官方删除失败不得降级为直接改数据库或删除 transcript。
@@ -857,8 +857,8 @@ macOS APIs / fixed official CLIs / License Service
 ### 21.4 按日期和大小清理
 
 1. 用户筛选 90 天未活动且大于 1 GB 的对象。
-2. 列表按完整 Cleanup Unit 展示最后活动证据、大小、风险和活动状态。
-3. 其中一个会话当前有 writer，即使日期满足也不可选择。
+2. 列表只展示通过内部安全判定的完整 Cleanup Unit，并展示 Agent/Home 归属、类别、完整会话 ID、最后活动时间和大小；每一项均可勾选，不出现灰色伪候选。
+3. 其中一个会话当前有 writer，即使日期满足也不进入候选列表。
 4. 复核页区分废纸篓和官方永久删除，并说明预计占用不等于立即释放。
 5. 执行前 inode/引用发生变化的目标被跳过。
 6. 完成后单来源重扫，结果逐项显示成功、跳过和失败。

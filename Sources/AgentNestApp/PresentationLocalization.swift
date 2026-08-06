@@ -36,35 +36,6 @@ extension AppModel {
         }
     }
 
-    func artifactRiskTitle(_ risk: ArtifactRisk) -> String {
-        switch risk {
-        case .rebuildable: localized("可重建")
-        case .expensiveOrShared: localized("昂贵或共享")
-        case .userContent: localized("用户内容")
-        case .protected: localized("受保护")
-        }
-    }
-
-    func activityProtectionTitle(_ activity: ActivityProtection) -> String {
-        switch activity {
-        case .inactive: localized("不活跃")
-        case .recentlyOpened: localized("最近打开")
-        case .writerPresent: localized("正在写入")
-        case .unknown: localized("未知")
-        }
-    }
-
-    func activityEvidenceTitle(_ evidence: ActivityEvidenceKind) -> String {
-        switch evidence {
-        case .officialMetadata: localized("Agent 官方元数据")
-        case .objectMetadata: localized("对象元数据")
-        case .contentMaximumModification: localized("内容最后修改")
-        case .rootModification: localized("根目录最后修改")
-        case .accessTimeOnly: localized("仅访问时间")
-        case .unknown: localized("未知")
-        }
-    }
-
     func cleanupMethodTitle(_ method: CleanupMethod) -> String {
         switch method {
         case .trash: localized("移到废纸篓")
@@ -75,7 +46,7 @@ extension AppModel {
     func cleanupUnitTitle(_ unit: CleanupUnit) -> String {
         guard unit.category == ArtifactCategory.sessions.rawValue,
               let nativeID = unit.nativeID else { return unit.name }
-        return localized("会话 %@", String(nativeID.prefix(8)))
+        return localized("会话 %@", nativeID)
     }
 
     func cleanupUnitOwnerTitle(_ unit: CleanupUnit) -> String {

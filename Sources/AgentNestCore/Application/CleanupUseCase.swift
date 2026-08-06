@@ -3,6 +3,10 @@ import Foundation
 public struct CleanupPolicy: Sendable {
     public init() {}
 
+    public func isSelectable(_ unit: CleanupUnit) -> Bool {
+        unit.activity == .inactive && unit.risk != .protected
+    }
+
     public func filter(units: [CleanupUnit], query: CleanupQuery) -> [CleanupUnit] {
         units.filter { unit in
             if let minimum = query.minimumPhysicalBytes, unit.storage.physicalBytes < minimum { return false }
@@ -25,11 +29,13 @@ public struct CleanupPolicy: Sendable {
         }
     }
 
+    public func selectableUnits(units: [CleanupUnit], query: CleanupQuery) -> [CleanupUnit] {
+        filter(units: units, query: query).filter(isSelectable)
+    }
+
     public func plan(generation: UUID, selected units: [CleanupUnit]) -> CleanupPlan {
         let eligible = units.filter {
-            $0.generation == generation &&
-            $0.risk != .protected &&
-            $0.activity == .inactive
+            $0.generation == generation && isSelectable($0)
         }
         return CleanupPlan(generation: generation, units: eligible)
     }

@@ -751,6 +751,8 @@ private struct StorageGroupData: Identifiable, Sendable {
     enum OwnerKind: String, Sendable { case shared, home, unattributed }
     let key: String
     let ownerKind: OwnerKind
+    let ownerProductName: String
+    let ownerHomeIndex: Int?
     let ownerPath: String
     let category: ArtifactCategory
     let volumeDevice: UInt64
@@ -771,15 +773,13 @@ private func computeStorageDerived(
     snapshot: DeviceSnapshot,
     scope: StorageOwnershipScope,
     category: String,
-    risk: String,
     datePreset: StorageCleanupDatePreset,
     customCutoff: Date,
     rangeStart: Date,
     rangeEnd: Date,
     minimumSize: String,
     customMegabytes: Double,
-    units: [CleanupUnit],
-    allowsCleanup: Bool
+    units: [CleanupUnit]
 ) -> StorageDerived {
     let ownership = StorageOwnershipFilter(scope: scope, snapshot: snapshot)
     let artifacts = snapshot.storageLedger.artifacts.filter { artifact in
@@ -789,39 +789,56 @@ private func computeStorageDerived(
     let totalPhysicalBytes = artifacts.reduce(UInt64(0)) { $0 &+ $1.storage.physicalBytes }
 
     let homesByID = Dictionary(uniqueKeysWithValues: snapshot.homes.map { ($0.id, $0) })
-    var groups: [String: (StorageGroupData.OwnerKind, String, ArtifactCategory, UInt64, Int, UInt64)] = [:]
+    let productNamesByID = Dictionary(uniqueKeysWithValues: snapshot.products.map { ($0.id, $0.displayName) })
+    var homeDisplayIndexesByID: [PhysicalResourceIdentity: Int] = [:]
+    for product in snapshot.products {
+        for (index, home) in product.homes.sorted(by: {
+            $0.path.localizedStandardCompare($1.path) == .orderedAscending
+        }).enumerated() {
+            homeDisplayIndexesByID[home.id] = index
+        }
+    }
+    var groups: [String: StorageGroupData] = [:]
     for artifact in artifacts {
         let ownerKey: String
         let ownerKind: StorageGroupData.OwnerKind
+        let ownerProductName: String
+        let ownerHomeIndex: Int?
         let ownerPath: String
         if artifact.attribution == .shared {
             ownerKey = "shared"
             ownerKind = .shared
+            ownerProductName = ""
+            ownerHomeIndex = nil
             ownerPath = ""
         } else if let home = artifact.homeIDs.first.flatMap({ homesByID[$0] }) {
-            ownerKey = "home:\(home.path)"
+            ownerKey = "home:\(home.id.device):\(home.id.inode):\(home.id.kind.rawValue)"
             ownerKind = .home
+            ownerProductName = productNamesByID[home.productID] ?? home.productID
+            ownerHomeIndex = homeDisplayIndexesByID[home.id]
             ownerPath = home.path
         } else {
             ownerKey = "unattributed"
             ownerKind = .unattributed
+            ownerProductName = ""
+            ownerHomeIndex = nil
             ownerPath = ""
         }
         let key = "\(artifact.id.device)|\(ownerKey)|\(artifact.category.rawValue)"
-        let current = groups[key] ?? (ownerKind, ownerPath, artifact.category, artifact.id.device, 0, 0)
-        groups[key] = (current.0, current.1, current.2, current.3, current.4 + 1, current.5 &+ artifact.storage.physicalBytes)
-    }
-    let groupRows = groups.map { key, value in
-        StorageGroupData(
+        let current = groups[key]
+        groups[key] = StorageGroupData(
             key: key,
-            ownerKind: value.0,
-            ownerPath: value.1,
-            category: value.2,
-            volumeDevice: value.3,
-            itemCount: value.4,
-            physicalBytes: value.5
+            ownerKind: ownerKind,
+            ownerProductName: ownerProductName,
+            ownerHomeIndex: ownerHomeIndex,
+            ownerPath: ownerPath,
+            category: artifact.category,
+            volumeDevice: artifact.id.device,
+            itemCount: (current?.itemCount ?? 0) + 1,
+            physicalBytes: (current?.physicalBytes ?? 0) &+ artifact.storage.physicalBytes
         )
-    }.sorted {
+    }
+    let groupRows = groups.values.sorted {
         if $0.physicalBytes != $1.physicalBytes { return $0.physicalBytes > $1.physicalBytes }
         return $0.key < $1.key
     }
@@ -857,23 +874,18 @@ private func computeStorageDerived(
         inactiveBefore = nil
         activityRange = min(start, end)...max(start, end)
     }
-    let risks = risk == "*"
-        ? Set<ArtifactRisk>()
-        : Set([ArtifactRisk(rawValue: risk)].compactMap { $0 })
     let query = CleanupQuery(
         inactiveBefore: inactiveBefore,
         activityRange: activityRange,
         minimumPhysicalBytes: storageMinimumPhysicalBytes(size: minimumSize, customMegabytes: customMegabytes),
-        risks: risks,
+        risks: [],
         categories: category == "*" ? [] : [category]
     )
     let ownershipForUnits = StorageOwnershipFilter(scope: scope, snapshot: snapshot)
-    let visibleCleanupUnits = CleanupPolicy().filter(units: units, query: query).filter { unit in
+    let visibleCleanupUnits = CleanupPolicy().selectableUnits(units: units, query: query).filter { unit in
         ownershipForUnits.includes(unit)
     }
-    let selectableCleanupIDs = Set(visibleCleanupUnits.filter {
-        allowsCleanup && $0.activity == .inactive && $0.risk != .protected
-    }.map(\.id))
+    let selectableCleanupIDs = Set(visibleCleanupUnits.map(\.id))
 
     return StorageDerived(
         totalPhysicalBytes: totalPhysicalBytes,
@@ -900,7 +912,6 @@ private struct StorageView: View {
     @Bindable var model: AppModel
     @State private var selectedScope: StorageOwnershipScope = .all
     @State private var selectedCategory = "*"
-    @State private var selectedRisk = "*"
     @State private var cleanupDatePreset: StorageCleanupDatePreset = .all
     @State private var customCutoff = Calendar.current.date(byAdding: .day, value: -90, to: Date()) ?? Date()
     @State private var rangeStart = Calendar.current.date(byAdding: .day, value: -30, to: Date()) ?? Date()
@@ -935,7 +946,7 @@ private struct StorageView: View {
     private func storageContent(snapshot: DeviceSnapshot, derived: StorageDerived) -> some View {
         let visibleCleanupUnits = derived.visibleCleanupUnits
         let selectableCleanupIDs = derived.selectableCleanupIDs
-        let selectedVisibleUnits = visibleCleanupUnits.filter { selectedCleanupIDs.contains($0.id) && selectableCleanupIDs.contains($0.id) }
+        let selectedVisibleUnits = visibleCleanupUnits.filter { selectedCleanupIDs.contains($0.id) }
         return List {
             Section {
                 scopePicker
@@ -970,23 +981,50 @@ private struct StorageView: View {
                     Text("当前筛选没有资源")
                         .foregroundStyle(.secondary)
                 } else {
-                    ForEach(derived.groups) { group in
-                        let owner = groupOwnerDisplay(group)
-                        HStack {
-                            VStack(alignment: .leading, spacing: DS.Space.x100) {
-                                Text(owner.isPath ? model.displayPath(owner.title) : owner.title)
-                                    .font(DS.Typeface.body)
-                                Text(model.localized("%@ · %@ · %d 项", volumeTitle(device: group.volumeDevice), model.artifactCategoryTitle(group.category), group.itemCount))
-                                    .font(DS.Typeface.caption)
+                    LazyVGrid(
+                        columns: [GridItem(.adaptive(minimum: 260), spacing: DS.Space.x300)],
+                        spacing: DS.Space.x300
+                    ) {
+                        ForEach(derived.groups) { group in
+                            let owner = groupOwnerDisplay(group)
+                            DSCard(padding: DS.Space.x300) {
+                                VStack(alignment: .leading, spacing: DS.Space.x200) {
+                                    HStack(alignment: .firstTextBaseline) {
+                                        DSBadge(
+                                            text: model.artifactCategoryTitle(group.category),
+                                            color: DS.Semantic.accentPrimary
+                                        )
+                                        Spacer()
+                                        Text(bytes(group.physicalBytes))
+                                            .font(DS.Typeface.label)
+                                            .monospacedDigit()
+                                    }
+                                    Text(owner.title)
+                                        .font(DS.Typeface.body)
+                                    if let detail = owner.detail {
+                                        Text(detail)
+                                            .font(DS.Typeface.caption)
+                                            .foregroundStyle(.secondary)
+                                            .lineLimit(2)
+                                            .privacySensitive()
+                                    }
+                                    HStack(spacing: DS.Space.x100) {
+                                        Image(systemName: "internaldrive")
+                                            .accessibilityHidden(true)
+                                        Text(volumeTitle(device: group.volumeDevice))
+                                            .lineLimit(1)
+                                        Spacer()
+                                        Text(model.localized("%d 项", group.itemCount))
+                                    }
+                                    .font(DS.Typeface.micro)
                                     .foregroundStyle(.secondary)
+                                }
                             }
-                            Spacer()
-                            Text(bytes(group.physicalBytes))
-                                .font(DS.Typeface.label)
-                                .monospacedDigit()
                         }
-                        .padding(.vertical, DS.Space.x100)
                     }
+                    .padding(.vertical, DS.Space.x100)
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
                 }
             } header: {
                 Text("归属与类别").font(DS.Typeface.section)
@@ -1036,13 +1074,6 @@ private struct StorageView: View {
                     if minimumCleanupSize == "custom" {
                         customMinimumField
                     }
-                    Picker("风险", selection: $selectedRisk) {
-                        Text("全部风险").tag("*")
-                        ForEach([ArtifactRisk.rebuildable, .expensiveOrShared, .userContent, .protected], id: \.rawValue) { risk in
-                            Text(model.artifactRiskTitle(risk)).tag(risk.rawValue)
-                        }
-                    }
-
                     HStack {
                         VStack(alignment: .leading, spacing: DS.Space.x050) {
                             Text(model.localized(
@@ -1062,12 +1093,18 @@ private struct StorageView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         Spacer()
-                        Button("选择可重建项") {
-                            selectedCleanupIDs = Set(visibleCleanupUnits
-                                .filter { selectableCleanupIDs.contains($0.id) && $0.risk == .rebuildable }
-                                .map(\.id))
+                        Button(model.localized(
+                            selectedVisibleUnits.count == visibleCleanupUnits.count && !visibleCleanupUnits.isEmpty
+                                ? "取消全选"
+                                : "全选"
+                        )) {
+                            if selectedVisibleUnits.count == visibleCleanupUnits.count {
+                                selectedCleanupIDs.subtract(selectableCleanupIDs)
+                            } else {
+                                selectedCleanupIDs.formUnion(selectableCleanupIDs)
+                            }
                         }
-                        .disabled(model.isCleaning)
+                        .disabled(visibleCleanupUnits.isEmpty || model.isCleaning)
                         Button("复核所选") {
                             pendingReviewUnits = selectedVisibleUnits
                             showingCleanupReview = !pendingReviewUnits.isEmpty
@@ -1075,8 +1112,13 @@ private struct StorageView: View {
                         .disabled(selectedVisibleUnits.isEmpty || model.isCleaning)
                     }
 
-                    ForEach(visibleCleanupUnits) { unit in
-                        cleanupUnitToggle(unit)
+                    if visibleCleanupUnits.isEmpty {
+                        Text("当前筛选没有可清理项目")
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ForEach(visibleCleanupUnits) { unit in
+                            cleanupUnitToggle(unit)
+                        }
                     }
                 }
             } header: {
@@ -1129,7 +1171,6 @@ private struct StorageView: View {
         HStack(alignment: .top) {
             VStack(alignment: .leading, spacing: DS.Space.x100) {
                 Text(result.name)
-                    .lineLimit(1)
                 if let owner = model.cleanupResultOwnerTitle(result) {
                     Text(owner)
                         .font(DS.Typeface.micro)
@@ -1155,7 +1196,7 @@ private struct StorageView: View {
             cleanupUnitRow(unit)
         }
         .toggleStyle(.checkbox)
-        .disabled(!(derived?.selectableCleanupIDs ?? []).contains(unit.id) || model.isCleaning)
+        .disabled(model.isCleaning)
         .contentShape(Rectangle())
         .listRowBackground(selected ? DS.Semantic.accentPrimary.opacity(0.08) : Color.clear)
         .accessibilityLabel(model.localized(
@@ -1177,19 +1218,13 @@ private struct StorageView: View {
                     .foregroundStyle(DS.Semantic.accentPrimary)
                     .lineLimit(1)
                     .privacySensitive()
-                Text(model.localized(
-                    "%@ · %@ · %@",
-                    model.artifactCategoryTitle(ArtifactCategory(definitionValue: unit.category)),
-                    model.artifactRiskTitle(unit.risk),
-                    model.activityProtectionTitle(unit.activity)
-                ))
+                Text(model.artifactCategoryTitle(ArtifactCategory(definitionValue: unit.category)))
                     .font(DS.Typeface.caption)
                     .foregroundStyle(.secondary)
                 if let date = unit.lastActivity.date {
                     Text(model.localized(
-                        "最后活动：%@ · 证据：%@",
-                        date.formatted(.dateTime.year().month().day().hour().minute().locale(model.appLocale)),
-                        model.activityEvidenceTitle(unit.lastActivity.kind)
+                        "最后活动：%@",
+                        date.formatted(.dateTime.year().month().day().hour().minute().locale(model.appLocale))
                     ))
                         .font(DS.Typeface.micro)
                         .foregroundStyle(.secondary)
@@ -1227,24 +1262,50 @@ private struct StorageView: View {
         }
     }
 
-    private func groupOwnerDisplay(_ group: StorageGroupData) -> (title: String, isPath: Bool) {
+    private func groupOwnerDisplay(_ group: StorageGroupData) -> (title: String, detail: String?) {
         switch group.ownerKind {
-        case .shared: return (model.localized("共享资源"), false)
-        case .unattributed: return (model.localized("未归属资源"), false)
-        case .home: return (group.ownerPath, true)
+        case .shared:
+            return (model.localized("共享资源"), nil)
+        case .unattributed:
+            return (model.localized("未归属资源"), nil)
+        case .home:
+            let detail: String
+            if model.hideSensitivePaths, let index = group.ownerHomeIndex {
+                detail = model.localized("Home %d（路径已隐藏）", index + 1)
+            } else {
+                detail = model.displayPath(group.ownerPath)
+            }
+            return (group.ownerProductName, detail)
         }
     }
 
     /// 派生计算输入签名：任一输入变化都会触发后台重算（快照 generation、筛选参数、清理库存）。
     private var deriveKey: String {
         let unitsSignature = model.cleanupUnits
-            .map { "\($0.id):\($0.storage.physicalBytes):\($0.activity.rawValue)" }
+            .map {
+                [
+                    $0.id,
+                    String($0.storage.physicalBytes),
+                    $0.activity.rawValue,
+                    $0.risk.rawValue,
+                    $0.category,
+                    $0.productID,
+                    $0.name,
+                    $0.path,
+                    $0.homePath,
+                    String($0.homeIdentity.device),
+                    String($0.homeIdentity.inode),
+                    $0.lastActivity.kind.rawValue,
+                    String($0.lastActivity.date?.timeIntervalSince1970 ?? 0),
+                    $0.method.rawValue,
+                    $0.nativeID ?? "",
+                ].joined(separator: ":")
+            }
             .joined(separator: ",")
         return [
             "\(model.snapshot?.generation.uuidString ?? "nil")",
             String(describing: selectedScope),
             selectedCategory,
-            selectedRisk,
             cleanupDatePreset.rawValue,
             minimumCleanupSize,
             "\(customMinimumMegabytes)",
@@ -1261,11 +1322,9 @@ private struct StorageView: View {
             derived = nil
             return
         }
-        let allowsCleanup = model.allows(.cleanup)
         let cleanupUnits = model.cleanupUnits
         let scope = selectedScope
         let category = selectedCategory
-        let risk = selectedRisk
         let datePreset = cleanupDatePreset
         let cutoff = customCutoff
         let start = rangeStart
@@ -1277,15 +1336,13 @@ private struct StorageView: View {
                 snapshot: snapshot,
                 scope: scope,
                 category: category,
-                risk: risk,
                 datePreset: datePreset,
                 customCutoff: cutoff,
                 rangeStart: start,
                 rangeEnd: end,
                 minimumSize: minimumSize,
                 customMegabytes: customMegabytes,
-                units: cleanupUnits,
-                allowsCleanup: allowsCleanup
+                units: cleanupUnits
             )
         }.value
         derived = result
@@ -1335,7 +1392,7 @@ private struct CleanupReviewSheet: View {
                 VStack(alignment: .leading, spacing: 6) {
                     HStack {
                         Text(model.cleanupUnitTitle(unit))
-                            .lineLimit(1)
+                            .textSelection(.enabled)
                         Spacer()
                         Text(model.formatBytes(unit.storage.physicalBytes))
                             .monospacedDigit()
@@ -1350,10 +1407,10 @@ private struct CleanupReviewSheet: View {
                         .lineLimit(1)
                         .privacySensitive()
                     Text(model.localized(
-                        "证据：%@ · 风险：%@ · 活动：%@ · 方式：%@",
-                        model.activityEvidenceTitle(unit.lastActivity.kind),
-                        model.artifactRiskTitle(unit.risk),
-                        model.activityProtectionTitle(unit.activity),
+                        "类别：%@ · 最后活动：%@ · 方式：%@",
+                        model.artifactCategoryTitle(ArtifactCategory(definitionValue: unit.category)),
+                        unit.lastActivity.date?.formatted(.dateTime.year().month().day().hour().minute().locale(model.appLocale))
+                            ?? model.localized("时间不可用"),
                         model.cleanupMethodTitle(unit.method)
                     ))
                         .font(.caption)
@@ -1370,9 +1427,14 @@ private struct CleanupReviewSheet: View {
                 Button("取消") { dismiss() }
                     .keyboardShortcut(.cancelAction)
                 Spacer()
+                if !model.allows(.cleanup) {
+                    Text("当前 License 不包含清理。")
+                        .font(DS.Typeface.caption)
+                        .foregroundStyle(DS.Semantic.statusCaution)
+                }
                 Button("执行清理", role: .destructive, action: onConfirm)
                     .keyboardShortcut(.defaultAction)
-                    .disabled(units.isEmpty || model.isCleaning)
+                    .disabled(units.isEmpty || model.isCleaning || !model.allows(.cleanup))
             }
         }
         .padding(20)

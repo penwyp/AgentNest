@@ -598,13 +598,21 @@ struct AgentNestCoreTestRunner {
         let unreliable = unit(name: "atime", ageDays: 120, activity: .inactive, evidence: .accessTimeOnly)
         let recent = unit(name: "recent", ageDays: 10, activity: .inactive)
         let policy = CleanupPolicy()
+        try expect(policy.isSelectable(old), "inactive non-protected units are selectable")
+        try expect(!policy.isSelectable(writer), "active units are not selectable")
+        try expect(!policy.isSelectable(unit(name: "protected", ageDays: 120, activity: .inactive, risk: .protected)), "protected units are not selectable")
         let filtered = policy.filter(
             units: [old, writer, unreliable, recent],
             query: CleanupQuery(inactiveBefore: now.addingTimeInterval(-90 * 86_400), minimumPhysicalBytes: 1_000_000_000)
         )
         try expect(Set(filtered.map(\.name)) == Set(["old", "writer"]), "date filtering uses reliable cleanup-unit evidence")
+        let selectable = policy.selectableUnits(
+            units: [old, writer, unreliable, recent],
+            query: CleanupQuery(inactiveBefore: now.addingTimeInterval(-90 * 86_400), minimumPhysicalBytes: 1_000_000_000)
+        )
+        try expect(selectable.map(\.name) == ["old"], "candidate projection contains only selectable cleanup units")
         let plan = policy.plan(generation: generation, selected: filtered)
-        try expect(plan.units.map(\.name) == ["old"], "writer remains visible but cannot enter cleanup plan")
+        try expect(plan.units.map(\.name) == ["old"], "writer cannot enter cleanup plan")
         try expect(plan.estimatedPhysicalBytes == old.storage.physicalBytes, "cleanup preview reports selected estimate")
         let staleResults = await CleanupExecutor().execute(plan, currentGeneration: UUID())
         try expect(staleResults.allSatisfy { $0.status == .skipped && $0.code == "cleanup.generationChanged" }, "stale generation cannot execute")
