@@ -64,6 +64,7 @@ final class AppModel {
     private(set) var licenseState: LicenseState = .missing
     private(set) var licenseConfigurationAvailable = false
     private(set) var activitySnapshot: ActivitySnapshot?
+    private(set) var activityWorkspace: ActivityWorkspaceSnapshot?
     private(set) var historyPoints: [HistoryPoint] = []
     private(set) var skillIndex: SkillIndex?
     private(set) var cleanupUnits: [CleanupUnit] = []
@@ -96,6 +97,8 @@ final class AppModel {
     private let catalog: AgentDefinitionCatalog?
     private let coordinator: ScanCoordinator?
     private let activitySampler = SystemActivitySampler()
+    private var activityAccumulator = ActivityWorkspaceAccumulator()
+    private var cleanupActivitySignature = CleanupActivitySignature(activity: nil)
     private let snapshotStore = SnapshotStore()
     private let updateController = UpdateController()
     private let historyStore: HistoryStore
@@ -470,6 +473,7 @@ final class AppModel {
 
     private func refreshCleanupInventory() {
         cleanupInventoryTask?.cancel()
+        cleanupActivitySignature = CleanupActivitySignature(activity: activitySnapshot)
         guard let snapshot, let catalog else {
             cleanupUnits = []
             cleanupInventoryTask = nil
@@ -830,7 +834,7 @@ final class AppModel {
         } else {
             activityTask?.cancel()
             activityTask = nil
-            activitySnapshot = nil
+            resetActivityState()
             if isScanning { stopScan() }
         }
     }
@@ -842,7 +846,10 @@ final class AppModel {
                 guard let self else { return }
                 if let sample = try? await activitySampler.sample(inventory: snapshot) {
                     activitySnapshot = sample
-                    refreshCleanupInventory()
+                    activityWorkspace = activityAccumulator.record(sample)
+                    if CleanupActivitySignature(activity: sample) != cleanupActivitySignature {
+                        refreshCleanupInventory()
+                    }
                     if historyEnabled, allows(.history),
                        lastHistoryPersistedAt.map({ sample.capturedAt.timeIntervalSince($0) >= 60 }) ?? true {
                         try? await historyStore.setEnabled(true)
@@ -851,10 +858,19 @@ final class AppModel {
                     }
                 }
                 let configuredInterval = UserDefaults.standard.double(forKey: "sampleInterval")
-                let interval = configuredInterval == 0 ? 3 : min(max(configuredInterval, 1), 60)
+                let interval = configuredInterval == 0
+                    ? ActivitySamplingPolicy.defaultInterval
+                    : min(max(configuredInterval, ActivitySamplingPolicy.minimumInterval), ActivitySamplingPolicy.maximumInterval)
                 try? await Task.sleep(for: .seconds(interval))
             }
         }
+    }
+
+    private func resetActivityState() {
+        activitySnapshot = nil
+        activityWorkspace = nil
+        activityAccumulator.reset()
+        cleanupActivitySignature = CleanupActivitySignature(activity: nil)
     }
 
     func setHistoryEnabled(_ value: Bool) {
@@ -934,7 +950,7 @@ final class AppModel {
         skillIndex = nil
         cleanupUnits = []
         cleanupResults = []
-        activitySnapshot = nil
+        resetActivityState()
         historyPoints = []
         historyEnabled = false
         UserDefaults.standard.removeObject(forKey: "historyEnabled")
@@ -991,7 +1007,7 @@ final class AppModel {
             skillIndex = nil
             cleanupUnits = []
             cleanupResults = []
-            activitySnapshot = nil
+            resetActivityState()
             historyPoints = []
             historyEnabled = false
             historyRetentionDays = 365

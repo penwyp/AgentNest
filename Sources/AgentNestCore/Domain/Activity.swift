@@ -1,5 +1,11 @@
 import Foundation
 
+public enum ActivitySamplingPolicy {
+    public static let defaultInterval: TimeInterval = 8
+    public static let minimumInterval: TimeInterval = 1
+    public static let maximumInterval: TimeInterval = 60
+}
+
 public enum MetricAvailability: String, Codable, Sendable {
     case available
     case partial
@@ -237,5 +243,43 @@ public struct ActivitySnapshot: Codable, Equatable, Sendable {
         self.physicalDevices = physicalDevices
         self.volumes = volumes
         self.droppedEvidenceCount = droppedEvidenceCount
+    }
+}
+
+public struct ActivityTrendPoint: Identifiable, Codable, Equatable, Sendable {
+    public var id: Date { capturedAt }
+
+    public let capturedAt: Date
+    public let cpuFraction: Double?
+    public let diskReadBytesPerSecond: Double?
+    public let diskWriteBytesPerSecond: Double?
+    public let networkReceiveBytesPerSecond: Double?
+    public let networkSendBytesPerSecond: Double?
+    public let coveredSeconds: TimeInterval
+
+    public init(snapshot: ActivitySnapshot) {
+        capturedAt = snapshot.capturedAt
+        cpuFraction = snapshot.cpuFraction.value
+        diskReadBytesPerSecond = snapshot.diskReadBytesPerSecond.value
+        diskWriteBytesPerSecond = snapshot.diskWriteBytesPerSecond.value
+        networkReceiveBytesPerSecond = snapshot.networkReceiveBytesPerSecond.value
+        networkSendBytesPerSecond = snapshot.networkSendBytesPerSecond.value
+        coveredSeconds = [
+            snapshot.cpuFraction,
+            snapshot.diskReadBytesPerSecond,
+            snapshot.diskWriteBytesPerSecond,
+            snapshot.networkReceiveBytesPerSecond,
+            snapshot.networkSendBytesPerSecond,
+        ].map { $0.observedSeconds * $0.coverage }.max() ?? 0
+    }
+}
+
+public struct ActivityWorkspaceSnapshot: Equatable, Sendable {
+    public let current: ActivitySnapshot
+    public let trend: [ActivityTrendPoint]
+
+    public init(current: ActivitySnapshot, trend: [ActivityTrendPoint]) {
+        self.current = current
+        self.trend = trend
     }
 }

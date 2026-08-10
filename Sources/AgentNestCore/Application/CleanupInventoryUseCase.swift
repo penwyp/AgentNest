@@ -29,6 +29,35 @@ public struct CleanupAdapterRegistry: Sendable {
     }
 }
 
+public struct CleanupActivitySignature: Equatable, Sendable {
+    private struct ProcessEvidence: Equatable, Sendable {
+        let id: ProcessStartIdentity
+        let homeID: PhysicalResourceIdentity?
+        let filePaths: [String]
+    }
+
+    private let evidenceIsComplete: Bool
+    private let processes: [ProcessEvidence]
+
+    public init(activity: ActivitySnapshot?) {
+        guard let activity, activity.droppedEvidenceCount == 0 else {
+            evidenceIsComplete = false
+            processes = []
+            return
+        }
+        evidenceIsComplete = true
+        processes = activity.processes.compactMap { process in
+            let filePaths = Set((process.currentlyOpenFiles + process.recentChanges).map(\.path)).sorted()
+            guard process.homeID != nil || !filePaths.isEmpty else { return nil }
+            return ProcessEvidence(id: process.id, homeID: process.homeID, filePaths: filePaths)
+        }.sorted { lhs, rhs in
+            if lhs.id.pid != rhs.id.pid { return lhs.id.pid < rhs.id.pid }
+            if lhs.id.startSeconds != rhs.id.startSeconds { return lhs.id.startSeconds < rhs.id.startSeconds }
+            return lhs.id.startMicroseconds < rhs.id.startMicroseconds
+        }
+    }
+}
+
 public struct CleanupInventoryUseCase: Sendable {
     private let catalog: AgentDefinitionCatalog
     private let adapters: CleanupAdapterRegistry

@@ -1442,188 +1442,9 @@ private struct CleanupReviewSheet: View {
     }
 }
 
-private struct ActivityView: View {
-    @Bindable var model: AppModel
-
-    var body: some View {
-        Group {
-            if let snapshot = model.activitySnapshot {
-                List {
-                    Section {
-                        metricRow("CPU", metric: snapshot.cpuFraction, format: .percent, meter: true)
-                        metricRow("磁盘读取", metric: snapshot.diskReadBytesPerSecond, format: .bytesPerSecond)
-                        metricRow("磁盘写入", metric: snapshot.diskWriteBytesPerSecond, format: .bytesPerSecond)
-                        metricRow("网络下载", metric: snapshot.networkReceiveBytesPerSecond, format: .bytesPerSecond)
-                        metricRow("网络上传", metric: snapshot.networkSendBytesPerSecond, format: .bytesPerSecond)
-                    } header: {
-                        Text("整机基础指标").font(DS.Typeface.section)
-                    }
-                    Section {
-                        Text("首个样本只建立基线；计数器回退、睡眠或过长间隔会重新建立基线，不显示为尖峰。")
-                            .font(DS.Typeface.caption)
-                            .foregroundStyle(.secondary)
-                        Text("进程请求写入与物理设备写入不是同一指标；不可用数据不会显示为 0。")
-                            .font(DS.Typeface.caption)
-                            .foregroundStyle(.secondary)
-                        if snapshot.droppedEvidenceCount > 0 {
-                            Label(model.localized("本轮有 %d 个进程证据因权限、退出或预算未采集。", snapshot.droppedEvidenceCount), systemImage: "exclamationmark.triangle")
-                                .font(DS.Typeface.caption)
-                                .foregroundStyle(DS.Semantic.statusCaution)
-                        }
-                    } header: {
-                        Text("口径").font(DS.Typeface.section)
-                    }
-                    Section {
-                        ForEach(snapshot.processes.prefix(20)) { process in
-                            VStack(alignment: .leading, spacing: DS.Space.x100) {
-                                HStack {
-                                    Text(process.name).font(DS.Typeface.body)
-                                    if process.attribution == .agent {
-                                        DSBadge(text: "Agent", color: DS.Semantic.statusPositive, filled: true)
-                                    } else {
-                                        DSBadge(text: "macOS 与其它进程", color: .secondary)
-                                    }
-                                    Spacer()
-                                    Text(metricText(process.cpuFraction, format: .percent)).font(DS.Typeface.label).monospacedDigit()
-                                }
-                                if let fraction = process.cpuFraction.value {
-                                    DSSegmentedMeter(progress: fraction, color: process.attribution == .agent ? DS.Chart.series01 : DS.Chart.series04)
-                                }
-                                if let path = process.executablePath {
-                                    Text(model.displayPath(path)).font(DS.Typeface.micro).foregroundStyle(.secondary).privacySensitive()
-                                }
-                                if let workingDirectory = process.workingDirectoryPath {
-                                    Text(model.localized("工作目录：%@", model.displayPath(workingDirectory))).font(DS.Typeface.micro).foregroundStyle(.secondary).privacySensitive()
-                                }
-                                Text(model.localized(
-                                    "请求读取 %@ · 请求写入 %@",
-                                    metricText(process.requestedReadBytesPerSecond, format: .bytesPerSecond),
-                                    metricText(process.requestedWriteBytesPerSecond, format: .bytesPerSecond)
-                                ))
-                                    .font(DS.Typeface.caption)
-                                    .foregroundStyle(.secondary)
-                                if process.attribution == .agent {
-                                    DisclosureGroup("文件证据") {
-                                        Text("当前打开文件")
-                                            .font(DS.Typeface.label)
-                                        if process.currentlyOpenFiles.isEmpty {
-                                            Text("无权限、进程已退出或当前没有可见 vnode 文件。")
-                                                .font(DS.Typeface.micro).foregroundStyle(.secondary)
-                                        } else {
-                                            ForEach(process.currentlyOpenFiles.prefix(10), id: \.path) { evidence in
-                                                Text(model.displayPath(evidence.path))
-                                                    .font(DS.Typeface.micro).lineLimit(1).truncationMode(.middle).privacySensitive()
-                                            }
-                                        }
-                                        Text("最近变化")
-                                            .font(DS.Typeface.label)
-                                        if process.recentChanges.isEmpty {
-                                            Text("未启动 Trace Helper；打开文件不会被冒充为变化事件。")
-                                                .font(DS.Typeface.micro).foregroundStyle(.secondary)
-                                        }
-                                    }
-                                    .font(DS.Typeface.caption)
-                                }
-                            }
-                            .padding(.vertical, DS.Space.x100)
-                        }
-                    } header: {
-                        Text("可见进程（按 CPU）").font(DS.Typeface.section)
-                    }
-                    Section {
-                        if snapshot.physicalDevices.isEmpty {
-                            Text("物理设备指标不可用").foregroundStyle(.secondary)
-                        } else {
-                            ForEach(snapshot.physicalDevices) { device in
-                                HStack {
-                                    Text(device.name).font(DS.Typeface.body)
-                                    Spacer()
-                                    Text(model.localized("读 %@", metricText(device.readBytesPerSecond, format: .bytesPerSecond)))
-                                        .font(DS.Typeface.caption).monospacedDigit()
-                                    Text(model.localized("写 %@", metricText(device.writeBytesPerSecond, format: .bytesPerSecond)))
-                                        .font(DS.Typeface.caption).monospacedDigit()
-                                }
-                            }
-                        }
-                    } header: {
-                        Text("物理设备吞吐").font(DS.Typeface.section)
-                    }
-                    Section {
-                        ForEach(snapshot.volumes) { volume in
-                            VStack(alignment: .leading, spacing: DS.Space.x100) {
-                                HStack {
-                                    Text(volume.name).font(DS.Typeface.body)
-                                    Spacer()
-                                    if let available = volume.availableBytes, let total = volume.totalBytes, total > 0 {
-                                        DSDonut(fraction: Double(available) / Double(total), color: DS.Chart.series02, size: 40)
-                                    } else {
-                                        Text(volume.health == .unavailable ? model.localized("健康字段不可用") : model.deviceHealthTitle(volume.health))
-                                            .font(DS.Typeface.caption)
-                                    }
-                                }
-                                Text(model.displayPath(volume.mountPath)).font(DS.Typeface.micro).foregroundStyle(.secondary).privacySensitive()
-                                Text(volumeDescription(volume)).font(DS.Typeface.caption).foregroundStyle(.secondary)
-                            }
-                        }
-                    } header: {
-                        Text("挂载卷").font(DS.Typeface.section)
-                    }
-                }
-                .dsInstrumentList()
-            } else {
-                ContentUnavailableView("正在建立活动基线", systemImage: "waveform.path.ecg", description: Text("第二个可比样本后显示速率。"))
-            }
-        }
-        .navigationTitle(model.localized("活动"))
-    }
-
-    private enum MetricFormat { case percent, bytesPerSecond }
-
-    private func metricRow(_ title: String, metric: MetricValue, format: MetricFormat, meter: Bool = false) -> some View {
-        HStack {
-            VStack(alignment: .leading) {
-                Text(model.localized(title)).font(DS.Typeface.body)
-                Text(model.localized("覆盖率 %@ · 观测 %@ 秒", model.formatPercent(metric.coverage), metric.observedSeconds.formatted(.number.precision(.fractionLength(1)).locale(model.appLocale))))
-                    .font(DS.Typeface.caption)
-                    .foregroundStyle(.secondary)
-                    .monospacedDigit()
-            }
-            if meter, let value = metric.value {
-                DSSegmentedMeter(progress: value, color: DS.Chart.series01)
-            }
-            Spacer()
-            Text(metricText(metric, format: format))
-                .font(DS.Typeface.title)
-                .monospacedDigit()
-                .foregroundStyle(metric.value == nil ? .secondary : DS.Semantic.accentPrimary)
-        }
-    }
-
-    private func metricText(_ metric: MetricValue, format: MetricFormat) -> String {
-        guard let value = metric.value else {
-            return model.localized(metric.availability == .partial ? "部分可用" : "不可用")
-        }
-        switch format {
-        case .percent: return model.formatPercent(value)
-        case .bytesPerSecond:
-            return model.localized("%@/s", model.formatBytes(UInt64(max(0, value))))
-        }
-    }
-
-    private func volumeDescription(_ volume: MountedVolume) -> String {
-        let available = volume.availableBytes.map {
-            model.localized("%@ 可用", model.formatBytes($0))
-        } ?? model.localized("容量不可用")
-        let locality = volume.isLocal.map { model.localized($0 ? "本地" : "非本地") } ?? model.localized("本地属性未知")
-        let writable = volume.isWritable.map { model.localized($0 ? "可写" : "只读") } ?? model.localized("写入属性未知")
-        let removable = volume.isRemovable.map { model.localized($0 ? "可移除" : "不可移除") } ?? model.localized("移除属性未知")
-        return model.localized("%@ · %@ · %@ · %@", available, locality, writable, removable)
-    }
-}
-
 private struct SettingsView: View {
     @Bindable var model: AppModel
-    @AppStorage("sampleInterval") private var sampleInterval = 3.0
+    @AppStorage("sampleInterval") private var sampleInterval = ActivitySamplingPolicy.defaultInterval
     @State private var confirmUninstall = false
 
     var body: some View {
@@ -1688,7 +1509,11 @@ private struct SettingsView: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section("活动") {
-                Stepper(model.localized("采样间隔：%d 秒", Int(sampleInterval)), value: $sampleInterval, in: 1...60)
+                Stepper(
+                    model.localized("采样间隔：%d 秒", Int(sampleInterval)),
+                    value: $sampleInterval,
+                    in: ActivitySamplingPolicy.minimumInterval...ActivitySamplingPolicy.maximumInterval
+                )
             }
             Section("权限") {
                 LabeledContent("Full Disk Access", value: model.localized("请在系统设置查看真实状态"))

@@ -297,19 +297,19 @@ public struct DarwinSystemActivityEvidenceProvider: SystemActivityEvidenceProvid
                   )?.takeRetainedValue() as? [String: Any],
                   let read = statistics[kIOBlockStorageDriverStatisticsBytesReadKey] as? NSNumber,
                   let written = statistics[kIOBlockStorageDriverStatisticsBytesWrittenKey] as? NSNumber else { continue }
-            let bsdName = IORegistryEntrySearchCFProperty(
+            guard let bsdName = IORegistryEntrySearchCFProperty(
                 service,
                 kIOServicePlane,
                 "BSD Name" as CFString,
                 kCFAllocatorDefault,
                 IOOptionBits(kIORegistryIterateRecursively)
-            ) as? String
+            ) as? String, !bsdName.isEmpty else { continue }
             let name = IORegistryEntryCreateCFProperty(
                 service,
                 kIOPropertyProductNameKey as CFString,
                 kCFAllocatorDefault,
                 0
-            )?.takeRetainedValue() as? String ?? bsdName ?? "device-\(registryID)"
+            )?.takeRetainedValue() as? String ?? bsdName
             result.append(CumulativeDeviceObservation(
                 id: registryID,
                 name: name,
@@ -326,7 +326,7 @@ public struct DarwinSystemActivityEvidenceProvider: SystemActivityEvidenceProvid
             .volumeNameKey, .volumeUUIDStringKey, .volumeTotalCapacityKey, .volumeAvailableCapacityKey,
             .volumeIsLocalKey, .volumeIsReadOnlyKey, .volumeIsRemovableKey
         ]
-        return (FileManager.default.mountedVolumeURLs(includingResourceValuesForKeys: Array(keys), options: []) ?? []).compactMap { url in
+        return (FileManager.default.mountedVolumeURLs(includingResourceValuesForKeys: Array(keys), options: [.skipHiddenVolumes]) ?? []).compactMap { url in
             guard let values = try? url.resourceValues(forKeys: keys) else { return nil }
             var info = Darwin.stat()
             guard stat(url.path, &info) == 0 else { return nil }

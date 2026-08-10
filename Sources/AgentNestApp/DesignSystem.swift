@@ -36,10 +36,31 @@ enum DS {
     /// 页面级几何只在这里定义，消费 View 不直接散落尺寸常量。
     enum Layout {
         static let pageMaxWidth: CGFloat = 920
+        static let activityPageMaxWidth: CGFloat = 1_320
         static let pageHorizontalInset: CGFloat = 32
         static let pageVerticalInset: CGFloat = 24
         static let heroIconFrame: CGFloat = 40
         static let homeActionMinWidth: CGFloat = 168
+        static let activitySectionPickerWidth: CGFloat = 280
+        static let activityRangePickerWidth: CGFloat = 260
+        static let activityTrendPickerWidth: CGFloat = 240
+        static let activitySearchWidth: CGFloat = 300
+        static let activitySearchHeight: CGFloat = 30
+        static let activityMetricDividerHeight: CGFloat = 38
+        static let activityMetricIconFrame: CGFloat = 30
+        static let activityDirectionMetricWidth: CGFloat = 90
+        static let activityLegendWidth: CGFloat = 18
+        static let activityChartHeight: CGFloat = 220
+        static let activityChartAxisHeight: CGFloat = 22
+        static let activityCPUColumnWidth: CGFloat = 84
+        static let activityRateColumnWidth: CGFloat = 116
+        static let activityAttributionColumnWidth: CGFloat = 92
+        static let activityTableHeaderHeight: CGFloat = 38
+        static let activityProcessIconFrame: CGFloat = 28
+        static let activityProcessRowHeight: CGFloat = 58
+        static let activityEmptyTableHeight: CGFloat = 220
+        static let activityCapacityWidth: CGFloat = 180
+        static let activitySkeletonLineHeight: CGFloat = 12
     }
 
     enum IconSize {
@@ -48,6 +69,7 @@ enum DS {
         static let page: CGFloat = 20
         static let hero: CGFloat = 40
         static let card: CGFloat = 20
+        static let sortIndicator: CGFloat = 8
     }
 
     // MARK: 圆角 radius.*
@@ -129,6 +151,10 @@ enum DS {
         static let disabledIcon: Double = 0.42
         static let unavailable: Double = 0.30
         static let inactiveAccent: Double = 0.72
+        static let fillFaint: Double = 0.025
+        static let fillQuiet: Double = 0.05
+        static let fillSkeleton: Double = 0.06
+        static let borderQuiet: Double = 0.08
     }
 
     // MARK: 字体 type.*
@@ -178,6 +204,7 @@ enum DS {
         static let axis = Color.secondary.opacity(0.26)
         static let lineWidth: CGFloat = 1.7
         static let areaOpacity: Double = 0.12
+        static let secondaryDash: [CGFloat] = [6, 4]
     }
 }
 

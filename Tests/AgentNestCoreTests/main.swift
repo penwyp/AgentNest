@@ -15,8 +15,10 @@ struct AgentNestCoreTestRunner {
             try await testCleanupPolicy()
             try testStorageOwnershipScope()
             try await testCleanupInventory()
+            try testCleanupActivitySignature()
             try await testCodexCleanupFamilies()
             try await testActivityRates()
+            try testActivityWorkspace()
             try testDiskUtilityParsing()
             try await testHistoryStore()
             try testHistoryPDF()
@@ -491,6 +493,92 @@ struct AgentNestCoreTestRunner {
         try expect(info.wholeDiskNames == ["disk0", "disk12"], "APFS stores map to whole-disk names without guessing paths")
         let unsupportedData = try PropertyListSerialization.data(fromPropertyList: ["DeviceIdentifier": "disk9s1"], format: .xml, options: 0)
         try expect(DiskUtilityProbe.parseInfo(data: unsupportedData)?.health == .unsupported, "missing SMART field remains unsupported")
+    }
+
+    private static func testActivityWorkspace() throws {
+        let start = Date(timeIntervalSince1970: 1_000)
+        var accumulator = ActivityWorkspaceAccumulator(retention: 3_600)
+        let baseline = accumulator.record(activityFixture(at: start, cpu: nil))
+        try expect(
+            baseline.trend.count == 1 &&
+                baseline.trend[0].cpuFraction == nil &&
+                baseline.trend[0].coveredSeconds == 0,
+            "activity workspace preserves baseline gaps"
+        )
+
+        let middle = accumulator.record(activityFixture(at: start.addingTimeInterval(1_800), cpu: 0.25))
+        try expect(
+            middle.trend.count == 2 && middle.trend[1].coveredSeconds == 60,
+            "activity workspace accumulates lightweight trend points"
+        )
+
+        let retained = accumulator.record(activityFixture(at: start.addingTimeInterval(3_601), cpu: 0.5))
+        try expect(
+            retained.trend.count == 2 && retained.trend.first?.capturedAt == start.addingTimeInterval(1_800),
+            "activity workspace prunes points outside its retention window"
+        )
+
+        let late = accumulator.record(activityFixture(at: start.addingTimeInterval(3_000), cpu: 0.9))
+        try expect(
+            late.current.capturedAt == retained.current.capturedAt && late.trend == retained.trend,
+            "activity workspace ignores late samples"
+        )
+
+        accumulator.reset()
+        let reset = accumulator.record(activityFixture(at: start.addingTimeInterval(7_200), cpu: 0.1))
+        try expect(reset.trend.count == 1, "activity workspace reset clears retained points")
+    }
+
+    private static func testCleanupActivitySignature() throws {
+        let unavailable = CleanupActivitySignature(activity: nil)
+        let dropped = CleanupActivitySignature(activity: activityFixture(
+            at: Date(timeIntervalSince1970: 1_000),
+            cpu: 0.2,
+            droppedEvidenceCount: 1
+        ))
+        try expect(unavailable == dropped, "incomplete activity evidence has one cleanup-protection signature")
+
+        let identity = ProcessStartIdentity(pid: 42, startSeconds: 10, startMicroseconds: 20)
+        let homeID = PhysicalResourceIdentity(device: 1, inode: 2, kind: .directory)
+        let first = processFixture(
+            identity: identity,
+            homeID: homeID,
+            cpu: 0.1,
+            filePath: "/tmp/agent/session.json",
+            observedAt: Date(timeIntervalSince1970: 1_000)
+        )
+        let ratesChanged = processFixture(
+            identity: identity,
+            homeID: homeID,
+            cpu: 0.8,
+            filePath: "/tmp/agent/session.json",
+            observedAt: Date(timeIntervalSince1970: 1_003)
+        )
+        let firstSignature = CleanupActivitySignature(activity: activityFixture(
+            at: Date(timeIntervalSince1970: 1_000),
+            cpu: 0.1,
+            processes: [first]
+        ))
+        let ratesChangedSignature = CleanupActivitySignature(activity: activityFixture(
+            at: Date(timeIntervalSince1970: 1_003),
+            cpu: 0.8,
+            processes: [ratesChanged]
+        ))
+        try expect(firstSignature == ratesChangedSignature, "rate-only changes do not rebuild cleanup inventory")
+
+        let evidenceChanged = processFixture(
+            identity: identity,
+            homeID: homeID,
+            cpu: 0.8,
+            filePath: "/tmp/agent/other.json",
+            observedAt: Date(timeIntervalSince1970: 1_003)
+        )
+        let evidenceChangedSignature = CleanupActivitySignature(activity: activityFixture(
+            at: Date(timeIntervalSince1970: 1_003),
+            cpu: 0.8,
+            processes: [evidenceChanged]
+        ))
+        try expect(firstSignature != evidenceChangedSignature, "cleanup-protection evidence changes rebuild inventory")
     }
 
     private static func testHistoryStore() async throws {
@@ -1221,7 +1309,12 @@ struct AgentNestCoreTestRunner {
         ) == SQLITE_OK else { throw TestFailure("could not append Codex fixture relationship") }
     }
 
-    private static func activityFixture(at date: Date, cpu: Double?) -> ActivitySnapshot {
+    private static func activityFixture(
+        at date: Date,
+        cpu: Double?,
+        processes: [VisibleProcessActivity] = [],
+        droppedEvidenceCount: Int = 0
+    ) -> ActivitySnapshot {
         let available = MetricValue(value: cpu, availability: cpu == nil ? .unavailable : .available, observedSeconds: 60, coverage: cpu == nil ? 0 : 1)
         let unavailable = MetricValue(value: nil, availability: .unavailable, observedSeconds: 60, coverage: 0)
         return ActivitySnapshot(
@@ -1231,7 +1324,32 @@ struct AgentNestCoreTestRunner {
             diskWriteBytesPerSecond: unavailable,
             networkReceiveBytesPerSecond: unavailable,
             networkSendBytesPerSecond: unavailable,
-            didResetBaseline: false
+            didResetBaseline: false,
+            processes: processes,
+            droppedEvidenceCount: droppedEvidenceCount
+        )
+    }
+
+    private static func processFixture(
+        identity: ProcessStartIdentity,
+        homeID: PhysicalResourceIdentity,
+        cpu: Double,
+        filePath: String,
+        observedAt: Date
+    ) -> VisibleProcessActivity {
+        let metric = MetricValue(value: cpu, availability: .available, observedSeconds: 3, coverage: 1)
+        return VisibleProcessActivity(
+            id: identity,
+            name: "fixture",
+            executablePath: "/tmp/fixture",
+            attribution: .agent,
+            productID: "fixture",
+            homeID: homeID,
+            evidence: [],
+            cpuFraction: metric,
+            requestedReadBytesPerSecond: metric,
+            requestedWriteBytesPerSecond: metric,
+            currentlyOpenFiles: [ProcessFileEvidence(kind: .currentlyOpen, path: filePath, observedAt: observedAt)]
         )
     }
 }
