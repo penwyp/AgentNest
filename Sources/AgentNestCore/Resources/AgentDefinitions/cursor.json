@@ -3,22 +3,54 @@
   "id": "cursor.cursor",
   "displayName": "Cursor",
   "homeDiscovery": {
-    "defaultPaths": ["~/.cursor"],
+    "defaultPaths": [
+      "~/.cursor"
+    ],
     "environmentVariables": []
   },
   "fingerprints": {
     "required": [],
     "optional": [
-      { "kind": "jsonFile", "relativePath": "argv.json" },
-      { "kind": "directory", "relativePath": "skills" },
-      { "kind": "directory", "relativePath": "skills-cursor" }
+      {
+        "kind": "jsonFile",
+        "relativePath": "argv.json"
+      },
+      {
+        "kind": "directory",
+        "relativePath": "skills"
+      },
+      {
+        "kind": "directory",
+        "relativePath": "skills-cursor"
+      }
     ],
     "negative": []
   },
   "skills": [
-    { "relativePath": "skills", "format": "directory-skill-md", "writable": true },
-    { "relativePath": "skills-cursor", "format": "directory-skill-md", "writable": false }
+    {
+      "relativePath": "skills",
+      "format": "directory-skill-md",
+      "writable": true
+    },
+    {
+      "relativePath": "skills-cursor",
+      "format": "directory-skill-md",
+      "writable": false
+    }
   ],
   "artifacts": [],
-  "capabilities": { "space": true, "skills": true, "activity": false, "cleanup": false }
+  "capabilities": {
+    "space": true,
+    "skills": true,
+    "activity": false,
+    "cleanup": false
+  },
+  "marketplace": {
+    "summary": "AI-first code editor built on VS Code.",
+    "homepageURL": "https://www.cursor.com",
+    "install": {
+      "kind": "cask",
+      "formula": "cursor"
+    }
+  }
 }

@@ -53,8 +53,14 @@ public struct AgentDefinitionCatalog: Sendable {
 
         try requireOnly(root, allowed: [
             "schemaVersion", "id", "displayName", "homeDiscovery", "fingerprints",
-            "skills", "artifacts", "capabilities",
+            "skills", "artifacts", "capabilities", "marketplace",
         ], path: "$")
+        try validateObject(root["marketplace"], allowed: ["summary", "homepageURL", "install"], path: "$.marketplace")
+        try validateObject(
+            (root["marketplace"] as? [String: Any])?["install"],
+            allowed: ["kind", "formula"],
+            path: "$.marketplace.install"
+        )
         try validateObject(root["homeDiscovery"], allowed: [
             "defaultPaths", "environmentVariables",
         ], path: "$.homeDiscovery")

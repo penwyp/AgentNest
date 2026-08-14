@@ -3,20 +3,47 @@
   "id": "anthropic.claude-code",
   "displayName": "Claude Code",
   "homeDiscovery": {
-    "defaultPaths": ["~/.claude"],
-    "environmentVariables": ["CLAUDE_CONFIG_DIR"]
+    "defaultPaths": [
+      "~/.claude"
+    ],
+    "environmentVariables": [
+      "CLAUDE_CONFIG_DIR"
+    ]
   },
   "fingerprints": {
     "required": [],
     "optional": [
-      { "kind": "jsonFile", "relativePath": "settings.json" },
-      { "kind": "directory", "relativePath": "skills" }
+      {
+        "kind": "jsonFile",
+        "relativePath": "settings.json"
+      },
+      {
+        "kind": "directory",
+        "relativePath": "skills"
+      }
     ],
     "negative": []
   },
   "skills": [
-    { "relativePath": "skills", "format": "directory-skill-md", "writable": true }
+    {
+      "relativePath": "skills",
+      "format": "directory-skill-md",
+      "writable": true
+    }
   ],
   "artifacts": [],
-  "capabilities": { "space": true, "skills": true, "activity": false, "cleanup": false }
+  "capabilities": {
+    "space": true,
+    "skills": true,
+    "activity": false,
+    "cleanup": false
+  },
+  "marketplace": {
+    "summary": "Anthropic's terminal coding agent.",
+    "homepageURL": "https://claude.com/claude-code",
+    "install": {
+      "kind": "brew",
+      "formula": "claude-code"
+    }
+  }
 }

@@ -86,6 +86,9 @@ final class AppModel {
     private(set) var ignoredScanPaths: [String] = UserDefaults.standard.stringArray(forKey: "ignoredScanPaths") ?? []
     private(set) var userConfirmedHomes: [String: String] = UserDefaults.standard.dictionary(forKey: "userConfirmedHomes") as? [String: String] ?? [:]
     private(set) var uninstallReport: String?
+    /// Agent 市场：面板可见性 + 每个产品的安装状态（真实流式状态，随事件更新）。
+    var isMarketPresented = false
+    private(set) var marketInstallations: [String: MarketInstallState] = [:]
     var historyEnabled = UserDefaults.standard.bool(forKey: "historyEnabled")
     var historyRetentionDays: Int
     var hideSensitivePaths = UserDefaults.standard.bool(forKey: "hideSensitivePaths")
@@ -93,6 +96,8 @@ final class AppModel {
     var selectedLanguage = UserDefaults.standard.string(forKey: "selectedLanguage") ?? "system"
 
     private var scanTask: Task<Void, Never>?
+    private var installTasks: [String: Task<Void, Never>] = [:]
+    private let installRunner = InstallAgentRunner()
     private var activityTask: Task<Void, Never>?
     private var licenseTask: Task<Void, Never>?
     private var cleanupTask: Task<Void, Never>?
@@ -490,6 +495,61 @@ final class AppModel {
 
     func cancelCleanup() {
         cleanupTask?.cancel()
+    }
+
+    // MARK: Agent 市场
+
+    /// 市场安装状态（随事件流更新；失败以结构化原因表达，文案由 installFailureTitle 翻译）。
+    struct MarketInstallState: Equatable {
+        var phase: InstallAgentPhase = .locatingBrew
+        var outputTail: [String] = []
+    }
+
+    /// 市场面板列出的目录产品（按名称排序，含未参与扫描的产品）。
+    var marketDefinitions: [AgentDefinition] {
+        (catalog?.definitions ?? []).sorted {
+            $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending
+        }
+    }
+
+    /// 是否有安装任务进行中（brew 全局互斥，其余安装按钮据此禁用）。
+    var isAnyMarketInstallRunning: Bool {
+        marketInstallations.values.contains { $0.phase == .locatingBrew || $0.phase == .running }
+    }
+
+    func startMarketInstall(_ productID: String) {
+        guard let catalog,
+              let definition = catalog.definitions.first(where: { $0.id == productID }),
+              let method = definition.marketplace?.install,
+              !isAnyMarketInstallRunning else { return }
+        marketInstallations[productID] = MarketInstallState(phase: .locatingBrew, outputTail: [])
+        let task = Task { [weak self] in
+            guard let self else { return }
+            // 安装为同步阻塞式（brew 可能持续数分钟），隔离到 utility 线程。
+            _ = await Task.detached(priority: .utility) {
+                try? self.installRunner.install(productID: productID, method: method) { event in
+                    Task { @MainActor [weak self] in
+                        self?.marketInstallations[productID] = MarketInstallState(
+                            phase: event.phase,
+                            outputTail: event.outputTail
+                        )
+                    }
+                }
+            }.value
+            installTasks[productID] = nil
+        }
+        installTasks[productID] = task
+    }
+
+    func cancelMarketInstall(_ productID: String) {
+        installRunner.cancel(productID: productID)
+    }
+
+    func installFailureTitle(_ failure: InstallAgentFailure) -> String {
+        switch failure {
+        case .brewNotFound: return localized("未找到 Homebrew，无法安装。")
+        case let .exited(code): return localized("安装退出码 %d", code)
+        }
     }
 
     private func refreshCleanupInventory() {

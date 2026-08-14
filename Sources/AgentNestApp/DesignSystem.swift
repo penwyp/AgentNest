@@ -857,6 +857,40 @@ struct DSLineChart: View {
         return path
     }
 }
+
+/// 不确定扫描指示条（仅扫描进行态使用）：2 pt accent 轨道 + 短带匀速从左到右扫过。
+/// 这是 DESIGN.md §2「禁止循环动画」的唯一新增例外（与激活门户 DSHeroWash 同级登记）：
+/// 循环动效只存在于扫描进行态、扫描结束视图即移除；Reduce Motion 下静态化（短带停在左端）；
+/// TimelineView 节流至 30 fps，单层绘制，空闲 CPU 预算内。
+struct DSIndeterminateScanBar: View {
+    var trackOpacity: Double = 0.22
+    var bandWidth: CGFloat = 96
+    var duration: Double = 1.6
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 1 / 30.0)) { context in
+            GeometryReader { proxy in
+                let width = proxy.size.width
+                let t = context.date.timeIntervalSinceReferenceDate
+                let progress = t.truncatingRemainder(dividingBy: duration) / duration
+                let offset = progress * (width + bandWidth) - bandWidth
+                ZStack(alignment: .leading) {
+                    Rectangle()
+                        .fill(DS.Semantic.accentPrimary.opacity(0.85))
+                        .frame(width: bandWidth, height: 2)
+                        .offset(x: reduceMotion ? 0 : offset)
+                }
+            }
+        }
+        .frame(height: 2)
+        .background(
+            Rectangle()
+                .fill(DS.Semantic.accentPrimary.opacity(trackOpacity))
+        )
+        .accessibilityHidden(true)
+    }
+}
 // MARK: - 激活门户组件
 
 /// 门户页脚链接：caption 字号、secondary 色，hover 转 primary 并加下划线。

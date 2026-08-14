@@ -3,18 +3,31 @@
   "id": "openai.codex",
   "displayName": "Codex",
   "homeDiscovery": {
-    "defaultPaths": ["~/.codex", "~/.codex-*", "~/.codex.*"],
-    "environmentVariables": ["CODEX_HOME"]
+    "defaultPaths": [
+      "~/.codex",
+      "~/.codex-*",
+      "~/.codex.*"
+    ],
+    "environmentVariables": [
+      "CODEX_HOME"
+    ]
   },
   "fingerprints": {
     "required": [
-      { "kind": "jsonFile", "relativePath": "version.json" }
+      {
+        "kind": "jsonFile",
+        "relativePath": "version.json"
+      }
     ],
     "optional": [],
     "negative": []
   },
   "skills": [
-    { "relativePath": "skills", "format": "directory-skill-md", "writable": true }
+    {
+      "relativePath": "skills",
+      "format": "directory-skill-md",
+      "writable": true
+    }
   ],
   "artifacts": [
     {
@@ -70,5 +83,13 @@
     "skills": true,
     "activity": false,
     "cleanup": true
+  },
+  "marketplace": {
+    "summary": "OpenAI's terminal coding agent.",
+    "homepageURL": "https://openai.com/codex",
+    "install": {
+      "kind": "brew",
+      "formula": "codex"
+    }
   }
 }

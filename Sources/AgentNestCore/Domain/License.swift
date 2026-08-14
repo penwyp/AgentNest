@@ -95,4 +95,5 @@ public enum LicenseFeature: String, CaseIterable, Codable, Sendable {
     case trace
     case history
     case export
+    case install
 }

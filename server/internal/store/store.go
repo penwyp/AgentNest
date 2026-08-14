@@ -363,7 +363,7 @@ func HashSecret(value string) string {
 func paidPolicy(plan string, maxMachines int) domain.Policy {
 	return domain.Policy{
 		ID: fmt.Sprintf("paid:%s:%d", plan, maxMachines), Plan: plan,
-		Features:    []string{"scan", "overview", "skill.write", "patch", "cleanup", "trace", "history", "export"},
+		Features:    []string{"scan", "overview", "skill.write", "patch", "cleanup", "trace", "history", "export", "install"},
 		MaxMachines: maxMachines, RefreshAfterSeconds: int64((24 * time.Hour).Seconds()),
 		OfflineTTLSeconds: int64(domain.PaidOfflineTTL.Seconds()),
 	}
