@@ -55,25 +55,16 @@ struct HomeDiscoveryView: View {
 
     var body: some View {
         let homes = progress.confirmedHomes
+        let isDiscovering = progress.phase == .discoveringAgents || progress.phase == .validatingHomes
         VStack(alignment: .leading, spacing: DS.Space.x400) {
-            ViewThatFits(in: .horizontal) {
-                HStack(alignment: .top, spacing: DS.Space.x400) {
-                    headerCopy
-                    Spacer(minLength: DS.Space.x300)
-                    latestConfirmation(homes)
-                        .frame(minWidth: 220, maxWidth: 320, alignment: .leading)
-                }
-                VStack(alignment: .leading, spacing: DS.Space.x400) {
-                    headerCopy
-                    latestConfirmation(homes)
-                        .frame(minWidth: 220, maxWidth: 320, alignment: .leading)
-                }
+            if isDiscovering, !homes.isEmpty {
+                latestConfirmation(homes)
             }
 
             confirmedSection(homes)
             scopeSection(homes)
 
-            if progress.phase != .discoveringAgents, progress.phase != .validatingHomes {
+            if !isDiscovering {
                 progressRow
             }
 
@@ -83,23 +74,8 @@ struct HomeDiscoveryView: View {
         .accessibilityElement(children: .contain)
     }
 
-    private var headerCopy: some View {
-        VStack(alignment: .leading, spacing: DS.Space.x200) {
-            Label(model.scanPhaseTitle(progress.phase), systemImage: "scope")
-                .font(DS.Typeface.body.weight(.semibold))
-                .foregroundStyle(DS.Semantic.accentPrimary)
-            Text(model.localized("%d 个 Agent Home 已发现", progress.confirmedHomes.count))
-                .font(DS.Typeface.title)
-                .monospacedDigit()
-                .contentTransition(.numericText())
-                .animation(reduceMotion ? nil : .easeInOut(duration: DS.Motion.sample), value: progress.confirmedHomes.count)
-            Text(model.localized("确认后立即加入下方列表，扫描完成后生成完整报告。"))
-                .font(DS.Typeface.body)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-    }
-
+    /// 刚发现的 Agent：只在发现阶段（发现/验证）且有结果时显示，
+    /// 每次确认以 fade/位移换新；无容器样式，直接融入画布。
     @ViewBuilder
     private func latestConfirmation(_ homes: [AgentHome]) -> some View {
         if let latest = homes.last {
@@ -121,18 +97,6 @@ struct HomeDiscoveryView: View {
             }
             .id(latest.id)
             .transition(.opacity.combined(with: .offset(y: DS.Space.x200)))
-        } else {
-            HStack(spacing: DS.Space.x300) {
-                ProgressView()
-                    .controlSize(.small)
-                VStack(alignment: .leading, spacing: DS.Space.x100) {
-                    Text(model.localized("正在检查已知位置"))
-                        .font(DS.Typeface.body.weight(.medium))
-                    Text(model.localized("发现仍在进行"))
-                        .font(DS.Typeface.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
         }
     }
 
@@ -142,19 +106,13 @@ struct HomeDiscoveryView: View {
                 Text(model.localized("已发现的 Agent"))
                     .font(DS.Typeface.section)
                 Spacer()
-                if !homes.isEmpty {
-                    Text(model.localized("%d 个已发现", homes.count))
-                        .font(DS.Typeface.caption.weight(.medium))
-                        .monospacedDigit()
-                        .foregroundStyle(.secondary)
-                }
             }
 
             if homes.isEmpty {
                 HStack(spacing: DS.Space.x250) {
                     ProgressView()
                         .controlSize(.small)
-                    Text(model.localized("正在检查已知位置"))
+                    Text(model.scanPhaseTitle(progress.phase))
                         .font(DS.Typeface.body)
                         .foregroundStyle(.secondary)
                 }
@@ -218,8 +176,6 @@ struct HomeDiscoveryView: View {
                     .font(.system(size: DS.IconSize.card, weight: .medium))
                     .foregroundStyle(DS.Semantic.accentPrimary)
                     .accessibilityHidden(true)
-                Text(model.scanPhaseTitle(progress.phase))
-                    .font(DS.Typeface.section)
                 if let location = progress.currentLocation {
                     Text(model.displayPath(location))
                         .font(DS.Typeface.micro)

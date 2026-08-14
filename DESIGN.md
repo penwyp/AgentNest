@@ -274,14 +274,14 @@ Reduce Motion 将全部时长解析为 `0 s`，保留最终视觉状态。
 
 ### 5.8 首页（Home，借鉴 find-disk-killer Storage Map 语言）
 
-首页吸收 Storage Map 的「发现界面」语言：扫描中 = 发现界面（借鉴 `StorageMapDiscoveryView`：逐个确认设备上已安装的 Agent），扫描后回到原有首页结构（`SnapshotSummary` + `ImpactCards`，见 §14）。每一处动效都折算进 AgentNest 的性能约束（无循环动画、无多层阴影、无材质）：
+首页是「扫描中 = 发现模式 / 扫描后 = 管理模式」的两态页面，借鉴 find-disk-killer `StorageMapDiscoveryView` 的逐个确认体验，但两态互斥：**扫描进行时只呈现发现界面，扫描完成后的摘要与影响卡（`SnapshotSummary` + `ImpactCards`）在扫描结束前不出现**（重扫同理）。每一处动效都折算进 AgentNest 的性能约束（无循环动画、无多层阴影、无材质）：
 
-- **发现界面**（`HomeDiscoveryView`，扫描中显示，直接铺在画布上、无卡片容器）：
-  - **状态标签 + 滚动计数**：当前阶段（`scanPhaseTitle`，accent 色）+ 大标题「N 个 Agent Home 已发现」用 `contentTransition(.numericText())` 随确认逐个滚动（`motion.sample`），副标题说明「确认后立即加入下方列表，扫描完成后生成完整报告」。
-  - **刚刚发现**（右上角）：最近一个 Home 的产品图标（纯图标，无容器）+ 绿色「刚刚发现」+ 名称 + 来源；每次确认以 `.id(home.id)` + fade/8 pt 位移过渡换新（find-disk 用 `blurReplace`，macOS 14 以 opacity+offset 等效替代）。无确认时显示小 `ProgressView` +「正在检查已知位置 / 发现仍在进行」。
-  - **已发现的 Agent**：自适应网格芯片（产品图标 + 名称 + 来源 + 绿色勾 /「疑似」徽章），随确认逐个以 fade/位移插入，整区 `.animation(value: homes.map(\.id))`（`motion.enter`）驱动。
+- **页面首部（扫描中）**：标题「正在发现本机 Agent 环境」；副标题为实时状态行「N 个 Agent Home 已发现 · 当前阶段」（`DSPageHeader.animatesSubtitle`：等宽数字 + `contentTransition(.numericText())` + `motion.sample`），无结果时为「正在检查已知位置」。计数与阶段**只在状态行出现一次**，发现区不再重复放标题块。
+- **发现界面**（`HomeDiscoveryView`，直接铺在画布上、无卡片容器）：
+  - **刚刚发现**：仅发现/验证阶段且有结果时显示——最近一个 Home 的产品图标（纯图标，无容器）+ 绿色「刚刚发现」+ 名称 + 来源；每次确认以 `.id(home.id)` + fade/8 pt 位移过渡换新（find-disk 用 `blurReplace`，macOS 14 以 opacity+offset 等效替代）。
+  - **已发现的 Agent**：自适应网格芯片（产品图标 + 名称 + 来源 + 绿色勾 /「疑似」徽章），随确认逐个以 fade/位移插入，整区 `.animation(value: homes.map(\.id))`（`motion.enter`）驱动；无结果时以小 `ProgressView` + 当前阶段文案就地提示。
   - **正在确认的范围**：默认路径 / 环境变量 / 用户添加 / 用户确认四个来源区，实时显示「N 个已发现 / 正在检查」；右翼「只读取位置，不读取文件内容」盾牌标注。
-  - **进度行**：进入索引阶段后显示 `Recessed` 就地进度（阶段 + 位置 + 已处理项数，numericText）；验证阶段不显示（芯片与计数已承载状态）。
+  - **进度行**：进入索引阶段后显示 `Recessed` 就地进度（当前位置 + 已处理项数，numericText）；阶段文案不重复（状态行已承载），验证阶段不显示。
   - **信任底栏**：分隔线下的「本机分析 · 只读元数据 · 不执行清理」，只陈述真实行为。
   - **渐进数据**：`ScanProgress.confirmedHomes` 由 `ScanUseCase` 每验证一个 Home 立即发布；`AppModel` 对发现计数变化即时放行（位置刻度仍按 0.25 s 节流）。首次进入首页且无快照时自动开始首次扫描（仅一次，用户停止后不自动重启）。
   - 数值滚动与插入过渡一律尊重 Reduce Motion。
