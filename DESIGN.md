@@ -296,8 +296,6 @@ AgentNest 的侧边栏是一等公民，遵循"克制的仪器导航"：
 | --- | --- |
 | `nav.width` | 最小 208 pt，理想 224 pt |
 | `nav.background` | `color.surface.canvas` |
-| `nav.brand.icon` | `bird.fill`，16 pt Medium，`color.accent.primary` |
-| `nav.brand.title` | `type.section` |
 | `nav.row.height` | 图标 13 pt Medium + 文字 `type.body`，垂直 padding 8 pt |
 | `nav.row.radius` | `radius.control.compact` |
 | `nav.row.hover` | `color.text.primary` at `0.05` |

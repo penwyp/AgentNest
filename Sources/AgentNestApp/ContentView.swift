@@ -37,20 +37,9 @@ struct ContentView: View {
     }
 
     /// 设计系统侧边栏：canvas 底、分组导航、选中态使用 accent 色（surface.selection 配方）。
+    /// 不再放置品牌标题块：导航行直接从顶部开始，与窗口融合。
     private var sidebar: some View {
         VStack(spacing: 0) {
-            HStack(spacing: DS.Space.x200) {
-                Image(systemName: "bird.fill")
-                    .font(.system(size: DS.IconSize.brand, weight: .medium))
-                    .foregroundStyle(DS.Semantic.accentPrimary)
-                Text("AgentNest")
-                    .font(DS.Typeface.section)
-                Spacer()
-            }
-            .padding(.horizontal, DS.Space.x300)
-            .padding(.top, DS.Space.x250)
-            .padding(.bottom, DS.Space.x200)
-
             ScrollView {
                 VStack(alignment: .leading, spacing: 2) {
                     SidebarRow(model: model, item: .home)
@@ -64,6 +53,7 @@ struct ContentView: View {
                     SidebarRow(model: model, item: .settings)
                 }
                 .padding(.horizontal, DS.Space.x200)
+                .padding(.top, DS.Space.x250)
             }
 
             Spacer(minLength: 0)
