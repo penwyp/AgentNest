@@ -55,6 +55,13 @@ final class AppModel {
         }
     }
 
+    /// 激活门户的本地交互阶段：立即置位保证首帧反馈，网络结果返回后复位。
+    enum ActivationPhase: Equatable {
+        case idle
+        case trialInFlight
+        case activateInFlight
+    }
+
     var selection: Destination? = .home
     private(set) var isScanning = false
     private(set) var isStoppingScan = false
@@ -62,6 +69,7 @@ final class AppModel {
     private(set) var snapshot: DeviceSnapshot?
     private(set) var errorMessage: String?
     private(set) var licenseState: LicenseState = .missing
+    private(set) var activationPhase: ActivationPhase = .idle
     private(set) var licenseConfigurationAvailable = false
     private(set) var activitySnapshot: ActivitySnapshot?
     private(set) var activityWorkspace: ActivityWorkspaceSnapshot?
@@ -712,21 +720,26 @@ final class AppModel {
     }
 
     func startTrial() {
-        guard let licenseManager else { return }
+        guard let licenseManager, activationPhase == .idle else { return }
+        activationPhase = .trialInFlight
         Task {
             updateLicenseState(await licenseManager.startTrial())
+            activationPhase = .idle
             reconcileLicensedTasks()
         }
     }
 
     func activate() {
-        guard let licenseManager, !licenseKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        guard let licenseManager, activationPhase == .idle,
+              !licenseKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         let key = licenseKey
+        activationPhase = .activateInFlight
         Task {
             updateLicenseState(await licenseManager.activate(licenseKey: key))
             if hasCoreAccess {
                 licenseKey = ""
             }
+            activationPhase = .idle
             reconcileLicensedTasks()
         }
     }

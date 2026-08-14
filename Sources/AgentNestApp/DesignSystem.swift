@@ -41,6 +41,8 @@ enum DS {
         static let pageVerticalInset: CGFloat = 24
         static let heroIconFrame: CGFloat = 40
         static let homeActionMinWidth: CGFloat = 168
+        static let activationMaxWidth: CGFloat = 960
+        static let activationFeatureIconFrame: CGFloat = 32
         static let activitySectionPickerWidth: CGFloat = 280
         static let activityRangePickerWidth: CGFloat = 260
         static let activityTrendPickerWidth: CGFloat = 240
@@ -160,10 +162,12 @@ enum DS {
     // MARK: 字体 type.*
 
     enum Typeface {
+        static let displayLarge = Font.system(size: 34, weight: .semibold, design: .default)
         static let display = Font.system(size: 26, weight: .semibold, design: .default)
         static let title = Font.system(size: 20, weight: .semibold, design: .default)
         static let section = Font.system(size: 17, weight: .medium, design: .default)
         static let body = Font.system(size: 13, weight: .regular, design: .default)
+        static let lead = Font.system(size: 15, weight: .regular, design: .default)
         static let label = Font.system(size: 12, weight: .medium, design: .default)
         static let caption = Font.system(size: 11, weight: .regular, design: .default)
         static let micro = Font.system(size: 10, weight: .regular, design: .default)
@@ -184,6 +188,7 @@ enum DS {
         static let chartHistogram = 0.50
         static let chartMeter = 0.48
         static let chartDonut = 0.55
+        static let entranceStagger = 0.06
     }
 
     // MARK: 图表色序 chart.color.series.*
@@ -401,13 +406,14 @@ struct DSActionButtonStyle: ButtonStyle {
     }
 
     enum Size {
-        case compact, regular, large
+        case compact, regular, large, hero
 
         var height: CGFloat {
             switch self {
             case .compact: return 30
             case .regular: return 34
             case .large: return 38
+            case .hero: return 44
             }
         }
 
@@ -416,6 +422,7 @@ struct DSActionButtonStyle: ButtonStyle {
             case .compact: return 10
             case .regular: return 13
             case .large: return 16
+            case .hero: return 22
             }
         }
 
@@ -424,7 +431,12 @@ struct DSActionButtonStyle: ButtonStyle {
             case .compact: return .system(size: 11, weight: .semibold)
             case .regular: return .system(size: 12, weight: .semibold)
             case .large: return .system(size: 13, weight: .semibold)
+            case .hero: return .system(size: 15, weight: .semibold)
             }
+        }
+
+        var cornerRadius: CGFloat {
+            self == .compact ? DS.Radius.controlCompact : DS.Radius.controlRegular
         }
     }
 
@@ -465,12 +477,12 @@ struct DSActionButtonStyle: ButtonStyle {
             .padding(.horizontal, size.horizontalInset)
             .frame(minHeight: size.height)
             .background(
-                RoundedRectangle(cornerRadius: size == .regular ? DS.Radius.controlRegular : DS.Radius.controlCompact, style: .continuous)
+                RoundedRectangle(cornerRadius: size.cornerRadius, style: .continuous)
                     .fill(isEnabled ? fill(isPressed: isPressed) : fill(isPressed: false).opacity(DS.Opacity.disabledControl))
             )
             .overlay(
                 RoundedRectangle(
-                    cornerRadius: size == .regular ? DS.Radius.controlRegular : DS.Radius.controlCompact,
+                    cornerRadius: size.cornerRadius,
                     style: .continuous
                 )
                 .strokeBorder(border, lineWidth: variant == .neutral ? DS.Stroke.surface : 0.5)
@@ -478,7 +490,7 @@ struct DSActionButtonStyle: ButtonStyle {
             .overlay(alignment: .top) {
                 // 顶部白色高光（0.5 pt）
                 RoundedRectangle(
-                    cornerRadius: (size == .regular ? DS.Radius.controlRegular : DS.Radius.controlCompact) - 0.5,
+                    cornerRadius: size.cornerRadius - 0.5,
                     style: .continuous
                 )
                 .strokeBorder(
@@ -811,3 +823,36 @@ struct DSLineChart: View {
         return path
     }
 }
+// MARK: - 激活门户组件
+
+/// 门户页脚链接：caption 字号、secondary 色，hover 转 primary 并加下划线。
+struct DSFooterButtonStyle: ButtonStyle {
+    var destructive: Bool = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.controlActiveState) private var controlActiveState
+    @State private var isHovering = false
+
+    func makeBody(configuration: Configuration) -> some View {
+        let active = isHovering && controlActiveState == .active
+        configuration.label
+            .font(DS.Typeface.caption)
+            .foregroundStyle(destructive ? DS.Semantic.statusCritical : (active ? Color.primary : Color.secondary))
+            .underline(active)
+            .contentShape(Rectangle())
+            .onHover { hovering in
+                withAnimation(reduceMotion ? nil : .easeOut(duration: DS.Motion.hover)) {
+                    isHovering = hovering
+                }
+            }
+            .onChange(of: controlActiveState) { _, state in
+                if state != .active { isHovering = false }
+            }
+    }
+}
+
+extension ButtonStyle where Self == DSFooterButtonStyle {
+    static func dsFooterLink(destructive: Bool = false) -> DSFooterButtonStyle {
+        DSFooterButtonStyle(destructive: destructive)
+    }
+}
+
