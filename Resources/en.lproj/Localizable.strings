@@ -459,6 +459,7 @@
 "数据只在本机分析。" = "Analysis stays on this Mac.";
 "速率分布" = "Rate distribution";
 "正在发现本机 Agent 环境" = "Discovering the Agent environment on this Mac";
+"%d 个 Agent Home 已发现" = "%d agent homes discovered";
 "%d 个 Agent Home 已发现 · %@" = "%d agent homes discovered · %@";
 "刚刚发现" = "Just discovered";
 "正在检查已知位置" = "Checking known locations";
