@@ -167,26 +167,12 @@ private struct HomeView: View {
                     HomeDiscoveryView(model: model, progress: progress)
                 }
 
-                // 扫描中只呈现发现界面；扫描完成后才显示摘要与影响卡。
+                // 扫描中只呈现发现界面；扫描完成后进入「环境总览台」稳定态。
                 if !model.isScanning {
                     if let snapshot = model.snapshot {
-                        SnapshotSummary(model: model, snapshot: snapshot)
-                        ImpactCards(model: model, snapshot: snapshot)
+                        HomeOverview(model: model, snapshot: snapshot)
                     } else {
-                        DSCard {
-                            VStack(spacing: DS.Space.x200) {
-                                Image(systemName: "tray")
-                                    .font(.system(size: DS.IconSize.hero, weight: .medium))
-                                    .foregroundStyle(.tertiary)
-                                    .accessibilityHidden(true)
-                                Text("尚无 Agent 结果")
-                                    .font(DS.Typeface.section)
-                                Text("点击右上角「扫描」开始发现本机 Agent 环境。")
-                                    .font(DS.Typeface.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                            .frame(maxWidth: .infinity)
-                        }
+                        HomeEmptyState(model: model)
                     }
                 }
 
@@ -201,7 +187,7 @@ private struct HomeView: View {
             }
             .padding(.horizontal, DS.Layout.pageHorizontalInset)
             .padding(.vertical, DS.Layout.pageVerticalInset)
-            .frame(maxWidth: model.isScanning ? DS.Layout.discoveryPageMaxWidth : DS.Layout.pageMaxWidth)
+            .frame(maxWidth: model.isScanning ? DS.Layout.discoveryPageMaxWidth : DS.Layout.homeOverviewMaxWidth)
             .frame(maxWidth: .infinity)
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
@@ -238,15 +224,16 @@ private struct HomeView: View {
         }
     }
 
-    /// 信息行按状态切换：扫描中显示当前阶段；空闲时显示已确认 Home 数与物理占用。
+    /// 信息行按状态切换：扫描中显示当前阶段；空闲时显示上次扫描时间与覆盖状态。
     private var identityDetail: String? {
         if model.isScanning {
             guard let progress = model.progress else { return nil }
             return model.scanPhaseTitle(progress.phase)
         }
         guard let snapshot = model.snapshot else { return nil }
-        let confirmed = snapshot.homes.filter { $0.confidence == .confirmed }.count
-        return model.localized("%d 个 Home · %@", confirmed, model.formatBytes(snapshot.totalStorage.physicalBytes))
+        let scanned = snapshot.createdAt.formatted(.relative(presentation: .named).locale(model.appLocale))
+        let base = model.localized("上次扫描 %@", scanned)
+        return snapshot.isPartial ? base + " · " + model.localized("部分扫描") : base
     }
 
     /// 扫描期间钉在底部的进度栏：当前位置 + 已处理项数/字节；内容滚动时始终可见。
@@ -284,151 +271,387 @@ private struct HomeView: View {
     }
 }
 
-private struct ImpactCards: View {
-    @Bindable var model: AppModel
+// MARK: - 首页稳定态（环境总览台）
+
+/// 稳定态 = 扫描拓扑的落定形态：读数带 → Agent 环境图 → 管理入口 → 信任行。
+/// 全部静态排版，动效仅 hover；无材质、无渐变，阴影仅入口卡保留原有单层。
+private struct HomeOverview: View {
+    let model: AppModel
     let snapshot: DeviceSnapshot
 
     var body: some View {
-        Grid(horizontalSpacing: DS.Space.x300, verticalSpacing: DS.Space.x300) {
-            GridRow {
-                card(
-                    title: "Agent",
-                    value: model.localized("%d 个 Home", snapshot.homes.filter { $0.confidence == .confirmed }.count),
-                    detail: model.localized(snapshot.homes.contains { $0.confidence == .possible } ? "有疑似位置待确认" : "发现结果已核验"),
-                    icon: "cpu",
+        VStack(alignment: .leading, spacing: DS.Space.x450) {
+            HomeReadingsStrip(model: model, snapshot: snapshot)
+            HomeEnvironmentMap(model: model, snapshot: snapshot)
+            HomeManagementTiles(model: model, snapshot: snapshot)
+            HomeTrustFooter(model: model)
+        }
+        .accessibilityElement(children: .contain)
+    }
+}
+
+/// 读数带：无卡片容器、无边框的四个大号仪器读数，标签在数值上方，hairline 竖分隔。
+private struct HomeReadingsStrip: View {
+    let model: AppModel
+    let snapshot: DeviceSnapshot
+
+    private var confirmed: Int { snapshot.homes.filter { $0.confidence == .confirmed }.count }
+    private var possible: Int { snapshot.homes.filter { $0.confidence == .possible }.count }
+
+    var body: some View {
+        HStack(alignment: .center, spacing: DS.Layout.homeReadingSpacing) {
+            reading(model.localized("已确认 Home"), "\(confirmed)", color: DS.Semantic.accentPrimary)
+            readingDivider
+            reading(model.localized("物理占用"), model.formatBytes(snapshot.totalStorage.physicalBytes), color: Color.primary)
+            readingDivider
+            reading(model.localized("Skill 安装"), skillInstallationsText, color: DS.Semantic.accentSecondary)
+            readingDivider
+            reading(model.localized("疑似位置"), "\(possible)", color: possible > 0 ? DS.Semantic.statusCaution : Color.primary)
+        }
+    }
+
+    private var skillInstallationsText: String {
+        model.skillIndex.map { "\($0.installationCount)" } ?? "—"
+    }
+
+    private var readingDivider: some View {
+        Rectangle()
+            .fill(Color.primary.opacity(DS.Opacity.borderQuiet))
+            .frame(width: DS.Stroke.hairline, height: 44)
+            .accessibilityHidden(true)
+    }
+
+    private func reading(_ label: String, _ value: String, color: Color) -> some View {
+        VStack(alignment: .leading, spacing: DS.Space.x100) {
+            Text(label)
+                .font(DS.Typeface.label)
+                .foregroundStyle(.secondary)
+            Text(value)
+                .font(DS.Typeface.reading)
+                .monospacedDigit()
+                .foregroundStyle(color)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+        }
+        .accessibilityElement(children: .combine)
+    }
+}
+
+/// Agent 环境图：按产品分组的落定拓扑——品牌图标 + 产品名 + Home 芯片网格 + 产品合计占用。
+/// 芯片 hover 出 accent 描边、点击直达 Agent 页，.help() 显示完整路径。
+private struct HomeEnvironmentMap: View {
+    let model: AppModel
+    let snapshot: DeviceSnapshot
+
+    private var products: [AgentProduct] {
+        snapshot.products.filter { !$0.homes.isEmpty }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .firstTextBaseline, spacing: DS.Space.x300) {
+                Text(model.localized("Agent 环境"))
+                    .font(DS.Typeface.title)
+                Spacer(minLength: DS.Space.x300)
+                Text(model.localized("%d 个产品 · 只读分析", products.count))
+                    .font(DS.Typeface.caption)
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+            }
+            .padding(.bottom, DS.Space.x300)
+
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(Array(products.enumerated()), id: \.element.id) { index, product in
+                    productLane(product)
+                    if index < products.count - 1 {
+                        Rectangle()
+                            .fill(Color.primary.opacity(DS.Opacity.borderQuiet))
+                            .frame(height: DS.Stroke.hairline)
+                            .padding(.vertical, DS.Space.x400)
+                            .accessibilityHidden(true)
+                    }
+                }
+            }
+        }
+    }
+
+    private func productLane(_ product: AgentProduct) -> some View {
+        let homes = product.homes.sorted { $0.path.localizedStandardCompare($1.path) == .orderedAscending }
+        let totalBytes = homes.reduce(UInt64(0)) { $0 &+ $1.storage.physicalBytes }
+        return VStack(alignment: .leading, spacing: DS.Space.x300) {
+            HStack(spacing: DS.Space.x250) {
+                HomeBrandIcon(productID: product.id, size: 24)
+                VStack(alignment: .leading, spacing: DS.Space.x050) {
+                    Text(product.displayName)
+                        .font(DS.Typeface.body.weight(.semibold))
+                        .lineLimit(1)
+                    Text(model.localized("%d 个 Home", homes.count))
+                        .font(DS.Typeface.caption)
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                }
+                Spacer(minLength: DS.Space.x400)
+                Text(model.formatBytes(totalBytes))
+                    .font(DS.Typeface.data)
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+            }
+            LazyVGrid(
+                columns: [GridItem(.adaptive(minimum: 200, maximum: 340), spacing: DS.Space.x250)],
+                alignment: .leading,
+                spacing: DS.Space.x250
+            ) {
+                ForEach(homes) { home in
+                    HomeEnvironmentChip(model: model, home: home)
+                }
+            }
+        }
+    }
+}
+
+/// 环境图 Home 芯片：品牌图标 + 名称 + 空间占用 + 核验状态；hover 出 accent 描边，点击进 Agent 页。
+private struct HomeEnvironmentChip: View {
+    let model: AppModel
+    let home: AgentHome
+    @State private var isHovering = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.controlActiveState) private var controlActiveState
+
+    private var isActiveHovering: Bool {
+        isHovering && controlActiveState == .active
+    }
+
+    var body: some View {
+        Button { model.selection = .agents } label: {
+            HStack(spacing: DS.Space.x200) {
+                HomeBrandIcon(productID: home.productID, size: 18)
+                VStack(alignment: .leading, spacing: DS.Space.x050) {
+                    Text(home.displayName)
+                        .font(DS.Typeface.body.weight(.semibold))
+                        .lineLimit(1)
+                    Text(model.formatBytes(home.storage.physicalBytes))
+                        .font(DS.Typeface.caption)
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                        .lineLimit(1)
+                }
+                Spacer(minLength: DS.Space.x100)
+                if home.confidence == .possible {
+                    DSBadge(text: model.localized("疑似"), color: DS.Semantic.statusCaution)
+                } else {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(DS.Semantic.statusPositive)
+                        .accessibilityHidden(true)
+                }
+            }
+            .padding(.horizontal, DS.Space.x250)
+            .frame(minHeight: 48)
+            .background(
+                RoundedRectangle(cornerRadius: DS.Radius.controlCompact, style: .continuous)
+                    .fill(Color(nsColor: .controlBackgroundColor).opacity(0.52))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: DS.Radius.controlCompact, style: .continuous)
+                    .strokeBorder(
+                        isActiveHovering
+                            ? DS.Semantic.accentPrimary.opacity(0.30)
+                            : Color.primary.opacity(DS.Opacity.borderQuiet),
+                        lineWidth: isActiveHovering ? 1 : DS.Stroke.hairline
+                    )
+            )
+            .contentShape(RoundedRectangle(cornerRadius: DS.Radius.controlCompact, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .help(model.displayPath(home.path))
+        .onHover { hovering in
+            withAnimation(reduceMotion ? nil : .easeOut(duration: DS.Motion.hover)) {
+                isHovering = hovering
+            }
+        }
+        .onChange(of: controlActiveState) { _, state in
+            if state != .active { isHovering = false }
+        }
+        .accessibilityLabel(model.localized("%@ · %@ · %@", home.displayName, model.displayPath(home.path), model.formatBytes(home.storage.physicalBytes)))
+    }
+}
+
+/// 管理入口：一行四个安静入口卡——裸色符号 + 标题 + 单行状态，chevron 仅 hover 出现。
+private struct HomeManagementTiles: View {
+    let model: AppModel
+    let snapshot: DeviceSnapshot
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: DS.Space.x300) {
+            Text(model.localized("维护"))
+                .font(DS.Typeface.title)
+            LazyVGrid(
+                columns: [GridItem(.adaptive(minimum: DS.Layout.homeManagementTileMinWidth, maximum: 400), spacing: DS.Space.x300)],
+                alignment: .leading,
+                spacing: DS.Space.x300
+            ) {
+                HomeManagementTile(
+                    model: model,
+                    title: model.localized("Agent"),
+                    glyph: "cpu",
                     tint: DS.Chart.series01,
+                    status: agentStatus,
                     destination: .agents
                 )
-                card(
-                    title: "Skill",
-                    value: model.localized("%d 个安装", model.skillIndex?.installationCount ?? 0),
-                    detail: model.skillIndex.map { model.localized("%d 个冲突 · %d 个无效", $0.conflictCount, $0.invalidCount) }
-                        ?? model.localized("当前 Agent 未声明 Skill 来源"),
-                    icon: "hammer",
+                HomeManagementTile(
+                    model: model,
+                    title: model.localized("Skill"),
+                    glyph: "hammer",
                     tint: DS.Chart.series06,
+                    status: skillStatus,
                     destination: .skills
                 )
-            }
-            GridRow {
-                card(
+                HomeManagementTile(
+                    model: model,
                     title: model.localized("空间"),
-                    value: model.formatBytes(snapshot.totalStorage.physicalBytes),
-                    detail: largestStorageCategory(snapshot),
-                    icon: "internaldrive",
+                    glyph: "internaldrive",
                     tint: DS.Chart.series03,
+                    status: storageStatus,
                     destination: .storage
                 )
-                card(
+                HomeManagementTile(
+                    model: model,
                     title: model.localized("活动"),
-                    value: activityValue,
-                    detail: activityDetail,
-                    icon: "waveform.path.ecg",
+                    glyph: "waveform.path.ecg",
                     tint: DS.Chart.series02,
+                    status: activityStatus,
                     destination: .activity
                 )
             }
         }
-        .frame(maxWidth: 720)
     }
 
-    private func card(
-        title: String,
-        value: String,
-        detail: String,
-        icon: String,
-        tint: Color,
-        destination: AppModel.Destination
-    ) -> some View {
-        Button { model.selection = destination } label: {
-            HStack(alignment: .top, spacing: DS.Space.x300) {
-                Image(systemName: icon)
-                    .font(.system(size: 20, weight: .medium))
-                    .foregroundStyle(tint)
-                    .frame(width: 34, height: 34)
-                    .background(
-                        RoundedRectangle(cornerRadius: DS.Radius.icon, style: .continuous)
-                            .fill(tint.opacity(DS.Opacity.fillSubtle))
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: DS.Radius.icon, style: .continuous)
-                            .strokeBorder(tint.opacity(0.18), lineWidth: DS.Stroke.hairline)
-                    )
-                VStack(alignment: .leading, spacing: DS.Space.x100) {
-                    Text(title).font(DS.Typeface.label).foregroundStyle(.secondary)
-                    Text(value).font(DS.Typeface.title).monospacedDigit()
-                    Text(detail).font(DS.Typeface.caption).foregroundStyle(.tertiary).lineLimit(2)
-                }
-                Spacer()
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.tertiary)
-            }
-            .padding(DS.Space.x400)
-            .frame(maxWidth: .infinity, minHeight: 110, alignment: .leading)
+    private var agentStatus: String {
+        let sources = Set(snapshot.homes.map(\.source)).count
+        let possible = snapshot.homes.filter { $0.confidence == .possible }.count
+        if possible == 0 {
+            return model.localized("%d 个来源 · 全部核验", sources)
         }
-        .buttonStyle(.dsCard)
-        .accessibilityLabel(model.localized("%@：%@。%@", title, value, detail))
-        .accessibilityHint(model.localized("打开%@详情", title))
+        return model.localized("%d 个来源 · %d 个疑似", sources, possible)
     }
 
-    private var activityValue: String {
-        guard let cpu = model.activitySnapshot?.cpuFraction.value else { return model.localized("正在建立基线") }
-        return model.localized("%@ CPU", model.formatPercent(cpu))
+    private var skillStatus: String {
+        guard let index = model.skillIndex else { return model.localized("尚未索引") }
+        if index.installationCount == 0 { return model.localized("当前 Agent 未声明 Skill 来源") }
+        if index.conflictCount + index.invalidCount == 0 { return model.localized("无冲突") }
+        return model.localized("%d 个冲突 · %d 个无效", index.conflictCount, index.invalidCount)
     }
 
-    private var activityDetail: String {
-        guard let activity = model.activitySnapshot else { return model.localized("第二个可比样本后显示速率") }
-        let agents = activity.processes.filter { $0.attribution == .agent }.count
-        return model.localized("%d 个已归因 Agent 进程 · %d 个证据缺口", agents, activity.droppedEvidenceCount)
-    }
-
-    private func largestStorageCategory(_ snapshot: DeviceSnapshot) -> String {
+    private var storageStatus: String {
         let totals = Dictionary(grouping: snapshot.storageLedger.artifacts, by: \.category).mapValues {
             $0.reduce(UInt64(0)) { $0 &+ $1.storage.physicalBytes }
         }
         guard let largest = totals.max(by: { $0.value < $1.value }) else { return model.localized("暂无物理资源") }
         return model.localized("最大类别：%@", model.artifactCategoryTitle(largest.key))
     }
+
+    private var activityStatus: String {
+        guard let activity = model.activitySnapshot else { return model.localized("正在建立基线") }
+        let agents = activity.processes.filter { $0.attribution == .agent }.count
+        return model.localized("%d 个已归因进程", agents)
+    }
 }
 
-private struct SnapshotSummary: View {
-    @Bindable var model: AppModel
-    let snapshot: DeviceSnapshot
+/// 管理入口卡：裸色符号（无图标底座）+ 标题 + 单行状态；dsCard 表面，chevron 仅 hover 出现。
+private struct HomeManagementTile: View {
+    let model: AppModel
+    let title: String
+    let glyph: String
+    let tint: Color
+    let status: String
+    let destination: AppModel.Destination
+    @State private var isHovering = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        DSCard(padding: DS.Space.x400) {
-            HStack(spacing: 0) {
-                metric(model.localized("Agent Home"), "\(snapshot.homes.filter { $0.confidence == .confirmed }.count)", color: DS.Chart.series01)
-                metricDivider
-                metric(model.localized("疑似"), "\(snapshot.homes.filter { $0.confidence == .possible }.count)", color: DS.Chart.series03)
-                metricDivider
-                metric(model.localized("物理占用"), model.formatBytes(snapshot.totalStorage.physicalBytes), color: DS.Chart.series02)
-                metricDivider
-                metric(model.localized("完整度"), model.localized(snapshot.isPartial ? "部分" : "完整"), color: snapshot.isPartial ? DS.Semantic.statusCaution : DS.Semantic.statusPositive)
+        Button { model.selection = destination } label: {
+            HStack(spacing: DS.Space.x300) {
+                Image(systemName: glyph)
+                    .font(.system(size: DS.IconSize.card, weight: .medium))
+                    .foregroundStyle(tint)
+                    .frame(width: 20)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: DS.Space.x050) {
+                    Text(title)
+                        .font(DS.Typeface.label)
+                        .foregroundStyle(.secondary)
+                    Text(status)
+                        .font(DS.Typeface.body)
+                        .foregroundStyle(Color.primary)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: DS.Space.x200)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.tertiary)
+                    .opacity(isHovering ? 1 : 0)
+                    .accessibilityHidden(true)
             }
-            .frame(maxWidth: 760)
+            .padding(DS.Space.x400)
+            .frame(maxWidth: .infinity, minHeight: 72, alignment: .leading)
         }
-        .frame(maxWidth: 760)
-    }
-
-    private var metricDivider: some View {
-        Rectangle()
-            .fill(Color.primary.opacity(0.08))
-            .frame(width: DS.Stroke.hairline, height: 36)
-            .padding(.horizontal, DS.Space.x400)
-    }
-
-    private func metric(_ title: String, _ value: String, color: Color) -> some View {
-        VStack(alignment: .leading, spacing: DS.Space.x100) {
-            Text(value).font(DS.Typeface.title).monospacedDigit()
-            HStack(spacing: DS.Space.x100) {
-                Circle().fill(color).frame(width: 6, height: 6)
-                Text(title).font(DS.Typeface.caption).foregroundStyle(.secondary)
+        .buttonStyle(.dsCard)
+        .onHover { hovering in
+            withAnimation(reduceMotion ? nil : .easeOut(duration: DS.Motion.hover)) {
+                isHovering = hovering
             }
         }
-        .frame(minWidth: 110, alignment: .leading)
+        .accessibilityLabel(model.localized("%@：%@", title, status))
+        .accessibilityHint(model.localized("打开%@详情", title))
     }
 }
+
+/// 信任行：与发现态呼应的安静事实行，顶部分隔线。
+private struct HomeTrustFooter: View {
+    let model: AppModel
+
+    var body: some View {
+        HStack(spacing: DS.Space.x200) {
+            Image(systemName: "lock.shield")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(.secondary)
+                .accessibilityHidden(true)
+            Text(model.localized("本机分析") + " · " + model.localized("只读元数据") + " · " + model.localized("不执行清理"))
+                .font(DS.Typeface.caption)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.top, DS.Space.x300)
+        .overlay(alignment: .top) {
+            Rectangle()
+                .fill(Color.primary.opacity(DS.Opacity.borderQuiet))
+                .frame(height: DS.Stroke.hairline)
+                .accessibilityHidden(true)
+        }
+        .accessibilityElement(children: .combine)
+    }
+}
+
+/// 空态：无卡片容器，居中裸符号 + 标题 + 指引（扫描主操作在身份区右上角）。
+private struct HomeEmptyState: View {
+    let model: AppModel
+
+    var body: some View {
+        VStack(spacing: DS.Space.x250) {
+            Image(systemName: "bird")
+                .font(.system(size: DS.IconSize.hero, weight: .medium))
+                .foregroundStyle(.tertiary)
+                .accessibilityHidden(true)
+            Text(model.localized("尚未建立 Agent 环境档案"))
+                .font(DS.Typeface.section)
+            Text(model.localized("点击右上角「扫描」开始发现本机 Agent 环境。"))
+                .font(DS.Typeface.caption)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, minHeight: 300)
+    }
+}
+
 
 private struct AgentListView: View {
     @Bindable var model: AppModel

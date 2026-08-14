@@ -473,3 +473,17 @@
 "疑似位置" = "Suspect locations";
 "本次扫描路径" = "Scan paths";
 "连线表示扫描来源，不表示容量大小" = "Connections show scan attribution, not capacity";
+"Agent 环境" = "Agent Environment";
+"维护" = "Maintain";
+"已确认 Home" = "Confirmed Homes";
+"Skill 安装" = "Skill Installations";
+"上次扫描 %@" = "Last scan %@";
+"部分扫描" = "partial scan";
+"%d 个产品 · 只读分析" = "%d products · read-only analysis";
+"%d 个来源 · 全部核验" = "%d sources · all verified";
+"%d 个来源 · %d 个疑似" = "%d sources · %d possible";
+"无冲突" = "No conflicts";
+"尚未索引" = "Not indexed yet";
+"%d 个已归因进程" = "%d attributed processes";
+"尚未建立 Agent 环境档案" = "No Agent environment profile yet";
+"%@：%@" = "%@: %@";

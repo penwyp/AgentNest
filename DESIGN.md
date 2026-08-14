@@ -143,6 +143,7 @@ AgentNest 的界面应当像一块安静的 macOS 原生仪器面板：
 | `type.display` | SF Pro Display | `26` | Semibold | 预留（无页面首部后暂未使用） |
 | `type.title` | SF Pro Display | `20` | Semibold | 页面/卡片主数值 |
 | `type.metricValue` | SF Mono | `24` | Semibold | 发现扫描中心指标数值 |
+| `type.reading` | SF Pro Display | `36` | Light | 首页稳定态读数带大号数值 |
 | `type.section` | SF Pro Display | `17` | Medium | 行标题、小节标题 |
 | `type.body` | SF Pro Text | `13` | Regular | 正文 |
 | `type.lead` | SF Pro Text | `15` | Regular | 激活门户副标题 |
@@ -257,7 +258,7 @@ Reduce Motion 将全部时长解析为 `0 s`，保留最终视觉状态。
 
 | 页面 | 标题 | 数据 / 信息行 | 主操作 |
 | --- | --- | --- | --- |
-| 首页 | 扫描中「正在发现本机 Agent 环境」/ 空闲「发现并维护你的 Agent 环境」 | 扫描中当前阶段；空闲「N 个 Home · 物理占用」 | 扫描 / 停止 |
+| 首页 | 扫描中「正在发现本机 Agent 环境」/ 空闲「发现并维护你的 Agent 环境」 | 扫描中当前阶段；空闲「上次扫描 X（· 部分扫描）」 | 扫描 / 停止 |
 | Agent | Agent | 「N 个已确认 · N 个疑似」 | — |
 | Skill | Skill | 「N 个安装 · N 个冲突 · N 个无效」 | 新建 Skill |
 | 空间 | 空间 | 大号数据值 = 唯一物理占用；信息行 = 最大类别 | — |
@@ -288,7 +289,7 @@ Reduce Motion 将全部时长解析为 `0 s`，保留最终视觉状态。
 
 ### 5.8 首页（Home，借鉴 find-disk-killer Storage Map 语言）
 
-首页是「扫描中 = 发现模式 / 扫描后 = 管理模式」的两态页面，借鉴 find-disk-killer `StorageMapDiscoveryView` 的逐个确认体验，但两态互斥：**扫描进行时只呈现发现界面，扫描完成后的摘要与影响卡（`SnapshotSummary` + `ImpactCards`）在扫描结束前不出现**（重扫同理）。每一处动效都折算进 AgentNest 的性能约束（无循环动画、无多层阴影、无材质）：
+首页是「扫描中 = 发现模式 / 扫描后 = 管理模式」的两态页面，借鉴 find-disk-killer `StorageMapDiscoveryView` 的逐个确认体验，但两态互斥：**扫描进行时只呈现发现界面，扫描完成后的环境总览台（读数带 + Agent 环境图 + 管理入口 + 信任行）在扫描结束前不出现**（重扫同理）。每一处动效都折算进 AgentNest 的性能约束（无循环动画、无多层阴影、无材质）：
 
 - **扫描/停止主操作**：位于首页身份区标题基线行右侧（扫描中「停止」，空闲「扫描」）。两态页面：扫描中只有发现界面，完成后才出现摘要与影响卡。已发现计数只出现一次（扫描中心顶部大号等宽数字）；身份区信息行显示当前阶段。扫描态内容加宽（`layout.discovery.max-width` = 1320），与窗口同宽展开。
 - **发现界面**（`HomeDiscoveryView`，借鉴 find-disk-killer `StorageMapFirstRunView` 桌面拓扑，直接铺在画布上、无卡片容器，`min-height` 440；列宽以右列拓扑栏为主，`ViewThatFits` 三档适配窄窗口）：
@@ -299,6 +300,12 @@ Reduce Motion 将全部时长解析为 `0 s`，保留最终视觉状态。
   - **进度底栏**：扫描期间钉在发现界面底部的固定状态栏（`safeAreaInset(edge: .bottom)`，canvas 底 + 顶部分隔线，位于内容滚动区之外）：当前位置 + 已处理项数/字节（numericText 滚动），全阶段显示、始终可见。
   - **渐进数据**：`ScanProgress.confirmedHomes` 由 `ScanUseCase` 每验证一个 Home 立即发布；`AppModel` 对发现计数变化即时放行（位置刻度仍按 0.25 s 节流）。首次进入首页且无快照时自动开始首次扫描（仅一次，用户停止后不自动重启）。
   - 数值滚动与插入过渡一律尊重 Reduce Motion。
+  - **稳定态（环境总览台，`layout.home.max-width` = 1160）**：扫描完成后首页进入「环境总览台」——读数带 → Agent 环境图 → 管理入口 → 信任行；全部静态排版、动效仅 hover（`motion.hover`），无材质、无渐变，阴影仅入口卡保留 `DSCard` 单层投影：
+    - **读数带**（`HomeReadingsStrip`）：无卡片容器、无边框的四个大号仪器读数横排，标签（`type.label`）在数值上方，数值 `type.reading`（36 Light）等宽数字；「已确认 Home」accent /「物理占用」primary /「Skill 安装」次强调 violet /「疑似位置」>0 时 amber；读数间 hairline 竖分隔（`home.reading.spacing` = 64）。Skill 未索引时数值显示「—」。
+    - **Agent 环境图**（`HomeEnvironmentMap` + `HomeEnvironmentChip`）：发现态拓扑的落定形态，按产品分组的泳道——品牌图标 24 pt + 产品名（`type.body` semibold）+「N 个 Home」caption + 行尾产品合计占用（`type.data`）；其下 Home 芯片自适应网格（min 200 / max 340，与发现态一致），芯片 = 品牌图标 18 pt + 名称 + 空间占用 + 绿色核验勾/「疑似」徽章，hover 出 accent 0.30 描边、`.help()` 显示完整路径、点击直达 Agent 页；产品间 hairline 分隔，右翼「N 个产品 · 只读分析」。
+    - **管理入口**（`HomeManagementTiles` + `HomeManagementTile`）：标题「维护」下一行四个安静入口卡（自适应网格 min `home.tile.min-width` = 240），裸色符号（无图标底座）+ 标题 `type.label` + 单行状态 `type.body`（Agent「N 个来源 · 全部核验/有疑似」、Skill「无冲突/N 个冲突 · N 个无效/未索引」、空间「最大类别」、活动「N 个已归因进程」）；dsCard 表面，chevron 仅 hover 出现。
+    - **信任行**（`HomeTrustFooter`）：底部安静事实行「本机分析 · 只读元数据 · 不执行清理」（`type.caption` secondary + 盾牌符号），顶部分隔线，与发现态信任列表呼应。
+    - **空态**（`HomeEmptyState`）：无卡片容器，居中裸符号 40 pt tertiary + 标题「尚未建立 Agent 环境档案」+ 指引文案（扫描主操作在身份区右上角）。
 
 
 ---
@@ -508,8 +515,8 @@ hover 在指针离开或窗口失活时清除；pressed 不叠加 hover；focus 
 | 不透明度 | `DS.Opacity.*` | 表面、禁用态 |
 | 动效 | `DS.Motion.*` | 控件、图表 |
 | Canvas | `DSCanvasBackground` | ContentView / ActivationView |
-| Card | `DSCard` | SnapshotSummary、Activation 卡片 |
-| Card 按钮 | `DSCardButtonStyle` | ImpactCards |
+| Card | `DSCard` | Activation 卡片 |
+| Card 按钮 | `DSCardButtonStyle` | 首页管理入口卡 |
 | Recessed | `DSRecessed` | 进度容器（HomeView） |
 | Action Button | `DSActionButtonStyle`（`.dsAction(_:size:)`） | 扫描、激活、清理、设置 |
 | Icon Button | `DSIconButtonStyle`（`.dsIcon`） | 预留（工具按钮） |
@@ -530,7 +537,13 @@ hover 在指针离开或窗口失活时清除；pressed 不叠加 hover；focus 
 | 发现界面 | `HomeDiscoveryView`（HomeView.swift） | HomeView 扫描中（逐个确认 Agent） |
 | 拓扑分支 | `HomeDiscoveryBranch`（HomeView.swift） | 发现界面来源分组连线 |
 | 发现芯片 | `HomeDiscoveryChip`（HomeView.swift） | 发现界面 |
-| 官方品牌图标 | `HomeBrandIcon`（HomeView.swift） | 发现界面刚发现块 / 芯片 |
+| 首页稳定态 | `HomeOverview`（ContentView.swift） | HomeView 扫描后总览 |
+| 读数带 | `HomeReadingsStrip`（ContentView.swift） | 首页稳定态大号读数 |
+| 环境图 | `HomeEnvironmentMap` / `HomeEnvironmentChip`（ContentView.swift） | 首页稳定态产品泳道与 Home 芯片 |
+| 管理入口 | `HomeManagementTiles` / `HomeManagementTile`（ContentView.swift） | 首页稳定态入口卡 |
+| 信任行 | `HomeTrustFooter`（ContentView.swift） | 首页稳定态事实行 |
+| 空态 | `HomeEmptyState`（ContentView.swift） | 首页无快照时 |
+| 官方品牌图标 | `HomeBrandIcon`（HomeView.swift） | 发现界面刚发现块 / 芯片 / 环境图 |
 | 产品视觉映射 | `HomeProductStyle`（HomeView.swift） | 官方图标加载、品牌色与 SF 回退 |
 
 ---
