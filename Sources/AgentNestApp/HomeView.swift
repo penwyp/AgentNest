@@ -82,21 +82,18 @@ struct HomeDiscoveryView: View {
     private func scanCenter(_ homes: [AgentHome]) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             if let latest = homes.last {
-                HStack(spacing: DS.Space.x300) {
-                    Image(systemName: HomeProductStyle.symbol(for: latest.productID))
-                        .font(.system(size: 24, weight: .medium))
-                        .foregroundStyle(HomeProductStyle.color(for: latest.productID))
-                    VStack(alignment: .leading, spacing: DS.Space.x100) {
-                        Label(model.localized("刚刚发现"), systemImage: "checkmark.circle.fill")
-                            .font(DS.Typeface.caption.weight(.semibold))
-                            .foregroundStyle(DS.Semantic.statusPositive)
-                        Text(latest.displayName)
-                            .font(DS.Typeface.title)
-                            .lineLimit(1)
-                        Text(model.discoverySourceTitle(latest.source))
-                            .font(DS.Typeface.caption)
-                            .foregroundStyle(.secondary)
-                    }
+                VStack(alignment: .leading, spacing: 0) {
+                    Label(model.localized("刚刚发现"), systemImage: "checkmark.circle.fill")
+                        .font(DS.Typeface.caption.weight(.semibold))
+                        .foregroundStyle(DS.Semantic.statusPositive)
+                    Text(latest.displayName)
+                        .font(DS.Typeface.title)
+                        .lineLimit(1)
+                        .padding(.top, DS.Space.x150)
+                    Text(model.discoverySourceTitle(latest.source))
+                        .font(DS.Typeface.caption)
+                        .foregroundStyle(.secondary)
+                        .padding(.top, DS.Space.x050)
                 }
                 .id(latest.id)
                 .transition(.opacity.combined(with: .offset(y: DS.Space.x200)))
@@ -115,10 +112,10 @@ struct HomeDiscoveryView: View {
             }
 
             HStack(alignment: .firstTextBaseline, spacing: DS.Space.x400) {
-                scanMetric(model.localized("来源"), "\(activeSourceCount(homes))", color: DS.Semantic.accentPrimary)
-                scanMetric(model.localized("疑似"), "\(homes.filter { $0.confidence == .possible }.count)", color: DS.Semantic.statusCaution)
+                scanMetric(model.localized("来源"), "\(activeSourceCount(homes))")
+                scanMetric(model.localized("疑似"), "\(homes.filter { $0.confidence == .possible }.count)")
             }
-            .padding(.top, DS.Space.x450)
+            .padding(.top, DS.Space.x400)
 
             Spacer(minLength: DS.Space.x400)
 
@@ -137,12 +134,11 @@ struct HomeDiscoveryView: View {
         }
     }
 
-    private func scanMetric(_ title: String, _ value: String, color: Color) -> some View {
+    private func scanMetric(_ title: String, _ value: String) -> some View {
         VStack(alignment: .leading, spacing: DS.Space.x050) {
             Text(value)
                 .font(DS.Typeface.section)
                 .monospacedDigit()
-                .foregroundStyle(color)
             Text(title)
                 .font(DS.Typeface.caption)
                 .foregroundStyle(.secondary)
