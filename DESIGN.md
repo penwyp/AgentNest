@@ -150,8 +150,6 @@ AgentNest 的界面应当像一块安静的 macOS 原生仪器面板：
 | `type.micro` | SF Pro Text | `10` | Regular | 密集辅助文字 |
 | `type.value.large` | SF Pro Display | `48` | Light | 单体数字强调 |
 | `type.value.medium` | SF Pro Display | `36` | Regular | 紧凑数字强调 |
-| `type.value.map` | SF Pro Display | `22` | Light | 空间地图卡片数值 |
-| `type.value.map.emphasized` | SF Pro Display | `30` | Light | 空间地图主卡数值 |
 | `type.data` | SF Mono | `12` | Regular | 路径、时间、标识、表格数值 |
 
 **规则**：数值 + 单位共享首行基线；所有会变化的数字使用 `monospacedDigit()`；SF Pro Display 只用于强调，密集表面用 SF Pro Text / SF Mono。
@@ -276,34 +274,18 @@ Reduce Motion 将全部时长解析为 `0 s`，保留最终视觉状态。
 
 ### 5.8 首页（Home，借鉴 find-disk-killer Storage Map 语言）
 
-首页吸收 Storage Map 的两个阶段：**扫描中 = 发现界面**（借鉴 `StorageMapDiscoveryView`：逐个确认设备上已安装的 Agent），**扫描后 = 摘要指标带 + 加权空间地图 + 着色主操作**。每一处动效都折算进 AgentNest 的性能约束（无循环动画、无多层阴影、无材质）：
+首页吸收 Storage Map 的「发现界面」语言：扫描中 = 发现界面（借鉴 `StorageMapDiscoveryView`：逐个确认设备上已安装的 Agent），扫描后回到原有首页结构（`SnapshotSummary` + `ImpactCards`，见 §14）。每一处动效都折算进 AgentNest 的性能约束（无循环动画、无多层阴影、无材质）：
 
-| Token | 值 |
-| --- | --- |
-| `layout.home.search.width` | `232 pt` 搜索字段宽度 |
-| `layout.home.search.height` | `30 pt` 搜索字段高度 |
-| `layout.home.action.width/height` | `184 × 58 pt` 着色主操作按钮 |
-| `layout.home.map.card.spacing` | `10 pt` 地图卡片间距 |
-| `layout.home.map.ideal-height` | `316 pt` 地图理想高度 |
-| `layout.home.summary.divider.height` | `40 pt` 摘要指标分隔线 |
-| `layout.home.quick-link.height` | `84 pt` 快速入口卡最小高度 |
-
-- **发现界面**（`HomeDiscoveryView`，扫描中显示）：
-  - **状态标签 + 滚动计数**：卡片左上角为当前阶段（`scanPhaseTitle`，accent 色）+ 大标题「N 个 Agent Home 已发现」用 `contentTransition(.numericText())` 随确认逐个滚动（`motion.sample`），副标题说明「确认后立即加入下方列表，扫描完成后生成完整报告」。
-  - **刚刚发现**（右上角）：最近一个 Home 的产品图标（accent 底色）+ 绿色「刚刚发现」+ 名称 + 来源；每次确认以 `.id(home.id)` + fade/8 pt 位移过渡换新（find-disk 用 `blurReplace`，macOS 14 以 opacity+offset 等效替代）。无确认时显示小 `ProgressView` +「正在检查已知位置 / 发现仍在进行」。
-  - **已发现的 Agent**：自适应网格芯片（产品图标 + 名称 + 来源 + 绿色勾 /「疑似」徽章），随确认逐个以 fade/位移插入，整卡 `.animation(value: homes.map(\.id))`（`motion.enter`）驱动。
+- **发现界面**（`HomeDiscoveryView`，扫描中显示，直接铺在画布上、无卡片容器）：
+  - **状态标签 + 滚动计数**：当前阶段（`scanPhaseTitle`，accent 色）+ 大标题「N 个 Agent Home 已发现」用 `contentTransition(.numericText())` 随确认逐个滚动（`motion.sample`），副标题说明「确认后立即加入下方列表，扫描完成后生成完整报告」。
+  - **刚刚发现**（右上角）：最近一个 Home 的产品图标（纯图标，无容器）+ 绿色「刚刚发现」+ 名称 + 来源；每次确认以 `.id(home.id)` + fade/8 pt 位移过渡换新（find-disk 用 `blurReplace`，macOS 14 以 opacity+offset 等效替代）。无确认时显示小 `ProgressView` +「正在检查已知位置 / 发现仍在进行」。
+  - **已发现的 Agent**：自适应网格芯片（产品图标 + 名称 + 来源 + 绿色勾 /「疑似」徽章），随确认逐个以 fade/位移插入，整区 `.animation(value: homes.map(\.id))`（`motion.enter`）驱动。
   - **正在确认的范围**：默认路径 / 环境变量 / 用户添加 / 用户确认四个来源区，实时显示「N 个已发现 / 正在检查」；右翼「只读取位置，不读取文件内容」盾牌标注。
   - **进度行**：进入索引阶段后显示 `Recessed` 就地进度（阶段 + 位置 + 已处理项数，numericText）；验证阶段不显示（芯片与计数已承载状态）。
   - **信任底栏**：分隔线下的「本机分析 · 只读元数据 · 不执行清理」，只陈述真实行为。
   - **渐进数据**：`ScanProgress.confirmedHomes` 由 `ScanUseCase` 每验证一个 Home 立即发布；`AppModel` 对发现计数变化即时放行（位置刻度仍按 0.25 s 节流）。首次进入首页且无快照时自动开始首次扫描（仅一次，用户停止后不自动重启）。
-- **页面首部**：`DSPageHeader` 右翼为「`DSSearchField` + 着色主操作按钮」。搜索字段 = 控制背景 + 放大镜 + 清除按钮，聚焦时 accent 描边；主操作按钮 = 图标 + 双行文案（主 + 副），tint 填充 `0.09 → hover 0.16 → press 0.20`，描边 `0.25 → 0.45 → 0.55`，按压缩放 `0.985`。扫描中 tint 切换为 `status.caution`（停止语义）。
-- **流动描边（`dsFlowStroke`）**：Storage Map 的 2.8 s 循环旋转描边在 AgentNest 被折算为**一次性 sweep**——进入扫描状态时 AngularGradient 描边从 −42° sweep 到 90°（`motion.settle`，只播一次），随后静态保持；退出扫描时 `motion.state` 淡出。不循环、不脉冲，遵守 §4.8 与 §5.6。
-- **扫描进度**：沿用 `Recessed` 就地更新（§5.6）；处理计数使用 `contentTransition(.numericText())` + `motion.sample`（数值过渡，非装饰动画）。
-- **摘要指标带**（`DSCard`）：主数值「已分析空间」`type.display` + numericText 滚动 + 更新时刻 caption；`DSHeaderMetric` 指标组（Agent Home / Skill 安装 / 文件条目 / 完整度）用 `stroke.hairline` 分隔线连接。
-- **Agent 空间地图**（`DSMosaicLayout` + `HomeAgentMapCard`）：按物理占用字节加权分区（1→整幅；2→横向；3→大块 hero + 纵向细分；4→2×2；≥5→上 2 下 3），首卡为 `type.value.map.emphasized`（30 Light），其余 `type.value.map`（22 Light）；数值 numericText 滚动，占比等宽数字；卡片 = raised 填充 + 细描边，hover 描边转产品色 `0.52`（`motion.hover`）。产品色按产品 ID 稳定映射 `chart.color.series.01…08`。地图一次性入场（fade + 8 pt 位移，`motion.enter`）；搜索过滤本地即时生效（`motion.state`）。
-- **搜索**：过滤名称 / 产品 / 路径（不区分大小写）；默认展示前 6 个 Home，超出以 footer 链接「查看全部 N 个 Agent ›」进入 Agent 页；无匹配时给出「没有与“查询”匹配的 Agent」+ 清空搜索。
-- **快速入口**：Agent / Skill / 空间 / 活动四张紧凑卡（`dsCard` 按钮样式），保留原 ImpactCards 的数据语义。
-- 数值滚动一律尊重 Reduce Motion；地图入场动画同样在 Reduce Motion 下直接落定。
+  - 数值滚动与插入过渡一律尊重 Reduce Motion。
+
 
 ---
 
@@ -511,8 +493,8 @@ hover 在指针离开或窗口失活时清除；pressed 不叠加 hover；focus 
 | 不透明度 | `DS.Opacity.*` | 表面、禁用态 |
 | 动效 | `DS.Motion.*` | 控件、图表 |
 | Canvas | `DSCanvasBackground` | ContentView / ActivationView |
-| Card | `DSCard` | HomeSummaryBand、地图空态、Activation 卡片 |
-| Card 按钮 | `DSCardButtonStyle` | HomeQuickLinks |
+| Card | `DSCard` | SnapshotSummary、Activation 卡片 |
+| Card 按钮 | `DSCardButtonStyle` | ImpactCards |
 | Recessed | `DSRecessed` | 进度容器（HomeView） |
 | Action Button | `DSActionButtonStyle`（`.dsAction(_:size:)`） | 扫描、激活、清理、设置 |
 | Icon Button | `DSIconButtonStyle`（`.dsIcon`） | 预留（工具按钮） |
@@ -530,17 +512,9 @@ hover 在指针离开或窗口失活时清除；pressed 不叠加 hover；focus 
 | 微柱状图 | `DSMicroHistogram` | 预留（速率分布） |
 | 分段仪表 | `DSSegmentedMeter` | ActivityView CPU / 进程 |
 | 环形进度 | `DSDonut` | ActivityView 卷容量 |
-| 搜索字段 | `DSSearchField` | HomeView 页面首部 |
 | 发现界面 | `HomeDiscoveryView`（HomeView.swift） | HomeView 扫描中（逐个确认 Agent） |
 | 发现芯片 | `HomeDiscoveryChip`（HomeView.swift） | HomeView 发现界面 |
-| 产品视觉映射 | `HomeProductStyle`（HomeView.swift） | 发现芯片 / 空间地图卡片 |
-| 摘要指标 | `DSHeaderMetric` | HomeView 摘要指标带 |
-| 流动描边 | `.dsFlowStroke(isActive:color:)` | HomeView 扫描主操作（一次性 sweep） |
-| 加权马赛克 | `DSMosaicLayout` + `DSMosaicWeightKey` | HomeView Agent 空间地图 |
-| 着色主操作按钮 | `HomeScanButtonStyle`（HomeView.swift） | HomeView 扫描 / 停止 |
-| 空间地图卡片 | `HomeAgentMapCard`（HomeView.swift） | HomeView Agent 空间地图 |
-| 摘要指标带 | `HomeSummaryBand`（HomeView.swift） | HomeView |
-| 快速入口 | `HomeQuickLinks`（HomeView.swift） | HomeView |
+| 产品视觉映射 | `HomeProductStyle`（HomeView.swift） | 发现芯片产品图标与色相 |
 
 ---
 
