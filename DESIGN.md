@@ -29,7 +29,7 @@ AgentNest 的界面应当像一块安静的 macOS 原生仪器面板：
 | 材质 | **不透明表面**。禁止 `ultraThinMaterial`/`thickMaterial`/`regularMaterial` 叠加，禁止 `NSVisualEffectView` |
 | 阴影 | 最多 **1 层**浅投影（卡片），blur ≤ 4 pt，y 偏移 ≤ 2 pt；禁止双层/多色阴影 |
 | 渐变 | 仅允许顶部高光描边（0.6 pt）与图表面积填充；禁止大面积装饰渐变 |
-| 动效 | 只在 hover / press / state 切换时发生，时长 ≤ 0.40 s；**禁止循环、脉冲、持续动画** |
+| 动效 | 只在 hover / press / state 切换时发生，时长 ≤ 0.40 s；**禁止循环、脉冲、持续动画**。唯一例外：扫描进行态的进度指示（`DSIndeterminateScanBar`：2 pt 扫描条 30 fps 节流、扫描结束即移除、Reduce Motion 静态化；底部栏每秒计时），与 §5.7 `DSHeroWash` 同级登记 |
 | 滚动 | 列表 / 表单使用原生 `List` / `Form` / `ScrollView`，不自定义滚动容器 |
 | 图表 | 使用单一 `Path` 或少量 `Shape` 绘制；禁止每帧重建大量视图层级 |
 | 目标 | 空闲 CPU 平均 < 1%；滚动与导航 60 fps；扫描/监控运行中 UI 保持可交互 |
@@ -297,7 +297,8 @@ Reduce Motion 将全部时长解析为 `0 s`，保留最终视觉状态。
   - **窄窗口三档**：`ViewThatFits` 依次尝试「248 左列 + 整宽拓扑栏」→「200 左列 + 整宽拓扑栏」→「紧凑单列」；紧凑单列 = 计数与来源/疑似指标同行 + 刚发现行（28 pt 图标）+ 信任事实横排一行 + 整宽拓扑栏，避免丑陋折行。
   - **右列拓扑栏**：标题「本次扫描路径」+ 说明「连线表示扫描来源，不表示容量大小」+ 右翼「只读取位置，不读取文件内容」盾牌；下方按发现来源（默认路径 / 环境变量 / 用户添加 / 用户确认）分成四个分支，每支：来源图标（chart series 色）+ 来源名 + 「N 个已发现 / 正在检查」，其下为自适应网格芯片（min 200 / max 340，官方品牌图标 24 pt + 名称 + 路径 + 绿色勾 /「疑似」徽章），随确认逐个以 fade/位移插入，整区 `.animation(value: homes.map(\.id))`（`motion.enter`）驱动；分支左侧用静态 `Canvas` 绘制连线（竖干线 + 分支线 + 色点，secondary 0.24 / 来源色 0.72），只表归属、不表容量。
   - **官方品牌图标**（`HomeBrandIcon` + `HomeProductStyle`）：来自 thesvg.org（MIT，见 THIRD_PARTY_NOTICES.md），打包于 AgentNestCore 资源。单色品牌（Codex / Cursor）以模板渲染 + 自适应主色；Claude Code 用官方橙 `#D97757`、Trae 用官方绿 `#32F08C`（品牌色是品牌标识内容，不进入 DS token 表）；WorkBuddy 为应用图标样式，按原色渲染。无对应图标的产品回退 SF Symbol + chart series 色。
-  - **进度底栏**：扫描期间钉在发现界面底部的固定状态栏（`safeAreaInset(edge: .bottom)`，canvas 底 + 顶部分隔线，位于内容滚动区之外）：当前位置 + 已处理项数/字节（numericText 滚动），全阶段显示、始终可见。
+  - **进度底栏**：扫描期间钉在发现界面底部的固定状态栏（`safeAreaInset(edge: .bottom)`，canvas 底，位于内容滚动区之外）：当前位置 + 已处理项数/字节（numericText 滚动）+ 已用时（每秒跳动的真实计时）；「对账并完成」阶段左侧改为阶段名 + 小 spinner（路径已停滞、不再显示陈旧位置）；顶缘为不确定扫描条（`DSIndeterminateScanBar`，§2 唯一例外）。全部为真实状态反馈，不伪造进度；扫描结束动效立即移除。
+  - **对账阶段状态行**：左列扫描中心在「对账并完成」阶段于指标与信任事实之间插入 spinner + 阶段名状态行，避免界面静止观感。
   - **渐进数据**：`ScanProgress.confirmedHomes` 由 `ScanUseCase` 每验证一个 Home 立即发布；`AppModel` 对发现计数变化即时放行（位置刻度仍按 0.25 s 节流）。首次进入首页且无快照时自动开始首次扫描（仅一次，用户停止后不自动重启）。
   - 数值滚动与插入过渡一律尊重 Reduce Motion。
   - **稳定态（环境总览台，`layout.home.max-width` = 1160）**：扫描完成后首页进入「环境总览台」——读数带 → Agent 环境图 → 管理入口 → 信任行；全部静态排版、动效仅 hover（`motion.hover`），无材质、无渐变，阴影仅入口卡保留 `DSCard` 单层投影：
@@ -321,6 +322,16 @@ Agent 页以「档案卡」呈现每个 Agent Home（自适应网格 `agent.card
 - **类别 → 系列色固定映射**（§8.1 系列色的组件级延伸）：会话 `series.01`、日志 `series.02`、缓存 `series.03`、配置 `series.04`、运行时 `series.05`、Skill `series.06`、浏览器 `series.07`、数据库 `series.08`、未归属剩余 `text.secondary` 0.55。
 - **派生计算**：构成数据由 `computeAgentCardDerived` 在后台（`Task.detached(.utility)`）一次遍历存储账本、按 `homeIDs` 聚合类别物理占用；`AgentListView` 按 `snapshot.generation` 缓存、主线程发布、generation 校验丢弃迟到结果；未就绪时构成条以空轨道占位、图例行以空格占位（固定尺寸防跳动）。
 - **骨架屏**：`AgentCardGridSkeleton` 镜像档案卡网格（4 张骨架卡：图标块 + 名称/路径条 + 事实条 + 构成轨道），数据未就绪时占位；空态保持原生 `ContentUnavailableView`。
+
+### 5.10 Agent 市场（Marketplace）
+
+Agent 页身份区右侧主操作「Agent 市场」（accent 大按钮 + sparkles，`install` 授权特性不足时禁用并给出说明）打开市场面板（sheet，最小 880×640）：
+
+- **面板结构**（`AgentMarketSheet`）：`NavigationStack` + 标题「Agent 市场」+ 取消关闭；滚动区为自适应网格（min 380 / max 460，920 内双列）的目录产品卡；安装完成时顶部出现 recessed 提示条（「已安装的 Agent 会在下次扫描后纳入环境。」+「重新扫描」按钮 → 关闭面板并触发真实扫描）。
+- **产品卡**（`AgentMarketCard`，`DSCard`）：官方品牌图标 32 pt + 名称（`type.section`）+ 简介（`type.caption` secondary，来自目录 `marketplace.summary`）+ 右上状态——已安装 → 绿色「已安装」徽章；未安装且无安装方式 → 「暂无安装方式」caption；未安装 → accent「安装」按钮（`install` 特性不足或已有安装进行中时禁用）；安装中 → 「取消」+ recessed 输出区（spinner + 阶段文案 + 输出尾部 3 行，`type.data` 等宽可选中）；失败 → 「重试」+ 错误行。卡内下方为安装方式徽章（brew / cask）与主页链接。
+- **目录数据**：`AgentDefinition.marketplace`（可选字段：`summary`、`homepageURL`、`install { kind: brew|cask, formula }`），catalog 校验白名单同步；市场列出全部目录产品（含未参与扫描的产品），按名称排序。
+- **安装执行**（`InstallAgentRunner`，Core/Application）：真实调用 Homebrew（`brew install [--cask] <formula>`），输出逐行流式发布（0.25 s 节流、尾部 6 行）、支持取消（terminate）、结构化失败（brewNotFound / exited(code)）；同步阻塞式、必须在后台线程调用（`Task.detached(.utility)` 隔离）；事件经主线程发布到 `AppModel.marketInstallations`。不伪造任何状态。
+- **授权**：`LicenseFeature.install`；服务端付费策略默认特征表同步包含 `install`。
 
 
 ---
@@ -547,6 +558,10 @@ hover 在指针离开或窗口失活时清除；pressed 不叠加 hover；focus 
 | Agent 档案卡 | `AgentHomeCard`（ContentView.swift） | Agent 页卡片（品牌图标 / 事实行 / 构成条 / 操作行） |
 | Agent 骨架卡 | `AgentCardGridSkeleton` / `AgentCardSkeleton`（ContentView.swift） | Agent 页数据占位 |
 | 类别构成派生 | `computeAgentCardDerived`（ContentView.swift） | Agent 档案卡空间构成（后台派生） |
+| 不确定扫描条 | `DSIndeterminateScanBar`（DesignSystem.swift） | 扫描态底部栏（§2 唯一例外） |
+| Agent 市场面板 | `AgentMarketSheet` / `AgentMarketCard`（ContentView.swift） | Agent 市场 sheet 与产品卡 |
+| Agent 安装执行器 | `InstallAgentRunner`（Core） | 市场真实 Homebrew 安装（流式/取消/失败） |
+| 目录市场字段 | `AgentDefinition.marketplace`（Core） | 市场简介 / 主页 / 安装方式 |
 | 导航行 | `SidebarRow`（ContentView） | 侧边栏 |
 | 面积折线 | `DSLineChart` | HistoryView CPU 趋势 |
 | 微柱状图 | `DSMicroHistogram` | 预留（速率分布） |

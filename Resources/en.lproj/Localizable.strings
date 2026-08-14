@@ -491,3 +491,15 @@
 "%@ · %@ · %d 项 · %d 条证据" = "%@ · %@ · %d items · %d pieces of evidence";
 "%@ %@" = "%@ %@";
 "0 B" = "0 B";
+"%d 秒" = "%d s";
+"Agent 市场" = "Agent Marketplace";
+"当前授权不包含 Agent 市场。" = "Your license does not include the Agent marketplace.";
+"已安装的 Agent 会在下次扫描后纳入环境。" = "Installed agents are included after the next scan.";
+"重新扫描" = "Rescan";
+"已安装" = "Installed";
+"暂无安装方式" = "No install method";
+"重试" = "Retry";
+"正在定位 Homebrew" = "Locating Homebrew";
+"正在安装 %@" = "Installing %@";
+"未找到 Homebrew，无法安装。" = "Homebrew not found. Cannot install.";
+"安装退出码 %d" = "Install exited with code %d";

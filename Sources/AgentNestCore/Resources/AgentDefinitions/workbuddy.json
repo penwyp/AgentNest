@@ -6,8 +6,21 @@
     "defaultPaths": [],
     "environmentVariables": []
   },
-  "fingerprints": { "required": [], "optional": [], "negative": [] },
+  "fingerprints": {
+    "required": [],
+    "optional": [],
+    "negative": []
+  },
   "skills": [],
   "artifacts": [],
-  "capabilities": { "space": false, "skills": false, "activity": false, "cleanup": false }
+  "capabilities": {
+    "space": false,
+    "skills": false,
+    "activity": false,
+    "cleanup": false
+  },
+  "marketplace": {
+    "summary": "AgentNest's built-in companion product.",
+    "homepageURL": "https://github.com/penwyp/AgentNest"
+  }
 }

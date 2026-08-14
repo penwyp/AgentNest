@@ -3,20 +3,45 @@
   "id": "bytedance.trae",
   "displayName": "Trae",
   "homeDiscovery": {
-    "defaultPaths": ["~/.trae"],
+    "defaultPaths": [
+      "~/.trae"
+    ],
     "environmentVariables": []
   },
   "fingerprints": {
     "required": [],
     "optional": [
-      { "kind": "jsonFile", "relativePath": "argv.json" },
-      { "kind": "directory", "relativePath": "skills" }
+      {
+        "kind": "jsonFile",
+        "relativePath": "argv.json"
+      },
+      {
+        "kind": "directory",
+        "relativePath": "skills"
+      }
     ],
     "negative": []
   },
   "skills": [
-    { "relativePath": "skills", "format": "directory-skill-md", "writable": true }
+    {
+      "relativePath": "skills",
+      "format": "directory-skill-md",
+      "writable": true
+    }
   ],
   "artifacts": [],
-  "capabilities": { "space": true, "skills": true, "activity": false, "cleanup": false }
+  "capabilities": {
+    "space": true,
+    "skills": true,
+    "activity": false,
+    "cleanup": false
+  },
+  "marketplace": {
+    "summary": "ByteDance's AI-powered IDE.",
+    "homepageURL": "https://www.trae.ai",
+    "install": {
+      "kind": "cask",
+      "formula": "trae"
+    }
+  }
 }

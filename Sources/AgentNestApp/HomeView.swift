@@ -203,6 +203,19 @@ struct HomeDiscoveryView: View {
             }
             .padding(.top, DS.Space.x400)
 
+            // 对账阶段：进度数据不再变化，显示阶段 spinner 状态行，避免界面静止观感。
+            if progress.phase == .reconciling {
+                HStack(spacing: DS.Space.x200) {
+                    ProgressView()
+                        .controlSize(.small)
+                        .accessibilityHidden(true)
+                    Text(model.scanPhaseTitle(progress.phase))
+                        .font(DS.Typeface.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.top, DS.Space.x300)
+            }
+
             VStack(alignment: .leading, spacing: DS.Space.x250) {
                 trustItem(model.localized("本机分析"), symbol: "macbook")
                 trustItem(model.localized("只读元数据"), symbol: "doc.text.magnifyingglass")

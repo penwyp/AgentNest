@@ -9,11 +9,64 @@ public struct AgentDefinition: Codable, Equatable, Sendable {
     public let skills: [SkillLocation]
     public let artifacts: [ArtifactRule]
     public let capabilities: Capabilities
+    /// 市场面板展示信息（可选；缺失时市场面板显示「暂无安装方式」）。
+    public let marketplace: AgentMarketplace?
 
     public var participatesInScanning: Bool {
         !homeDiscovery.defaultPaths.isEmpty ||
             !homeDiscovery.environmentVariables.isEmpty ||
             !fingerprints.required.isEmpty
+    }
+
+    public init(
+        schemaVersion: Int,
+        id: String,
+        displayName: String,
+        homeDiscovery: HomeDiscovery,
+        fingerprints: Fingerprints,
+        skills: [SkillLocation],
+        artifacts: [ArtifactRule],
+        capabilities: Capabilities,
+        marketplace: AgentMarketplace? = nil
+    ) {
+        self.schemaVersion = schemaVersion
+        self.id = id
+        self.displayName = displayName
+        self.homeDiscovery = homeDiscovery
+        self.fingerprints = fingerprints
+        self.skills = skills
+        self.artifacts = artifacts
+        self.capabilities = capabilities
+        self.marketplace = marketplace
+    }
+}
+
+/// 市场面板展示信息：简介、主页与可选安装方式。
+public struct AgentMarketplace: Codable, Equatable, Sendable {
+    public let summary: String
+    public let homepageURL: String
+    public let install: AgentInstallMethod?
+
+    public init(summary: String, homepageURL: String, install: AgentInstallMethod? = nil) {
+        self.summary = summary
+        self.homepageURL = homepageURL
+        self.install = install
+    }
+}
+
+/// 安装方式：Homebrew 公式或 Cask。
+public struct AgentInstallMethod: Codable, Equatable, Sendable {
+    public enum Kind: String, Codable, Sendable {
+        case brew
+        case cask
+    }
+
+    public let kind: Kind
+    public let formula: String
+
+    public init(kind: Kind, formula: String) {
+        self.kind = kind
+        self.formula = formula
     }
 }
 
