@@ -455,11 +455,9 @@
 "数据只在本机分析。" = "Analysis stays on this Mac.";
 "速率分布" = "Rate distribution";
 "正在发现本机 Agent 环境" = "Discovering the Agent environment on this Mac";
-"%d 个 Agent Home 已发现" = "%d agent homes discovered";
-"确认后立即加入下方列表，扫描完成后生成完整报告。" = "Confirmed homes join the list below; the full report follows when the scan completes.";
+"%d 个 Agent Home 已发现 · %@" = "%d agent homes discovered · %@";
 "刚刚发现" = "Just discovered";
 "正在检查已知位置" = "Checking known locations";
-"发现仍在进行" = "Discovery in progress";
 "已发现的 Agent" = "Discovered agents";
 "%d 个已发现" = "%d discovered";
 "正在确认的范围" = "Scan scope";

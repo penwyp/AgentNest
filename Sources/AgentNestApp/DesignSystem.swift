@@ -278,12 +278,16 @@ struct DSSkeletonList: View {
 }
 
 /// 页面首部：把标题、说明、状态图标和主操作固定为同一信息层级。
+/// `animatesSubtitle` 为 true 时，副标题视为实时状态行：等宽数字 + numericText 滚动（motion.sample）。
 struct DSPageHeader<Accessory: View>: View {
     let title: String
     let subtitle: String
     let systemImage: String
     var color: Color = DS.Semantic.accentPrimary
+    var animatesSubtitle: Bool = false
     @ViewBuilder let accessory: Accessory
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         HStack(alignment: .center, spacing: DS.Space.x300) {
@@ -307,12 +311,20 @@ struct DSPageHeader<Accessory: View>: View {
                 Text(subtitle)
                     .font(DS.Typeface.body)
                     .foregroundStyle(.secondary)
+                    .monospacedDigit()
+                    .contentTransition(animatesSubtitle ? .numericText() : .identity)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
             Spacer(minLength: DS.Space.x400)
             accessory
         }
+        .animation(
+            animatesSubtitle && !reduceMotion
+                ? .easeInOut(duration: DS.Motion.sample)
+                : nil,
+            value: subtitle
+        )
     }
 }
 

@@ -172,8 +172,13 @@ private struct HomeView: View {
             VStack(alignment: .leading, spacing: DS.Space.x400) {
                 DSPageHeader(
                     title: model.localized(model.isScanning ? "正在发现本机 Agent 环境" : "发现并维护你的 Agent 环境"),
-                    subtitle: model.localized("仅扫描 Agent Definition 声明和你明确添加的 Agent Home，数据只在本机分析。"),
-                    systemImage: model.isScanning ? "magnifyingglass" : "bird.fill"
+                    subtitle: model.localized(
+                        model.isScanning
+                            ? scanningStatusLine
+                            : "仅扫描 Agent Definition 声明和你明确添加的 Agent Home，数据只在本机分析。"
+                    ),
+                    systemImage: model.isScanning ? "magnifyingglass" : "bird.fill",
+                    animatesSubtitle: model.isScanning
                 ) {
                     if model.isScanning {
                         Button(model.localized(model.isStoppingScan ? "正在停止…" : "停止"), role: .cancel) {
@@ -195,23 +200,26 @@ private struct HomeView: View {
                     HomeDiscoveryView(model: model, progress: progress)
                 }
 
-                if let snapshot = model.snapshot {
-                    SnapshotSummary(model: model, snapshot: snapshot)
-                    ImpactCards(model: model, snapshot: snapshot)
-                } else if !model.isScanning {
-                    DSCard {
-                        VStack(spacing: DS.Space.x200) {
-                            Image(systemName: "tray")
-                                .font(.system(size: DS.IconSize.hero, weight: .medium))
-                                .foregroundStyle(.tertiary)
-                                .accessibilityHidden(true)
-                            Text("尚无 Agent 结果")
-                                .font(DS.Typeface.section)
-                            Text("先在首页扫描。")
-                                .font(DS.Typeface.caption)
-                                .foregroundStyle(.secondary)
+                // 扫描中只呈现发现界面；扫描完成后才显示摘要与影响卡。
+                if !model.isScanning {
+                    if let snapshot = model.snapshot {
+                        SnapshotSummary(model: model, snapshot: snapshot)
+                        ImpactCards(model: model, snapshot: snapshot)
+                    } else {
+                        DSCard {
+                            VStack(spacing: DS.Space.x200) {
+                                Image(systemName: "tray")
+                                    .font(.system(size: DS.IconSize.hero, weight: .medium))
+                                    .foregroundStyle(.tertiary)
+                                    .accessibilityHidden(true)
+                                Text("尚无 Agent 结果")
+                                    .font(DS.Typeface.section)
+                                Text("先在首页扫描。")
+                                    .font(DS.Typeface.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            .frame(maxWidth: .infinity)
                         }
-                        .frame(maxWidth: .infinity)
                     }
                 }
 
@@ -233,6 +241,18 @@ private struct HomeView: View {
         .onAppear {
             model.autoStartInitialScanIfNeeded()
         }
+    }
+
+    /// 扫描中的状态行：已发现计数 + 当前阶段，各出现一次（页面标题与发现区不再重复）。
+    private var scanningStatusLine: String {
+        guard let progress = model.progress, !progress.confirmedHomes.isEmpty else {
+            return model.localized("正在检查已知位置")
+        }
+        return model.localized(
+            "%d 个 Agent Home 已发现 · %@",
+            progress.confirmedHomes.count,
+            model.scanPhaseTitle(progress.phase)
+        )
     }
 }
 
