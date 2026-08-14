@@ -37,20 +37,9 @@ struct ContentView: View {
     }
 
     /// 设计系统侧边栏：canvas 底、分组导航、选中态使用 accent 色（surface.selection 配方）。
+    /// 不再放置品牌标题块：导航行直接从顶部开始，与窗口融合。
     private var sidebar: some View {
         VStack(spacing: 0) {
-            HStack(spacing: DS.Space.x200) {
-                Image(systemName: "bird.fill")
-                    .font(.system(size: DS.IconSize.brand, weight: .medium))
-                    .foregroundStyle(DS.Semantic.accentPrimary)
-                Text("AgentNest")
-                    .font(DS.Typeface.section)
-                Spacer()
-            }
-            .padding(.horizontal, DS.Space.x300)
-            .padding(.top, DS.Space.x250)
-            .padding(.bottom, DS.Space.x200)
-
             ScrollView {
                 VStack(alignment: .leading, spacing: 2) {
                     SidebarRow(model: model, item: .home)
@@ -64,6 +53,7 @@ struct ContentView: View {
                     SidebarRow(model: model, item: .settings)
                 }
                 .padding(.horizontal, DS.Space.x200)
+                .padding(.top, DS.Space.x250)
             }
 
             Spacer(minLength: 0)
@@ -170,6 +160,32 @@ private struct HomeView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: DS.Space.x400) {
+                DSPageHeader(
+                    title: model.localized(model.isScanning ? "正在发现本机 Agent 环境" : "发现并维护你的 Agent 环境"),
+                    subtitle: model.localized(
+                        model.isScanning
+                            ? scanningStatusLine
+                            : "仅扫描 Agent Definition 声明和你明确添加的 Agent Home，数据只在本机分析。"
+                    ),
+                    systemImage: model.isScanning ? "magnifyingglass" : "bird.fill",
+                    animatesSubtitle: model.isScanning
+                ) {
+                    if model.isScanning {
+                        Button(model.localized(model.isStoppingScan ? "正在停止…" : "停止"), role: .cancel) {
+                            model.stopScan()
+                        }
+                        .buttonStyle(.dsAction())
+                        .disabled(model.isStoppingScan)
+                    } else {
+                        Button(action: model.startScan) {
+                            Label("扫描", systemImage: "magnifyingglass")
+                                .frame(minWidth: DS.Layout.homeActionMinWidth)
+                        }
+                        .buttonStyle(.dsAction(.accent, size: .large))
+                        .keyboardShortcut(.defaultAction)
+                    }
+                }
+
                 if let progress = model.progress, model.isScanning {
                     HomeDiscoveryView(model: model, progress: progress)
                 }
@@ -212,24 +228,21 @@ private struct HomeView: View {
             .frame(maxWidth: .infinity)
         }
         .navigationTitle(model.localized("首页"))
-        .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                if model.isScanning {
-                    Button(model.localized(model.isStoppingScan ? "正在停止…" : "停止"), role: .cancel) {
-                        model.stopScan()
-                    }
-                    .disabled(model.isStoppingScan)
-                } else {
-                    Button(action: model.startScan) {
-                        Label(model.localized("扫描"), systemImage: "magnifyingglass")
-                    }
-                    .keyboardShortcut(.defaultAction)
-                }
-            }
-        }
         .onAppear {
             model.autoStartInitialScanIfNeeded()
         }
+    }
+
+    /// 扫描中的状态行：已发现计数 + 当前阶段，各出现一次（页面标题与发现区不再重复）。
+    private var scanningStatusLine: String {
+        guard let progress = model.progress, !progress.confirmedHomes.isEmpty else {
+            return model.localized("正在检查已知位置")
+        }
+        return model.localized(
+            "%d 个 Agent Home 已发现 · %@",
+            progress.confirmedHomes.count,
+            model.scanPhaseTitle(progress.phase)
+        )
     }
 }
 

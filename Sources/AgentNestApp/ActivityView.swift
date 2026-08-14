@@ -193,20 +193,13 @@ private struct ActivityOverviewPage: View {
         }
     }
 
-    /// 状态行（替代突兀的页面首部）：一行 caption 级状态，与下方内容直接衔接。
     private func statusHeader(_ snapshot: ActivitySnapshot, coverage: Double) -> some View {
-        HStack(spacing: DS.Space.x200) {
-            Circle()
-                .fill(snapshot.droppedEvidenceCount > 0 ? DS.Semantic.statusCaution : DS.Semantic.statusPositive)
-                .frame(width: 6, height: 6)
-                .accessibilityHidden(true)
-            Text(model.localized(statusTitle(snapshot)))
-                .font(DS.Typeface.caption.weight(.semibold))
-            Text(statusSubtitle(snapshot))
-                .font(DS.Typeface.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-            Spacer(minLength: DS.Space.x300)
+        DSPageHeader(
+            title: model.localized(statusTitle(snapshot)),
+            subtitle: statusSubtitle(snapshot),
+            systemImage: snapshot.didResetBaseline ? "clock.arrow.circlepath" : "waveform.path.ecg",
+            color: snapshot.droppedEvidenceCount > 0 ? DS.Semantic.statusCaution : DS.Semantic.statusPositive
+        ) {
             HStack(spacing: DS.Space.x150) {
                 Image(systemName: "clock.badge.checkmark")
                 Text(model.localized("已观测 %@", model.formatPercent(coverage)))
@@ -1156,8 +1149,11 @@ private struct ActivityWorkspaceSkeleton: View {
     var body: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: DS.Space.x450) {
-                ActivitySkeletonBlock(height: 14)
-                    .frame(maxWidth: 260, alignment: .leading)
+                DSPageHeader(
+                    title: model.localized("活动"),
+                    subtitle: model.localized("正在建立活动基线"),
+                    systemImage: "waveform.path.ecg"
+                ) { EmptyView() }
                 DSCard {
                     HStack {
                         ForEach(0..<4, id: \.self) { _ in
