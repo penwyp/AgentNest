@@ -70,6 +70,12 @@ enum DS {
         static let activityEmptyTableHeight: CGFloat = 220
         static let activityCapacityWidth: CGFloat = 180
         static let activitySkeletonLineHeight: CGFloat = 12
+        /// 首页稳定态（环境总览台）最大内容宽度：读数带、环境图与管理入口共用。
+        static let homeOverviewMaxWidth: CGFloat = 1_160
+        /// 读数带相邻读数间距（分隔线居中于其间）。
+        static let homeReadingSpacing: CGFloat = 64
+        /// 管理入口自适应网格的最小列宽。
+        static let homeManagementTileMinWidth: CGFloat = 240
     }
 
     enum IconSize {
@@ -175,6 +181,8 @@ enum DS {
         static let pageValue = Font.system(size: 28, weight: .semibold, design: .monospaced)
         static let title = Font.system(size: 20, weight: .semibold, design: .default)
         static let metricValue = Font.system(size: 24, weight: .semibold, design: .monospaced)
+        /// 首页稳定态读数带大号数值（36 Light，配 monospacedDigit 使用）。
+        static let reading = Font.system(size: 36, weight: .light, design: .default)
         static let section = Font.system(size: 17, weight: .medium, design: .default)
         static let body = Font.system(size: 13, weight: .regular, design: .default)
         static let lead = Font.system(size: 15, weight: .regular, design: .default)
