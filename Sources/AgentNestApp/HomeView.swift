@@ -143,11 +143,13 @@ struct HomeDiscoveryView: View {
                     topologyRail(homes)
                         .frame(maxWidth: .infinity, alignment: .topLeading)
                 }
-                VStack(alignment: .leading, spacing: DS.Space.x400) {
+                HStack(alignment: .top, spacing: DS.Space.x450) {
                     scanCenter(homes)
-                        .frame(maxWidth: .infinity, alignment: .topLeading)
+                        .frame(width: DS.Layout.homeDiscoveryScanCenterCompactWidth, alignment: .topLeading)
                     topologyRail(homes)
+                        .frame(maxWidth: .infinity, alignment: .topLeading)
                 }
+                compactDiscovery(homes)
             }
 
             if !isDiscovering {
@@ -159,10 +161,14 @@ struct HomeDiscoveryView: View {
         .accessibilityElement(children: .contain)
     }
 
-    /// 左列扫描中心：刚发现的 Agent（fade/位移换新）→ 指标 → 底部信任事实。
+    /// 左列扫描中心：已发现计数 → 刚发现的 Agent（fade/位移换新）→ 指标 → 信任事实（紧贴内容，不再 Spacer 撑底）。
     private func scanCenter(_ homes: [AgentHome]) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             if let latest = homes.last {
+                Text(discoveredCountText(homes))
+                    .font(DS.Typeface.title)
+                    .monospacedDigit()
+                    .contentTransition(.numericText())
                 HStack(alignment: .top, spacing: DS.Space.x300) {
                     HomeBrandIcon(productID: latest.productID, size: 36)
                     VStack(alignment: .leading, spacing: 0) {
@@ -181,6 +187,7 @@ struct HomeDiscoveryView: View {
                 }
                 .id(latest.id)
                 .transition(.opacity.combined(with: .offset(y: DS.Space.x200)))
+                .padding(.top, DS.Space.x300)
             } else {
                 HStack(spacing: DS.Space.x300) {
                     ProgressView()
@@ -201,14 +208,12 @@ struct HomeDiscoveryView: View {
             }
             .padding(.top, DS.Space.x400)
 
-            Spacer(minLength: DS.Space.x400)
-
             VStack(alignment: .leading, spacing: DS.Space.x250) {
                 trustItem(model.localized("本机分析"), symbol: "macbook")
                 trustItem(model.localized("只读元数据"), symbol: "doc.text.magnifyingglass")
                 trustItem(model.localized("不执行清理"), symbol: "hand.raised.fill")
             }
-            .padding(.top, DS.Space.x300)
+            .padding(.top, DS.Space.x400)
             .overlay(alignment: .top) {
                 Rectangle()
                     .fill(Color.primary.opacity(DS.Opacity.borderQuiet))
@@ -216,6 +221,62 @@ struct HomeDiscoveryView: View {
                     .accessibilityHidden(true)
             }
         }
+    }
+
+    /// 窄窗口单列：紧凑扫描带（计数/指标同行 + 刚发现 + 信任事实横排）+ 整宽拓扑栏。
+    private func compactDiscovery(_ homes: [AgentHome]) -> some View {
+        VStack(alignment: .leading, spacing: DS.Space.x300) {
+            compactHeader(homes)
+            topologyRail(homes)
+        }
+    }
+
+    private func compactHeader(_ homes: [AgentHome]) -> some View {
+        VStack(alignment: .leading, spacing: DS.Space.x200) {
+            HStack(alignment: .firstTextBaseline, spacing: DS.Space.x300) {
+                Text(discoveredCountText(homes))
+                    .font(DS.Typeface.title)
+                    .monospacedDigit()
+                    .contentTransition(.numericText())
+                Spacer(minLength: DS.Space.x200)
+                HStack(spacing: DS.Space.x400) {
+                    scanMetric(model.localized("来源"), "\(activeSourceCount(homes))")
+                    scanMetric(model.localized("疑似"), "\(homes.filter { $0.confidence == .possible }.count)")
+                }
+            }
+            if let latest = homes.last {
+                HStack(alignment: .top, spacing: DS.Space.x200) {
+                    HomeBrandIcon(productID: latest.productID, size: 28)
+                    VStack(alignment: .leading, spacing: 0) {
+                        Label(model.localized("刚刚发现"), systemImage: "checkmark.circle.fill")
+                            .font(DS.Typeface.caption.weight(.semibold))
+                            .foregroundStyle(DS.Semantic.statusPositive)
+                        Text(latest.displayName)
+                            .font(DS.Typeface.body.weight(.semibold))
+                            .lineLimit(1)
+                            .padding(.top, DS.Space.x100)
+                    }
+                }
+                .id(latest.id)
+                .transition(.opacity.combined(with: .offset(y: DS.Space.x200)))
+            } else {
+                HStack(spacing: DS.Space.x300) {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text(model.localized("正在检查已知位置"))
+                        .font(DS.Typeface.body.weight(.medium))
+                }
+            }
+            HStack(spacing: DS.Space.x250) {
+                trustItem(model.localized("本机分析"), symbol: "macbook")
+                trustItem(model.localized("只读元数据"), symbol: "doc.text.magnifyingglass")
+                trustItem(model.localized("不执行清理"), symbol: "hand.raised.fill")
+            }
+        }
+    }
+
+    private func discoveredCountText(_ homes: [AgentHome]) -> String {
+        model.localized("%d 个 Agent Home 已发现", homes.count)
     }
 
     private func scanMetric(_ title: String, _ value: String) -> some View {
@@ -325,7 +386,7 @@ private struct HomeDiscoveryBranch: View {
 
             if !homes.isEmpty {
                 LazyVGrid(
-                    columns: [GridItem(.adaptive(minimum: 220, maximum: 300), spacing: DS.Space.x250)],
+                    columns: [GridItem(.adaptive(minimum: 200, maximum: 340), spacing: DS.Space.x250)],
                     alignment: .leading,
                     spacing: DS.Space.x250
                 ) {

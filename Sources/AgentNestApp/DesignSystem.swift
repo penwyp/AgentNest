@@ -38,7 +38,8 @@ enum DS {
         static let pageMaxWidth: CGFloat = 920
         static let activityPageMaxWidth: CGFloat = 1_320
         static let discoveryPageMaxWidth: CGFloat = 1_320
-        static let homeDiscoveryScanCenterWidth: CGFloat = 320
+        static let homeDiscoveryScanCenterWidth: CGFloat = 248
+        static let homeDiscoveryScanCenterCompactWidth: CGFloat = 200
         static let pageHorizontalInset: CGFloat = 32
         static let pageVerticalInset: CGFloat = 24
         /// 无标题栏窗口下，侧边栏顶部让出红绿灯（traffic lights）区域的高度。
