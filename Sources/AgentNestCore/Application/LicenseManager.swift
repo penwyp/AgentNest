@@ -47,7 +47,7 @@ public actor LicenseManager {
             let response = try await service.startTrial(machineIDHash: machineIDHash)
             return try accept(response: response, now: now, saveLicenseKey: nil)
         } catch let error as ReceiptVerificationError {
-            return .invalid(error)
+            return state(forReceiptError: error)
         } catch let error as LicenseServiceError {
             return state(for: error, now: now, invalidatesCurrentReceipt: false)
         } catch {
@@ -60,7 +60,7 @@ public actor LicenseManager {
             let response = try await service.activate(licenseKey: licenseKey, machineIDHash: machineIDHash)
             return try accept(response: response, now: now, saveLicenseKey: licenseKey)
         } catch let error as ReceiptVerificationError {
-            return .invalid(error)
+            return state(forReceiptError: error)
         } catch let error as LicenseServiceError {
             return state(for: error, now: now, invalidatesCurrentReceipt: false)
         } catch {
@@ -84,7 +84,7 @@ public actor LicenseManager {
                 let response = try await service.refresh(refreshToken: token, machineIDHash: machineIDHash)
                 return try accept(response: response, now: now, saveLicenseKey: nil)
             } catch let error as ReceiptVerificationError {
-                return .invalid(error)
+                return state(forReceiptError: error)
             } catch let error as LicenseServiceError {
                 return state(for: error, now: now, invalidatesCurrentReceipt: true)
             } catch {
@@ -113,6 +113,11 @@ public actor LicenseManager {
         try credentialStore.delete(account: Self.refreshTokenAccount)
         try credentialStore.delete(account: Self.licenseKeyAccount)
         currentPayload = nil
+    }
+
+    private func state(forReceiptError error: ReceiptVerificationError) -> LicenseState {
+        if error == .offlineWindowExpired || error == .subscriptionExpired { return .expired }
+        return .invalid(error)
     }
 
     private func accept(

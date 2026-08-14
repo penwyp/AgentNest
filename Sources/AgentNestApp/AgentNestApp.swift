@@ -6,6 +6,13 @@ struct AgentNestApplication: App {
     @State private var model = AppModel()
     @Environment(\.openWindow) private var openWindow
 
+    init() {
+        // 以裸可执行文件启动（无 .app bundle / Info.plist）时，AppKit 可能把激活策略
+        // 置为 .prohibited：窗口永远不是 key window，键盘输入全部丢失。
+        // 显式恢复 .regular，保证输入框可正常接收键盘事件。
+        NSApplication.shared.setActivationPolicy(.regular)
+    }
+
     var body: some Scene {
         WindowGroup("AgentNest", id: "main") {
             ContentView(model: model)
