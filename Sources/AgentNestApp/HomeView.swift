@@ -10,9 +10,11 @@
 //
 
 import AgentNestCore
+import AppKit
 import SwiftUI
 
-/// 产品视觉映射：SF Symbol + 稳定色相（djb2 散列 → chart series 固定映射）。
+/// 产品视觉映射：官方图标（thesvg.org，MIT）+ 品牌色 + SF Symbol 回退。
+@MainActor
 enum HomeProductStyle {
     private static let symbols: [String: String] = [
         "openai.codex": "sparkles",
@@ -22,10 +24,52 @@ enum HomeProductStyle {
         "workbuddy": "hammer",
     ]
 
+    private static var brandImageCache: [String: NSImage] = [:]
+
+    /// AgentNestCore 资源包（裸可执行文件与 .app 两种布局都兼容）。
+    private static let resourceBundle: Bundle = {
+        let mainURL = Bundle.main.bundleURL
+        let candidates = [
+            Bundle.main.url(forResource: "AgentNest_AgentNestCore", withExtension: "bundle"),
+            mainURL.appending(path: "Contents/Resources/AgentNest_AgentNestCore.bundle"),
+        ]
+        for candidate in candidates {
+            if let candidate, let bundle = Bundle(url: candidate) {
+                return bundle
+            }
+        }
+        return Bundle.main
+    }()
+
+    /// 官方图标（无对应图标时为 nil → SF Symbol 回退）。
+    /// 注意：SwiftPM `.process` 会把资源目录拍平，因此按文件名在包根查找。
+    static func brandImage(for productID: String) -> NSImage? {
+        if let cached = brandImageCache[productID] { return cached }
+        guard let url = resourceBundle.url(forResource: productID, withExtension: "png"),
+              let image = NSImage(contentsOf: url) else { return nil }
+        brandImageCache[productID] = image
+        return image
+    }
+
+    /// 官方品牌色（模板渲染用）；单色品牌（Codex / Cursor）返回 nil → 自适应主色。
+    static func brandColor(for productID: String) -> Color? {
+        switch productID {
+        case "anthropic.claude-code": return Color(red: 0xD9 / 255, green: 0x77 / 255, blue: 0x57 / 255)
+        case "bytedance.trae": return Color(red: 0x32 / 255, green: 0xF0 / 255, blue: 0x8C / 255)
+        default: return nil
+        }
+    }
+
+    /// 以原色渲染的品牌（应用图标样式，如 WorkBuddy），其余品牌用模板渲染。
+    static func rendersOriginalColor(for productID: String) -> Bool {
+        productID == "workbuddy"
+    }
+
     static func symbol(for productID: String) -> String {
         symbols[productID] ?? "cpu"
     }
 
+    /// SF Symbol 回退色相（djb2 散列 → chart series 固定映射）。
     static func color(for productID: String) -> Color {
         let series: [Color] = [
             DS.Chart.series01, DS.Chart.series02, DS.Chart.series03, DS.Chart.series04,
@@ -34,6 +78,32 @@ enum HomeProductStyle {
         var hash: UInt64 = 5381
         for byte in productID.utf8 { hash = (hash &* 33) &+ UInt64(byte) }
         return series[Int(hash % UInt64(series.count))]
+    }
+}
+
+/// 官方品牌图标：模板 + 品牌色/自适应主色；WorkBuddy 以原色渲染；无资源时回退 SF Symbol。
+struct HomeBrandIcon: View {
+    let productID: String
+    var size: CGFloat = 24
+
+    var body: some View {
+        Group {
+            if let image = HomeProductStyle.brandImage(for: productID) {
+                Image(nsImage: image)
+                    .resizable()
+                    .interpolation(.high)
+                    .renderingMode(HomeProductStyle.rendersOriginalColor(for: productID) ? .original : .template)
+                    .foregroundStyle(HomeProductStyle.brandColor(for: productID) ?? Color.primary)
+                    .scaledToFit()
+                    .frame(width: size, height: size)
+            } else {
+                Image(systemName: HomeProductStyle.symbol(for: productID))
+                    .font(.system(size: size * 0.62, weight: .semibold))
+                    .foregroundStyle(HomeProductStyle.color(for: productID))
+                    .frame(width: size, height: size)
+            }
+        }
+        .accessibilityHidden(true)
     }
 }
 
@@ -82,18 +152,21 @@ struct HomeDiscoveryView: View {
     private func scanCenter(_ homes: [AgentHome]) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             if let latest = homes.last {
-                VStack(alignment: .leading, spacing: 0) {
-                    Label(model.localized("刚刚发现"), systemImage: "checkmark.circle.fill")
-                        .font(DS.Typeface.caption.weight(.semibold))
-                        .foregroundStyle(DS.Semantic.statusPositive)
-                    Text(latest.displayName)
-                        .font(DS.Typeface.title)
-                        .lineLimit(1)
-                        .padding(.top, DS.Space.x150)
-                    Text(model.discoverySourceTitle(latest.source))
-                        .font(DS.Typeface.caption)
-                        .foregroundStyle(.secondary)
-                        .padding(.top, DS.Space.x050)
+                HStack(alignment: .top, spacing: DS.Space.x300) {
+                    HomeBrandIcon(productID: latest.productID, size: 36)
+                    VStack(alignment: .leading, spacing: 0) {
+                        Label(model.localized("刚刚发现"), systemImage: "checkmark.circle.fill")
+                            .font(DS.Typeface.caption.weight(.semibold))
+                            .foregroundStyle(DS.Semantic.statusPositive)
+                        Text(latest.displayName)
+                            .font(DS.Typeface.title)
+                            .lineLimit(1)
+                            .padding(.top, DS.Space.x150)
+                        Text(model.discoverySourceTitle(latest.source))
+                            .font(DS.Typeface.caption)
+                            .foregroundStyle(.secondary)
+                            .padding(.top, DS.Space.x050)
+                    }
                 }
                 .id(latest.id)
                 .transition(.opacity.combined(with: .offset(y: DS.Space.x200)))
@@ -288,10 +361,7 @@ private struct HomeDiscoveryChip: View {
 
     var body: some View {
         HStack(spacing: DS.Space.x250) {
-            Image(systemName: HomeProductStyle.symbol(for: home.productID))
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(HomeProductStyle.color(for: home.productID))
-                .frame(width: 24, height: 24)
+            HomeBrandIcon(productID: home.productID, size: 24)
             VStack(alignment: .leading, spacing: DS.Space.x050) {
                 Text(home.displayName)
                     .font(DS.Typeface.body.weight(.semibold))
