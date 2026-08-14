@@ -236,22 +236,17 @@ Reduce Motion 将全部时长解析为 `0 s`，保留最终视觉状态。
 | `surface.divider` | `color.text.primary` at `0.06`，`stroke.hairline` 高 |
 | 内边距 | 水平 `space.200`，垂直 `space.150` |
 
-### 5.6 Page Header（页面首部）
+### 5.6 页面首部（已移除）
 
-页面首部用于建立“当前对象 + 当前状态 + 主操作”的稳定层级，不承担装饰性 Hero 展示：
+不再使用带图标底座 + 大标题的页面首部（`DSPageHeader` 已删除）：它与内容画布融合不佳。页面标题交给窗口标题栏（`navigationTitle`）；页面级主操作（首页扫描/停止）放入窗口工具栏（`ToolbarItem(.primaryAction)`）；实时状态降级为内容区内的一行 caption 级状态（活动页）或发现界面左列的阶段标签 + 大计数。
 
 | Token | 值 |
 | --- | --- |
 | `layout.page.max-width` | `920 pt` |
 | `layout.page.inset.horizontal` | `32 pt` |
 | `layout.page.inset.vertical` | `24 pt` |
-| `page.header.icon.frame` | `40 pt` 方形，符号 `20 pt Medium` |
-| `page.header.icon.surface` | 当前语义色 `10%` 填充 + `18%` 描边 |
-| `page.header.title` | `type.display` |
-| `page.header.subtitle` | `type.body` / `text.secondary` |
-| `page.header.action.minimum-width` | `168 pt` |
 
-首页扫描状态在页面首部下方使用 `Recessed` 配方就地更新；不得用循环脉冲、旋转图标或放大的装饰图形表达后台工作。
+首页扫描状态用 `Recessed` 配方就地更新；不得用循环脉冲、旋转图标或放大的装饰图形表达后台工作。
 
 ### 5.7 激活门户（Onboarding 门户）
 
@@ -276,12 +271,12 @@ Reduce Motion 将全部时长解析为 `0 s`，保留最终视觉状态。
 
 首页是「扫描中 = 发现模式 / 扫描后 = 管理模式」的两态页面，借鉴 find-disk-killer `StorageMapDiscoveryView` 的逐个确认体验，但两态互斥：**扫描进行时只呈现发现界面，扫描完成后的摘要与影响卡（`SnapshotSummary` + `ImpactCards`）在扫描结束前不出现**（重扫同理）。每一处动效都折算进 AgentNest 的性能约束（无循环动画、无多层阴影、无材质）：
 
-- **页面首部（扫描中）**：标题「正在发现本机 Agent 环境」；副标题为实时状态行「N 个 Agent Home 已发现 · 当前阶段」（`DSPageHeader.animatesSubtitle`：等宽数字 + `contentTransition(.numericText())` + `motion.sample`），无结果时为「正在检查已知位置」。计数与阶段**只在状态行出现一次**，发现区不再重复放标题块。扫描态内容加宽（`layout.discovery.max-width` = 1320），与窗口同宽展开。
+- **工具栏主操作**：扫描/停止按钮放入窗口工具栏（`ToolbarItem(.primaryAction)`，原生样式）；页面不再有标题首部（见 §5.6）。扫描态内容加宽（`layout.discovery.max-width` = 1320），与窗口同宽展开。
 - **发现界面**（`HomeDiscoveryView`，借鉴 find-disk-killer `StorageMapFirstRunView` 桌面拓扑，直接铺在画布上、无卡片容器，`min-height` 440）：
-  - **左列扫描中心**（`layout.home.discovery.scan-center.width` = 320）：官方品牌图标（36 pt，顶对齐）+ 单列文字层级——绿色「刚刚发现」标签 → 名称（`type.title`）→ 来源（caption），每次确认以 `.id(home.id)` + fade/8 pt 位移整体换新（find-disk 用 `blurReplace`，macOS 14 以 opacity+offset 等效替代）→「来源 / 疑似」中性指标（数值 17 medium 等宽 + caption 标题，不上色）→ `Spacer` 撑高后底部为信任事实列表（本机分析 · 只读元数据 · 不执行清理，顶部分隔线）。无结果时以小 `ProgressView` +「正在检查已知位置」+ 当前阶段就地提示。
+  - **左列扫描中心**（`layout.home.discovery.scan-center.width` = 320）：阶段标签（accent，`scanPhaseTitle`）→ 大标题「N 个 Agent Home 已发现」用 `contentTransition(.numericText())` 随确认滚动（`motion.sample`）→ 刚发现的 Agent（官方品牌图标 36 pt 顶对齐 + 绿色「刚刚发现」标签 → 名称 → 来源，每次确认以 `.id(home.id)` + fade/8 pt 位移整体换新）→「来源 / 疑似」中性指标（数值 17 medium 等宽 + caption 标题，不上色）→ `Spacer` 撑高后底部为信任事实列表（本机分析 · 只读元数据 · 不执行清理，顶部分隔线）。无结果时以小 `ProgressView` +「正在检查已知位置」+ 当前阶段就地提示。
   - **右列拓扑栏**：标题「本次扫描路径」+ 说明「连线表示扫描来源，不表示容量大小」+ 右翼「只读取位置，不读取文件内容」盾牌；下方按发现来源（默认路径 / 环境变量 / 用户添加 / 用户确认）分成四个分支，每支：来源图标（chart series 色）+ 来源名 + 「N 个已发现 / 正在检查」，其下为自适应网格芯片（官方品牌图标 24 pt + 名称 + 路径 + 绿色勾 /「疑似」徽章），随确认逐个以 fade/位移插入，整区 `.animation(value: homes.map(\.id))`（`motion.enter`）驱动；分支左侧用静态 `Canvas` 绘制连线（竖干线 + 分支线 + 色点，secondary 0.24 / 来源色 0.72），只表归属、不表容量。
   - **官方品牌图标**（`HomeBrandIcon` + `HomeProductStyle`）：来自 thesvg.org（MIT，见 THIRD_PARTY_NOTICES.md），打包于 AgentNestCore 资源。单色品牌（Codex / Cursor）以模板渲染 + 自适应主色；Claude Code 用官方橙 `#D97757`、Trae 用官方绿 `#32F08C`（品牌色是品牌标识内容，不进入 DS token 表）；WorkBuddy 为应用图标样式，按原色渲染。无对应图标的产品回退 SF Symbol + chart series 色。
-  - **进度行**：进入索引阶段后显示 `Recessed` 就地进度（当前位置 + 已处理项数，numericText）；阶段文案不重复（状态行已承载），验证阶段不显示。
+  - **进度行**：进入索引阶段后显示 `Recessed` 就地进度（当前位置 + 已处理项数，numericText）；阶段文案不重复（扫描中心已承载），验证阶段不显示。
   - **渐进数据**：`ScanProgress.confirmedHomes` 由 `ScanUseCase` 每验证一个 Home 立即发布；`AppModel` 对发现计数变化即时放行（位置刻度仍按 0.25 s 节流）。首次进入首页且无快照时自动开始首次扫描（仅一次，用户停止后不自动重启）。
   - 数值滚动与插入过渡一律尊重 Reduce Motion。
 
@@ -504,7 +499,7 @@ hover 在指针离开或窗口失活时清除；pressed 不叠加 hover；focus 
 | 门户信任徽章 | `DSTrustBadge`（ActivationView.swift） | 激活门户 |
 | 门户能力行 | `DSFeatureRow`（ActivationView.swift） | 激活门户 |
 | 门户产品预览 | `DSProductPreview`（ActivationView.swift） | 激活门户 |
-| 页面首部 | `DSPageHeader` | HomeView |
+| 活动状态行 | `ActivityOverviewPage.statusHeader`（ActivityView.swift） | ActivityView 概览页（caption 级状态） |
 | 原生列表画布 | `.dsInstrumentList()` | Agent / Skill / 空间 / 活动 / 设置 / 历史 |
 | 导航行 | `SidebarRow`（ContentView） | 侧边栏 |
 | 面积折线 | `DSLineChart` | HistoryView CPU 趋势 |
