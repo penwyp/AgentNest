@@ -156,6 +156,7 @@ private struct SidebarRow: View {
 
 private struct HomeView: View {
     @Bindable var model: AppModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         ScrollView {
@@ -203,6 +204,11 @@ private struct HomeView: View {
             .frame(maxWidth: model.isScanning ? DS.Layout.discoveryPageMaxWidth : DS.Layout.pageMaxWidth)
             .frame(maxWidth: .infinity)
         }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if model.isScanning, let progress = model.progress {
+                scanProgressBar(progress)
+            }
+        }
         .onAppear {
             model.autoStartInitialScanIfNeeded()
         }
@@ -241,6 +247,40 @@ private struct HomeView: View {
         guard let snapshot = model.snapshot else { return nil }
         let confirmed = snapshot.homes.filter { $0.confidence == .confirmed }.count
         return model.localized("%d 个 Home · %@", confirmed, model.formatBytes(snapshot.totalStorage.physicalBytes))
+    }
+
+    /// 扫描期间钉在底部的进度栏：当前位置 + 已处理项数/字节；内容滚动时始终可见。
+    private func scanProgressBar(_ progress: ScanProgress) -> some View {
+        HStack(spacing: DS.Space.x300) {
+            Image(systemName: "scope")
+                .font(.system(size: DS.IconSize.card, weight: .medium))
+                .foregroundStyle(DS.Semantic.accentPrimary)
+                .accessibilityHidden(true)
+            if let location = progress.currentLocation {
+                Text(model.displayPath(location))
+                    .font(DS.Typeface.micro)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .privacySensitive()
+            }
+            Spacer(minLength: DS.Space.x400)
+            Text(model.localized("已处理 %d 项 · %@", progress.processedCount, model.formatBytes(progress.processedBytes)))
+                .font(DS.Typeface.data)
+                .foregroundStyle(.secondary)
+                .monospacedDigit()
+                .contentTransition(.numericText())
+                .animation(reduceMotion ? nil : .easeInOut(duration: DS.Motion.sample), value: progress.processedCount)
+        }
+        .padding(.horizontal, DS.Layout.pageHorizontalInset)
+        .padding(.vertical, DS.Space.x300)
+        .background(Color(nsColor: DS.Neutral.canvas))
+        .overlay(alignment: .top) {
+            Rectangle()
+                .fill(Color.primary.opacity(0.08))
+                .frame(height: DS.Stroke.hairline)
+                .accessibilityHidden(true)
+        }
     }
 }
 

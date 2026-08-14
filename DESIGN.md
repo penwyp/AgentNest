@@ -142,6 +142,7 @@ AgentNest 的界面应当像一块安静的 macOS 原生仪器面板：
 | `type.displayLarge` | SF Pro Display | `34` | Semibold | 激活门户主标题 |
 | `type.display` | SF Pro Display | `26` | Semibold | 预留（无页面首部后暂未使用） |
 | `type.title` | SF Pro Display | `20` | Semibold | 页面/卡片主数值 |
+| `type.metricValue` | SF Mono | `24` | Semibold | 发现扫描中心指标数值 |
 | `type.section` | SF Pro Display | `17` | Medium | 行标题、小节标题 |
 | `type.body` | SF Pro Text | `13` | Regular | 正文 |
 | `type.lead` | SF Pro Text | `15` | Regular | 激活门户副标题 |
@@ -291,11 +292,11 @@ Reduce Motion 将全部时长解析为 `0 s`，保留最终视觉状态。
 
 - **扫描/停止主操作**：位于首页身份区标题基线行右侧（扫描中「停止」，空闲「扫描」）。两态页面：扫描中只有发现界面，完成后才出现摘要与影响卡。已发现计数只出现一次（扫描中心顶部大号等宽数字）；身份区信息行显示当前阶段。扫描态内容加宽（`layout.discovery.max-width` = 1320），与窗口同宽展开。
 - **发现界面**（`HomeDiscoveryView`，借鉴 find-disk-killer `StorageMapFirstRunView` 桌面拓扑，直接铺在画布上、无卡片容器，`min-height` 440；列宽以右列拓扑栏为主，`ViewThatFits` 三档适配窄窗口）：
-  - **左列扫描中心**（`layout.home.discovery.scan-center.width` = 248，中档 200）：顶部「N 个 Agent Home 已发现」大号等宽计数（`type.title`，numericText 滚动，计数全界面只出现一次）→ 官方品牌图标（36 pt，顶对齐）+ 单列文字层级——绿色「刚刚发现」标签 → 名称（`type.title`）→ 来源（caption），每次确认以 `.id(home.id)` + fade/8 pt 位移整体换新（find-disk 用 `blurReplace`，macOS 14 以 opacity+offset 等效替代）→「来源 / 疑似」中性指标（数值 17 medium 等宽 + caption 标题，不上色）→ 信任事实列表紧贴指标（本机分析 · 只读元数据 · 不执行清理，顶部分隔线，不再 `Spacer` 撑底）。无结果时以小 `ProgressView` +「正在检查已知位置」+ 当前阶段就地提示。
+  - **左列扫描中心**（`layout.home.discovery.scan-center.width` = 248，中档 200）：顶部「N 个 Agent Home 已发现」大号等宽计数（`type.title`，numericText 滚动，计数全界面只出现一次）→ 官方品牌图标（36 pt，顶对齐）+ 单列文字层级——绿色「刚刚发现」标签 → 名称（`type.title`）→ 来源（caption），每次确认以 `.id(home.id)` + fade/8 pt 位移整体换新（find-disk 用 `blurReplace`，macOS 14 以 opacity+offset 等效替代）→「来源 / 疑似」中性指标（数值 `type.metricValue` 24 Semibold 等宽 + `type.label` 标题，不上色）→ 信任事实列表紧贴指标（本机分析 · 只读元数据 · 不执行清理，顶部分隔线，不再 `Spacer` 撑底）。无结果时以小 `ProgressView` +「正在检查已知位置」+ 当前阶段就地提示。
   - **窄窗口三档**：`ViewThatFits` 依次尝试「248 左列 + 整宽拓扑栏」→「200 左列 + 整宽拓扑栏」→「紧凑单列」；紧凑单列 = 计数与来源/疑似指标同行 + 刚发现行（28 pt 图标）+ 信任事实横排一行 + 整宽拓扑栏，避免丑陋折行。
   - **右列拓扑栏**：标题「本次扫描路径」+ 说明「连线表示扫描来源，不表示容量大小」+ 右翼「只读取位置，不读取文件内容」盾牌；下方按发现来源（默认路径 / 环境变量 / 用户添加 / 用户确认）分成四个分支，每支：来源图标（chart series 色）+ 来源名 + 「N 个已发现 / 正在检查」，其下为自适应网格芯片（min 200 / max 340，官方品牌图标 24 pt + 名称 + 路径 + 绿色勾 /「疑似」徽章），随确认逐个以 fade/位移插入，整区 `.animation(value: homes.map(\.id))`（`motion.enter`）驱动；分支左侧用静态 `Canvas` 绘制连线（竖干线 + 分支线 + 色点，secondary 0.24 / 来源色 0.72），只表归属、不表容量。
   - **官方品牌图标**（`HomeBrandIcon` + `HomeProductStyle`）：来自 thesvg.org（MIT，见 THIRD_PARTY_NOTICES.md），打包于 AgentNestCore 资源。单色品牌（Codex / Cursor）以模板渲染 + 自适应主色；Claude Code 用官方橙 `#D97757`、Trae 用官方绿 `#32F08C`（品牌色是品牌标识内容，不进入 DS token 表）；WorkBuddy 为应用图标样式，按原色渲染。无对应图标的产品回退 SF Symbol + chart series 色。
-  - **进度行**：进入索引阶段后显示 `Recessed` 就地进度（当前位置 + 已处理项数，numericText）；阶段文案不重复（状态行已承载），验证阶段不显示。
+  - **进度底栏**：扫描期间钉在发现界面底部的固定状态栏（`safeAreaInset(edge: .bottom)`，canvas 底 + 顶部分隔线，位于内容滚动区之外）：当前位置 + 已处理项数/字节（numericText 滚动），全阶段显示、始终可见。
   - **渐进数据**：`ScanProgress.confirmedHomes` 由 `ScanUseCase` 每验证一个 Home 立即发布；`AppModel` 对发现计数变化即时放行（位置刻度仍按 0.25 s 节流）。首次进入首页且无快照时自动开始首次扫描（仅一次，用户停止后不自动重启）。
   - 数值滚动与插入过渡一律尊重 Reduce Motion。
 
