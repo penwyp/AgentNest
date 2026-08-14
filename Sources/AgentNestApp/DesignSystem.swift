@@ -174,6 +174,7 @@ enum DS {
         static let pageTitle = Font.system(size: 28, weight: .semibold, design: .default)
         static let pageValue = Font.system(size: 28, weight: .semibold, design: .monospaced)
         static let title = Font.system(size: 20, weight: .semibold, design: .default)
+        static let metricValue = Font.system(size: 24, weight: .semibold, design: .monospaced)
         static let section = Font.system(size: 17, weight: .medium, design: .default)
         static let body = Font.system(size: 13, weight: .regular, design: .default)
         static let lead = Font.system(size: 15, weight: .regular, design: .default)

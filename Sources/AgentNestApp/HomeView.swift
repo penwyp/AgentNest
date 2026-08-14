@@ -134,7 +134,6 @@ struct HomeDiscoveryView: View {
 
     var body: some View {
         let homes = progress.confirmedHomes
-        let isDiscovering = progress.phase == .discoveringAgents || progress.phase == .validatingHomes
         VStack(alignment: .leading, spacing: DS.Space.x400) {
             ViewThatFits(in: .horizontal) {
                 HStack(alignment: .top, spacing: DS.Space.x450) {
@@ -150,10 +149,6 @@ struct HomeDiscoveryView: View {
                         .frame(maxWidth: .infinity, alignment: .topLeading)
                 }
                 compactDiscovery(homes)
-            }
-
-            if !isDiscovering {
-                progressRow
             }
         }
         .frame(minHeight: 440)
@@ -282,10 +277,10 @@ struct HomeDiscoveryView: View {
     private func scanMetric(_ title: String, _ value: String) -> some View {
         VStack(alignment: .leading, spacing: DS.Space.x050) {
             Text(value)
-                .font(DS.Typeface.section)
+                .font(DS.Typeface.metricValue)
                 .monospacedDigit()
             Text(title)
-                .font(DS.Typeface.caption)
+                .font(DS.Typeface.label)
                 .foregroundStyle(.secondary)
         }
         .accessibilityElement(children: .combine)
@@ -334,31 +329,6 @@ struct HomeDiscoveryView: View {
         }
     }
 
-    private var progressRow: some View {
-        DSRecessed {
-            HStack(alignment: .center, spacing: DS.Space.x300) {
-                Image(systemName: "scope")
-                    .font(.system(size: DS.IconSize.card, weight: .medium))
-                    .foregroundStyle(DS.Semantic.accentPrimary)
-                    .accessibilityHidden(true)
-                if let location = progress.currentLocation {
-                    Text(model.displayPath(location))
-                        .font(DS.Typeface.micro)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                        .privacySensitive()
-                }
-                Spacer(minLength: DS.Space.x400)
-                Text(model.localized("已处理 %d 项 · %@", progress.processedCount, model.formatBytes(progress.processedBytes)))
-                    .font(DS.Typeface.data)
-                    .foregroundStyle(.secondary)
-                    .monospacedDigit()
-                    .contentTransition(.numericText())
-                    .animation(reduceMotion ? nil : .easeInOut(duration: DS.Motion.sample), value: progress.processedCount)
-            }
-        }
-    }
 }
 
 /// 拓扑分支：来源标题 + 该来源已发现的芯片网格，左侧 Canvas 连线与色点。
