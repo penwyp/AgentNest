@@ -488,3 +488,6 @@
 "尚未建立 Agent 环境档案" = "No Agent environment profile yet";
 "%@：%@" = "%@: %@";
 "%d 个 Home · %d 个疑似" = "%d homes · %d possible";
+"%@ · %@ · %d 项 · %d 条证据" = "%@ · %@ · %d items · %d pieces of evidence";
+"%@ %@" = "%@ %@";
+"0 B" = "0 B";
