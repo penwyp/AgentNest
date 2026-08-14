@@ -20,6 +20,7 @@ struct AgentNestApplication: App {
                 .environment(\.locale, model.appLocale)
                 .tint(DS.Semantic.accentPrimary)
         }
+        .windowStyle(.hiddenTitleBar)
         .defaultSize(width: 1080, height: 720)
 
         MenuBarExtra("AgentNest", systemImage: model.isScanning ? "magnifyingglass.circle.fill" : "bird") {

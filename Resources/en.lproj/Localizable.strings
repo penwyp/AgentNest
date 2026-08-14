@@ -31,6 +31,7 @@
 "部分" = "Partial";
 "完整" = "Complete";
 "尚无 Agent 结果" = "No Agent results";
+"点击右上角「扫描」开始发现本机 Agent 环境。" = "Tap Scan in the top-right corner to start discovering your Agent environment.";
 "先在首页扫描。" = "Run a scan from Home first.";
 "已确认" = "Confirmed";
 "尚无 Skill 索引" = "No Skill index";
