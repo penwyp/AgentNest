@@ -236,19 +236,35 @@ Reduce Motion 将全部时长解析为 `0 s`，保留最终视觉状态。
 | `surface.divider` | `color.text.primary` at `0.06`，`stroke.hairline` 高 |
 | 内边距 | 水平 `space.200`，垂直 `space.150` |
 
-### 5.6 页面无首部（Headerless）
+### 5.6 页面身份区（Page Identity，左上角）
 
-页面不再设置首部横幅：内容直接顶到窗口顶部。页面身份由侧边栏选中项与窗口标题（Mission Control / ⌘Tab）表达；实时状态用行内 caption 状态行（如活动页顶部状态行）；主操作（扫描 / 新建 Skill / 导出）收进内容右上角的操作行（`safeAreaInset(edge: .top)`），不进窗口工具栏。
+页面无首部横幅，内容直接顶到窗口顶部；每个页面左上角以 `DSPageIdentity` 建立「页面身份 + 按需信息/数据」：纯排版层级，不设横幅与图标底座。页面身份由身份区 + 侧边栏选中项 + 窗口标题（Mission Control / ⌘Tab）共同表达。
 
 | Token | 值 |
 | --- | --- |
+| `type.pageTitle` | `28 pt` Semibold，负字距 −0.4 |
+| `type.pageValue` | `28 pt` Semibold monospaced，accent（大号数据展示位） |
+| `page.identity.glyph` | 裸色强调符号 `20 pt` Medium（无底座） |
+| `layout.page.identity.content-inset` | `28 pt`（信息/数据行与标题文字左对齐） |
 | `layout.page.max-width` | `920 pt` |
 | `layout.page.inset.horizontal` | `32 pt` |
 | `layout.page.inset.vertical` | `24 pt` |
 | `layout.window.chrome.top-inset` | `44 pt`（侧边栏顶让出红绿灯位） |
 | `page.header.action.minimum-width` | `168 pt`（首页扫描按钮沿用） |
 
-窗口使用 `windowStyle(.hiddenTitleBar)`：无标题栏文字，内容延伸到窗口顶部，顶缘仍是可拖动区域。首页扫描状态在扫描中心就地更新；不得用循环脉冲、旋转图标或放大的装饰图形表达后台工作。
+结构：标题基线行（符号 + 标题 + 右侧主操作，`firstTextBaseline` 对齐）→ 可选大号数据值 → 可选信息行（`type.body`、secondary、等宽数字、单行截断）。列表页身份区经 `safeAreaInset(edge: .top)` 固定，仪表页随内容滚动；背景用 canvas 色与窗口融合。
+
+| 页面 | 标题 | 数据 / 信息行 | 主操作 |
+| --- | --- | --- | --- |
+| 首页 | 扫描中「正在发现本机 Agent 环境」/ 空闲「发现并维护你的 Agent 环境」 | 扫描中当前阶段；空闲「N 个 Home · 物理占用」 | 扫描 / 停止 |
+| Agent | Agent | 「N 个已确认 · N 个疑似」 | — |
+| Skill | Skill | 「N 个安装 · N 个冲突 · N 个无效」 | 新建 Skill |
+| 空间 | 空间 | 大号数据值 = 唯一物理占用；信息行 = 最大类别 | — |
+| 活动 | 活动 | 状态 + 说明 + 已观测覆盖率（符号随状态着色） | — |
+| 历史 | 历史 | 「最近 N 个样本」 | 导出 |
+| 设置 | 设置 | 授权状态 | — |
+
+窗口使用 `windowStyle(.hiddenTitleBar)`：无标题栏文字，内容延伸到窗口顶部，顶缘仍是可拖动区域。身份区为静态排版、无动画；不得用循环脉冲、旋转图标或放大的装饰图形表达后台工作。
 
 ### 5.7 激活门户（Onboarding 门户）
 
@@ -273,7 +289,7 @@ Reduce Motion 将全部时长解析为 `0 s`，保留最终视觉状态。
 
 首页是「扫描中 = 发现模式 / 扫描后 = 管理模式」的两态页面，借鉴 find-disk-killer `StorageMapDiscoveryView` 的逐个确认体验，但两态互斥：**扫描进行时只呈现发现界面，扫描完成后的摘要与影响卡（`SnapshotSummary` + `ImpactCards`）在扫描结束前不出现**（重扫同理）。每一处动效都折算进 AgentNest 的性能约束（无循环动画、无多层阴影、无材质）：
 
-- **扫描/停止主操作**：固定于首页内容右上角的操作行（`scanActionRow`：扫描中「停止」，空闲「扫描」，不依附标题横幅）。两态页面：扫描中只有发现界面，完成后才出现摘要与影响卡。计数与阶段只在扫描中心出现一次，不设页面标题。扫描态内容加宽（`layout.discovery.max-width` = 1320），与窗口同宽展开。
+- **扫描/停止主操作**：位于首页身份区标题基线行右侧（扫描中「停止」，空闲「扫描」）。两态页面：扫描中只有发现界面，完成后才出现摘要与影响卡。计数与阶段只在扫描中心出现一次；身份区信息行扫描中显示当前阶段。扫描态内容加宽（`layout.discovery.max-width` = 1320），与窗口同宽展开。
 - **发现界面**（`HomeDiscoveryView`，借鉴 find-disk-killer `StorageMapFirstRunView` 桌面拓扑，直接铺在画布上、无卡片容器，`min-height` 440）：
   - **左列扫描中心**（`layout.home.discovery.scan-center.width` = 320）：官方品牌图标（36 pt，顶对齐）+ 单列文字层级——绿色「刚刚发现」标签 → 名称（`type.title`）→ 来源（caption），每次确认以 `.id(home.id)` + fade/8 pt 位移整体换新（find-disk 用 `blurReplace`，macOS 14 以 opacity+offset 等效替代）→「来源 / 疑似」中性指标（数值 17 medium 等宽 + caption 标题，不上色）→ `Spacer` 撑高后底部为信任事实列表（本机分析 · 只读元数据 · 不执行清理，顶部分隔线）。无结果时以小 `ProgressView` +「正在检查已知位置」+ 当前阶段就地提示。
   - **右列拓扑栏**：标题「本次扫描路径」+ 说明「连线表示扫描来源，不表示容量大小」+ 右翼「只读取位置，不读取文件内容」盾牌；下方按发现来源（默认路径 / 环境变量 / 用户添加 / 用户确认）分成四个分支，每支：来源图标（chart series 色）+ 来源名 + 「N 个已发现 / 正在检查」，其下为自适应网格芯片（官方品牌图标 24 pt + 名称 + 路径 + 绿色勾 /「疑似」徽章），随确认逐个以 fade/位移插入，整区 `.animation(value: homes.map(\.id))`（`motion.enter`）驱动；分支左侧用静态 `Canvas` 绘制连线（竖干线 + 分支线 + 色点，secondary 0.24 / 来源色 0.72），只表归属、不表容量。
@@ -497,6 +513,7 @@ hover 在指针离开或窗口失活时清除；pressed 不叠加 hover；focus 
 | Icon Button | `DSIconButtonStyle`（`.dsIcon`） | 预留（工具按钮） |
 | Badge | `DSBadge` | Agent 列表、进程行 |
 | 页面布局 / 图标尺寸 | `DS.Layout.*`、`DS.IconSize.*` | 首页、导航、状态行、激活门户 |
+| 页面身份区 | `DSPageIdentity` | 全部页面左上角标题 / 信息 / 数据展示 |
 | 门户页脚链接 | `DSFooterButtonStyle` | 激活门户 |
 | 门户氛围渐变 | `DSHeroWash`（ActivationView.swift） | 激活门户 |
 | 门户信任徽章 | `DSTrustBadge`（ActivationView.swift） | 激活门户 |

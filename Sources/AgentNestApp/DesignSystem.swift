@@ -43,6 +43,8 @@ enum DS {
         static let pageVerticalInset: CGFloat = 24
         /// 无标题栏窗口下，侧边栏顶部让出红绿灯（traffic lights）区域的高度。
         static let windowChromeTopInset: CGFloat = 44
+        /// 页面身份区信息/数据行与标题文字左对齐的缩进（符号 20 + space.200）。
+        static let pageIdentityContentInset: CGFloat = 28
         static let heroIconFrame: CGFloat = 40
         static let homeActionMinWidth: CGFloat = 168
         static let activationMaxWidth: CGFloat = 960
@@ -168,6 +170,8 @@ enum DS {
     enum Typeface {
         static let displayLarge = Font.system(size: 34, weight: .semibold, design: .default)
         static let display = Font.system(size: 26, weight: .semibold, design: .default)
+        static let pageTitle = Font.system(size: 28, weight: .semibold, design: .default)
+        static let pageValue = Font.system(size: 28, weight: .semibold, design: .monospaced)
         static let title = Font.system(size: 20, weight: .semibold, design: .default)
         static let section = Font.system(size: 17, weight: .medium, design: .default)
         static let body = Font.system(size: 13, weight: .regular, design: .default)
@@ -278,6 +282,54 @@ struct DSSkeletonList: View {
         .dsInstrumentList()
         .accessibilityHidden(true)
         .allowsHitTesting(false)
+    }
+}
+
+/// 页面身份区（Headerless 页面的左上角标头）：纯排版层级，不设横幅与图标底座。
+/// 行一：裸色强调符号（20 pt Medium）+ 大标题（type.pageTitle，28 Semibold，负字距 −0.4），右侧为页面主操作（基线对齐）。
+/// 行二（可选）：大号等宽数据值（type.pageValue，28 Semibold monospaced，accent）——页面数据展示位。
+/// 行三（可选）：信息行（type.body，13，secondary，等宽数字），与标题文字左对齐。
+/// 静态排版、无动画，遵守 Reduce Motion 与单层绘制预算。
+struct DSPageIdentity<Accessory: View>: View {
+    let title: String
+    var glyph: String = "circle.hexagongrid"
+    var glyphColor: Color = DS.Semantic.accentPrimary
+    var value: String? = nil
+    var detail: String? = nil
+    @ViewBuilder let accessory: Accessory
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: DS.Space.x200) {
+            HStack(alignment: .firstTextBaseline, spacing: DS.Space.x200) {
+                Image(systemName: glyph)
+                    .font(.system(size: DS.IconSize.page, weight: .medium))
+                    .foregroundStyle(glyphColor)
+                    .accessibilityHidden(true)
+                Text(title)
+                    .font(DS.Typeface.pageTitle)
+                    .tracking(-0.4)
+                    .foregroundStyle(Color.primary)
+                Spacer(minLength: DS.Space.x400)
+                accessory
+            }
+            if let value {
+                Text(value)
+                    .font(DS.Typeface.pageValue)
+                    .monospacedDigit()
+                    .foregroundStyle(DS.Semantic.accentPrimary)
+                    .padding(.leading, DS.Layout.pageIdentityContentInset)
+            }
+            if let detail {
+                Text(detail)
+                    .font(DS.Typeface.body)
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .padding(.leading, DS.Layout.pageIdentityContentInset)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 

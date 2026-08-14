@@ -192,28 +192,14 @@ private struct ActivityOverviewPage: View {
         }
     }
 
-    /// 无页面首部的状态行：状态色点 + 标题/说明 + 观测覆盖率，单行 caption 层级。
+    /// 页面身份区：标题「活动」+ 状态信息行；符号随状态着色（positive / caution）。
     private func statusHeader(_ snapshot: ActivitySnapshot, coverage: Double) -> some View {
-        HStack(spacing: DS.Space.x200) {
-            Circle()
-                .fill(snapshot.droppedEvidenceCount > 0 ? DS.Semantic.statusCaution : DS.Semantic.statusPositive)
-                .frame(width: 6, height: 6)
-            Text(model.localized(statusTitle(snapshot)))
-                .font(DS.Typeface.caption)
-            Text(statusSubtitle(snapshot))
-                .font(DS.Typeface.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .truncationMode(.tail)
-            Spacer(minLength: DS.Space.x300)
-            HStack(spacing: DS.Space.x150) {
-                Image(systemName: "clock.badge.checkmark")
-                Text(model.localized("已观测 %@", model.formatPercent(coverage)))
-                    .monospacedDigit()
-            }
-            .font(DS.Typeface.caption)
-            .foregroundStyle(.secondary)
-        }
+        DSPageIdentity(
+            title: model.localized("活动"),
+            glyph: snapshot.didResetBaseline ? "clock.arrow.circlepath" : "waveform.path.ecg",
+            glyphColor: snapshot.droppedEvidenceCount > 0 ? DS.Semantic.statusCaution : DS.Semantic.statusPositive,
+            detail: model.localized(statusTitle(snapshot)) + " · " + statusSubtitle(snapshot) + " · " + model.localized("已观测 %@", model.formatPercent(coverage))
+        ) { EmptyView() }
     }
 
     private func statusTitle(_ snapshot: ActivitySnapshot) -> String {
@@ -1155,17 +1141,18 @@ private struct ActivityWorkspaceSkeleton: View {
     var body: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: DS.Space.x450) {
-                HStack(spacing: DS.Space.x200) {
-                    Circle()
-                        .fill(DS.Semantic.statusPositive)
-                        .frame(width: 6, height: 6)
+                VStack(alignment: .leading, spacing: DS.Space.x200) {
+                    HStack(spacing: DS.Space.x200) {
+                        Circle()
+                            .fill(DS.Semantic.statusPositive)
+                            .frame(width: 20, height: 20)
+                        RoundedRectangle(cornerRadius: 5, style: .continuous)
+                            .fill(Color.primary.opacity(0.12))
+                            .frame(width: 96, height: 26)
+                    }
                     RoundedRectangle(cornerRadius: 3, style: .continuous)
                         .fill(Color.primary.opacity(0.12))
-                        .frame(width: 120, height: 10)
-                    Spacer(minLength: DS.Space.x300)
-                    RoundedRectangle(cornerRadius: 3, style: .continuous)
-                        .fill(Color.primary.opacity(0.12))
-                        .frame(width: 90, height: 10)
+                        .frame(width: 280, height: 11)
                 }
                 DSCard {
                     HStack {

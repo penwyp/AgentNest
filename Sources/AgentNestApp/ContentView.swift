@@ -160,7 +160,7 @@ private struct HomeView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: DS.Space.x400) {
-                scanActionRow
+                pageIdentity
 
                 if let progress = model.progress, model.isScanning {
                     HomeDiscoveryView(model: model, progress: progress)
@@ -208,10 +208,13 @@ private struct HomeView: View {
         }
     }
 
-    /// 扫描 / 停止主操作：固定于首页内容右上角，不依附任何标题横幅。
-    private var scanActionRow: some View {
-        HStack(spacing: DS.Space.x300) {
-            Spacer(minLength: 0)
+    /// 页面身份区：大标题 + 按状态定制的信息行，主操作右对齐在标题基线行。
+    private var pageIdentity: some View {
+        DSPageIdentity(
+            title: model.localized(model.isScanning ? "正在发现本机 Agent 环境" : "发现并维护你的 Agent 环境"),
+            glyph: model.isScanning ? "magnifyingglass" : "bird",
+            detail: identityDetail
+        ) {
             if model.isScanning {
                 Button(model.localized(model.isStoppingScan ? "正在停止…" : "停止"), role: .cancel) {
                     model.stopScan()
@@ -227,6 +230,17 @@ private struct HomeView: View {
                 .keyboardShortcut(.defaultAction)
             }
         }
+    }
+
+    /// 信息行按状态切换：扫描中显示当前阶段；空闲时显示已确认 Home 数与物理占用。
+    private var identityDetail: String? {
+        if model.isScanning {
+            guard let progress = model.progress else { return nil }
+            return model.scanPhaseTitle(progress.phase)
+        }
+        guard let snapshot = model.snapshot else { return nil }
+        let confirmed = snapshot.homes.filter { $0.confidence == .confirmed }.count
+        return model.localized("%d 个 Home · %@", confirmed, model.formatBytes(snapshot.totalStorage.physicalBytes))
     }
 }
 
@@ -379,6 +393,25 @@ private struct SnapshotSummary: View {
 private struct AgentListView: View {
     @Bindable var model: AppModel
 
+    /// 页面身份区：标题 + 已确认/疑似统计。
+    private var agentIdentity: some View {
+        DSPageIdentity(
+            title: model.localized("Agent"),
+            glyph: "cpu",
+            detail: agentIdentityDetail
+        ) { EmptyView() }
+        .padding(.horizontal, DS.Layout.pageHorizontalInset)
+        .padding(.vertical, DS.Space.x300)
+        .background(Color(nsColor: DS.Neutral.canvas))
+    }
+
+    private var agentIdentityDetail: String? {
+        guard let snapshot = model.snapshot else { return nil }
+        let confirmed = snapshot.homes.filter { $0.confidence == .confirmed }.count
+        let possible = snapshot.homes.filter { $0.confidence == .possible }.count
+        return model.localized("%d 个已确认 · %d 个疑似", confirmed, possible)
+    }
+
     var body: some View {
         Group {
             if let snapshot = model.snapshot {
@@ -422,6 +455,9 @@ private struct AgentListView: View {
                 DSSkeletonList(sections: [3, 4])
             }
         }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            agentIdentity
+        }
     }
 }
 
@@ -438,10 +474,13 @@ private struct SkillView: View {
     @State private var createDescription = ""
     @State private var localError: String?
 
-    /// 新建 Skill 主操作：无页面首部后收进内容右上角。
-    private var skillActionRow: some View {
-        HStack {
-            Spacer()
+    /// 页面身份区：标题 + 安装/冲突/无效统计，主操作（新建 Skill）右对齐在标题基线行。
+    private var skillIdentity: some View {
+        DSPageIdentity(
+            title: model.localized("Skill"),
+            glyph: "hammer",
+            detail: skillIdentityDetail
+        ) {
             Button {
                 guard let first = model.skillWriteTargets.first else { return }
                 createTargetID = first.id
@@ -455,8 +494,13 @@ private struct SkillView: View {
             .disabled(!model.allows(.skillWrite) || model.skillWriteTargets.isEmpty)
         }
         .padding(.horizontal, DS.Layout.pageHorizontalInset)
-        .padding(.vertical, DS.Space.x200)
+        .padding(.vertical, DS.Space.x300)
         .background(Color(nsColor: DS.Neutral.canvas))
+    }
+
+    private var skillIdentityDetail: String? {
+        guard let index = model.skillIndex else { return nil }
+        return model.localized("%d 个安装 · %d 个冲突 · %d 个无效", index.installationCount, index.conflictCount, index.invalidCount)
     }
 
     var body: some View {
@@ -539,7 +583,7 @@ private struct SkillView: View {
             }
         }
         .safeAreaInset(edge: .top, spacing: 0) {
-            skillActionRow
+            skillIdentity
         }
         .sheet(isPresented: $isCreating) {
             NavigationStack {
@@ -845,6 +889,33 @@ private struct StorageView: View {
     /// 派生数据缓存：过滤/分组/清理候选在后台计算，切页与筛选不阻塞主线程。
     @State private var derived: StorageDerived?
 
+    /// 页面身份区：标题 + 大号物理占用数据 + 最大类别信息行。
+    private var storageIdentity: some View {
+        DSPageIdentity(
+            title: model.localized("空间"),
+            glyph: "internaldrive",
+            value: storageIdentityValue,
+            detail: storageIdentityDetail
+        ) { EmptyView() }
+        .padding(.horizontal, DS.Layout.pageHorizontalInset)
+        .padding(.vertical, DS.Space.x300)
+        .background(Color(nsColor: DS.Neutral.canvas))
+    }
+
+    private var storageIdentityValue: String? {
+        guard let derived else { return nil }
+        return model.formatBytes(derived.totalPhysicalBytes)
+    }
+
+    private var storageIdentityDetail: String? {
+        guard let snapshot = model.snapshot else { return nil }
+        let totals = Dictionary(grouping: snapshot.storageLedger.artifacts, by: \.category).mapValues {
+            $0.reduce(UInt64(0)) { $0 &+ $1.storage.physicalBytes }
+        }
+        guard let largest = totals.max(by: { $0.value < $1.value }) else { return model.localized("暂无物理资源") }
+        return model.localized("最大类别：%@", model.artifactCategoryTitle(largest.key))
+    }
+
     var body: some View {
         Group {
             if let snapshot = model.snapshot, let derived {
@@ -852,6 +923,9 @@ private struct StorageView: View {
             } else {
                 DSSkeletonList(sections: [3, 4, 3])
             }
+        }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            storageIdentity
         }
         .task(id: deriveKey) { await recomputeDerived() }
         .sheet(isPresented: $showingCleanupReview) {
@@ -1367,6 +1441,18 @@ private struct SettingsView: View {
     @AppStorage("sampleInterval") private var sampleInterval = ActivitySamplingPolicy.defaultInterval
     @State private var confirmUninstall = false
 
+    /// 页面身份区：标题 + 授权状态信息行。
+    private var settingsIdentity: some View {
+        DSPageIdentity(
+            title: model.localized("设置"),
+            glyph: "gearshape",
+            detail: model.licenseStatusText
+        ) { EmptyView() }
+        .padding(.horizontal, DS.Layout.pageHorizontalInset)
+        .padding(.vertical, DS.Space.x300)
+        .background(Color(nsColor: DS.Neutral.canvas))
+    }
+
     var body: some View {
         Form {
             Section("扫描与隐私") {
@@ -1505,6 +1591,9 @@ private struct SettingsView: View {
         }
         .formStyle(.grouped)
         .dsInstrumentList()
+        .safeAreaInset(edge: .top, spacing: 0) {
+            settingsIdentity
+        }
         .alert("准备卸载 AgentNest？", isPresented: $confirmUninstall) {
             Button("清除并准备卸载", role: .destructive) { model.prepareForUninstall() }
             Button("取消", role: .cancel) {}
@@ -1517,10 +1606,13 @@ private struct SettingsView: View {
 private struct HistoryView: View {
     @Bindable var model: AppModel
 
-    /// 导出主操作：无页面首部后收进内容右上角。
-    private var historyActionRow: some View {
-        HStack {
-            Spacer()
+    /// 页面身份区：标题 + 样本统计，主操作（导出）右对齐在标题基线行。
+    private var historyIdentity: some View {
+        DSPageIdentity(
+            title: model.localized("历史"),
+            glyph: "clock.arrow.circlepath",
+            detail: model.historyEnabled ? model.localized("最近 %d 个样本", model.historyPoints.count) : nil
+        ) {
             Menu("导出") {
                 Button("CSV") { model.exportHistoryCSV() }
                 Button("PDF") { model.exportHistoryPDF() }
@@ -1530,7 +1622,7 @@ private struct HistoryView: View {
             .disabled(!model.historyEnabled || !model.allows(.export))
         }
         .padding(.horizontal, DS.Layout.pageHorizontalInset)
-        .padding(.vertical, DS.Space.x200)
+        .padding(.vertical, DS.Space.x300)
         .background(Color(nsColor: DS.Neutral.canvas))
     }
 
@@ -1580,7 +1672,7 @@ private struct HistoryView: View {
             }
         }
         .safeAreaInset(edge: .top, spacing: 0) {
-            historyActionRow
+            historyIdentity
         }
         .task { await model.refreshHistory() }
     }
