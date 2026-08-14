@@ -148,9 +148,21 @@ struct HomeDiscoveryView: View {
         .accessibilityElement(children: .contain)
     }
 
-    /// 左列扫描中心：刚发现的 Agent（fade/位移换新）→ 指标 → 底部信任事实。
+    /// 左列扫描中心：阶段标签 + 已发现计数（滚动）→ 刚发现的 Agent（fade/位移换新）
+    /// → 指标 → 底部信任事实。
     private func scanCenter(_ homes: [AgentHome]) -> some View {
         VStack(alignment: .leading, spacing: 0) {
+            Label(model.scanPhaseTitle(progress.phase), systemImage: "scope")
+                .font(DS.Typeface.body.weight(.semibold))
+                .foregroundStyle(DS.Semantic.accentPrimary)
+            Text(model.localized("%d 个 Agent Home 已发现", homes.count))
+                .font(DS.Typeface.display)
+                .monospacedDigit()
+                .contentTransition(.numericText())
+                .animation(reduceMotion ? nil : .easeInOut(duration: DS.Motion.sample), value: homes.count)
+                .padding(.top, DS.Space.x150)
+                .padding(.bottom, DS.Space.x400)
+
             if let latest = homes.last {
                 HStack(alignment: .top, spacing: DS.Space.x300) {
                     HomeBrandIcon(productID: latest.productID, size: 36)

@@ -42,7 +42,6 @@ enum DS {
         static let pageHorizontalInset: CGFloat = 32
         static let pageVerticalInset: CGFloat = 24
         static let heroIconFrame: CGFloat = 40
-        static let homeActionMinWidth: CGFloat = 168
         static let activationMaxWidth: CGFloat = 960
         static let activationFeatureIconFrame: CGFloat = 32
         static let activitySectionPickerWidth: CGFloat = 280
@@ -276,57 +275,6 @@ struct DSSkeletonList: View {
         .dsInstrumentList()
         .accessibilityHidden(true)
         .allowsHitTesting(false)
-    }
-}
-
-/// 页面首部：把标题、说明、状态图标和主操作固定为同一信息层级。
-/// `animatesSubtitle` 为 true 时，副标题视为实时状态行：等宽数字 + numericText 滚动（motion.sample）。
-struct DSPageHeader<Accessory: View>: View {
-    let title: String
-    let subtitle: String
-    let systemImage: String
-    var color: Color = DS.Semantic.accentPrimary
-    var animatesSubtitle: Bool = false
-    @ViewBuilder let accessory: Accessory
-
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    var body: some View {
-        HStack(alignment: .center, spacing: DS.Space.x300) {
-            Image(systemName: systemImage)
-                .font(.system(size: DS.IconSize.page, weight: .medium))
-                .foregroundStyle(color)
-                .frame(width: DS.Layout.heroIconFrame, height: DS.Layout.heroIconFrame)
-                .background(
-                    RoundedRectangle(cornerRadius: DS.Radius.icon, style: .continuous)
-                        .fill(color.opacity(DS.Opacity.fillSubtle))
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: DS.Radius.icon, style: .continuous)
-                        .strokeBorder(color.opacity(DS.Opacity.iconBorder), lineWidth: DS.Stroke.hairline)
-                )
-                .accessibilityHidden(true)
-
-            VStack(alignment: .leading, spacing: DS.Space.x100) {
-                Text(title)
-                    .font(DS.Typeface.display)
-                Text(subtitle)
-                    .font(DS.Typeface.body)
-                    .foregroundStyle(.secondary)
-                    .monospacedDigit()
-                    .contentTransition(animatesSubtitle ? .numericText() : .identity)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            Spacer(minLength: DS.Space.x400)
-            accessory
-        }
-        .animation(
-            animatesSubtitle && !reduceMotion
-                ? .easeInOut(duration: DS.Motion.sample)
-                : nil,
-            value: subtitle
-        )
     }
 }
 
