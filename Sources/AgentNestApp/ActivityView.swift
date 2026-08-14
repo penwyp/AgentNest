@@ -37,7 +37,6 @@ struct ActivityView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .navigationTitle(model.localized("活动"))
     }
 
     private var toolbar: some View {
@@ -193,13 +192,20 @@ private struct ActivityOverviewPage: View {
         }
     }
 
+    /// 无页面首部的状态行：状态色点 + 标题/说明 + 观测覆盖率，单行 caption 层级。
     private func statusHeader(_ snapshot: ActivitySnapshot, coverage: Double) -> some View {
-        DSPageHeader(
-            title: model.localized(statusTitle(snapshot)),
-            subtitle: statusSubtitle(snapshot),
-            systemImage: snapshot.didResetBaseline ? "clock.arrow.circlepath" : "waveform.path.ecg",
-            color: snapshot.droppedEvidenceCount > 0 ? DS.Semantic.statusCaution : DS.Semantic.statusPositive
-        ) {
+        HStack(spacing: DS.Space.x200) {
+            Circle()
+                .fill(snapshot.droppedEvidenceCount > 0 ? DS.Semantic.statusCaution : DS.Semantic.statusPositive)
+                .frame(width: 6, height: 6)
+            Text(model.localized(statusTitle(snapshot)))
+                .font(DS.Typeface.caption)
+            Text(statusSubtitle(snapshot))
+                .font(DS.Typeface.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.tail)
+            Spacer(minLength: DS.Space.x300)
             HStack(spacing: DS.Space.x150) {
                 Image(systemName: "clock.badge.checkmark")
                 Text(model.localized("已观测 %@", model.formatPercent(coverage)))
@@ -1149,11 +1155,18 @@ private struct ActivityWorkspaceSkeleton: View {
     var body: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: DS.Space.x450) {
-                DSPageHeader(
-                    title: model.localized("活动"),
-                    subtitle: model.localized("正在建立活动基线"),
-                    systemImage: "waveform.path.ecg"
-                ) { EmptyView() }
+                HStack(spacing: DS.Space.x200) {
+                    Circle()
+                        .fill(DS.Semantic.statusPositive)
+                        .frame(width: 6, height: 6)
+                    RoundedRectangle(cornerRadius: 3, style: .continuous)
+                        .fill(Color.primary.opacity(0.12))
+                        .frame(width: 120, height: 10)
+                    Spacer(minLength: DS.Space.x300)
+                    RoundedRectangle(cornerRadius: 3, style: .continuous)
+                        .fill(Color.primary.opacity(0.12))
+                        .frame(width: 90, height: 10)
+                }
                 DSCard {
                     HStack {
                         ForEach(0..<4, id: \.self) { _ in

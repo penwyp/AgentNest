@@ -140,7 +140,7 @@ AgentNest 的界面应当像一块安静的 macOS 原生仪器面板：
 | Token | 家族 | 字号 | 字重 | 用途 |
 | --- | --- | ---: | --- | --- |
 | `type.displayLarge` | SF Pro Display | `34` | Semibold | 激活门户主标题 |
-| `type.display` | SF Pro Display | `26` | Semibold | 首页主标题 |
+| `type.display` | SF Pro Display | `26` | Semibold | 预留（无页面首部后暂未使用） |
 | `type.title` | SF Pro Display | `20` | Semibold | 页面/卡片主数值 |
 | `type.section` | SF Pro Display | `17` | Medium | 行标题、小节标题 |
 | `type.body` | SF Pro Text | `13` | Regular | 正文 |
@@ -236,22 +236,19 @@ Reduce Motion 将全部时长解析为 `0 s`，保留最终视觉状态。
 | `surface.divider` | `color.text.primary` at `0.06`，`stroke.hairline` 高 |
 | 内边距 | 水平 `space.200`，垂直 `space.150` |
 
-### 5.6 Page Header（页面首部）
+### 5.6 页面无首部（Headerless）
 
-页面首部用于建立“当前对象 + 当前状态 + 主操作”的稳定层级，不承担装饰性 Hero 展示：
+页面不再设置首部横幅：内容直接顶到窗口顶部。页面身份由侧边栏选中项与窗口标题（Mission Control / ⌘Tab）表达；实时状态用行内 caption 状态行（如活动页顶部状态行）；主操作（扫描 / 新建 Skill / 导出）收进内容右上角的操作行（`safeAreaInset(edge: .top)`），不进窗口工具栏。
 
 | Token | 值 |
 | --- | --- |
 | `layout.page.max-width` | `920 pt` |
 | `layout.page.inset.horizontal` | `32 pt` |
 | `layout.page.inset.vertical` | `24 pt` |
-| `page.header.icon.frame` | `40 pt` 方形，符号 `20 pt Medium` |
-| `page.header.icon.surface` | 当前语义色 `10%` 填充 + `18%` 描边 |
-| `page.header.title` | `type.display` |
-| `page.header.subtitle` | `type.body` / `text.secondary` |
-| `page.header.action.minimum-width` | `168 pt` |
+| `layout.window.chrome.top-inset` | `44 pt`（侧边栏顶让出红绿灯位） |
+| `page.header.action.minimum-width` | `168 pt`（首页扫描按钮沿用） |
 
-首页扫描状态在页面首部下方使用 `Recessed` 配方就地更新；不得用循环脉冲、旋转图标或放大的装饰图形表达后台工作。
+窗口使用 `windowStyle(.hiddenTitleBar)`：无标题栏文字，内容延伸到窗口顶部，顶缘仍是可拖动区域。首页扫描状态在扫描中心就地更新；不得用循环脉冲、旋转图标或放大的装饰图形表达后台工作。
 
 ### 5.7 激活门户（Onboarding 门户）
 
@@ -266,7 +263,7 @@ Reduce Motion 将全部时长解析为 `0 s`，保留最终视觉状态。
 
 - **外观**：门户及其弹窗固定深色外观（`preferredColorScheme(.dark)`），与系统外观解耦；进入主界面后恢复跟随系统。这是「品牌页」与「仪器页」的刻意区分。
 - **布局**：顶部品牌行（鸟标 + 应用名 + 关于/隐私/退出）→ 分屏 Hero（左：overline + 主标题 + 副标题 + 双 CTA + 信任徽章；右：产品预览窗口 `DSProductPreview`）→ 2×2 能力卡（`DSFeatureRow`）→ 页脚（版本 · 删除本地数据）。
-- **产品预览**（`DSProductPreview`）：用真实 DS 原语绘制 Home 页缩影（页面首部、Recessed 进度、面积折线、微柱图、环形容量、徽章），带窗口 chrome（红黄绿三色点 + 标题栏 + 细描边 + 单层投影）。它是产品本身，不是虚构装饰；入场一次性 fade/位移，柱图与环形做一次性绘制入场，面积折线静态，无循环。
+- **产品预览**（`DSProductPreview`）：用真实 DS 原语绘制 Home 页缩影（顶部操作行、Recessed 进度、面积折线、微柱图、环形容量、徽章），带窗口 chrome（红黄绿三色点 + 标题栏 + 细描边 + 单层投影）。它是产品本身，不是虚构装饰；入场一次性 fade/位移，柱图与环形做一次性绘制入场，面积折线静态，无循环。
 - **氛围渐变例外**：仅激活门户 Hero 允许 `DSHeroWash`——单层静态 `RadialGradient`（accent 0.12 → 0.04 → 透明），无模糊、无辉光、无循环、位于内容之下。这是 §2「禁止大面积装饰渐变」的唯一登记例外。
 - **文案原则**：主标题传达「全流程、一站式」定位（「你的 Agent，一站式打理。」）；副标题点名生命周期环节（安装、空间、配置、Skill）；主 CTA 动词 + 具体利益（「免费试用 7 天」，`control.action.hero`、320 pt 宽铺满按钮面）；次路径为句子式内联链接「已有授权密钥？输入密钥激活 ›」，与主按钮左边缘对齐，chevron 随展开右→下旋转；信任徽章只陈述真实事实（本机分析 / 数据不出 Mac / 设备绑定 · Ed25519 验签）。
 - **动效**：一次性入场编排（fade + ≤ 8 pt 位移，段间 `motion.entranceStagger` 错峰）；之后回到纯交互动效；Reduce Motion 直接落定。
@@ -276,7 +273,7 @@ Reduce Motion 将全部时长解析为 `0 s`，保留最终视觉状态。
 
 首页是「扫描中 = 发现模式 / 扫描后 = 管理模式」的两态页面，借鉴 find-disk-killer `StorageMapDiscoveryView` 的逐个确认体验，但两态互斥：**扫描进行时只呈现发现界面，扫描完成后的摘要与影响卡（`SnapshotSummary` + `ImpactCards`）在扫描结束前不出现**（重扫同理）。每一处动效都折算进 AgentNest 的性能约束（无循环动画、无多层阴影、无材质）：
 
-- **页面首部（扫描中）**：标题「正在发现本机 Agent 环境」；副标题为实时状态行「N 个 Agent Home 已发现 · 当前阶段」（`DSPageHeader.animatesSubtitle`：等宽数字 + `contentTransition(.numericText())` + `motion.sample`），无结果时为「正在检查已知位置」。计数与阶段**只在状态行出现一次**，发现区不再重复放标题块。扫描态内容加宽（`layout.discovery.max-width` = 1320），与窗口同宽展开。
+- **扫描/停止主操作**：固定于首页内容右上角的操作行（`scanActionRow`：扫描中「停止」，空闲「扫描」，不依附标题横幅）。两态页面：扫描中只有发现界面，完成后才出现摘要与影响卡。计数与阶段只在扫描中心出现一次，不设页面标题。扫描态内容加宽（`layout.discovery.max-width` = 1320），与窗口同宽展开。
 - **发现界面**（`HomeDiscoveryView`，借鉴 find-disk-killer `StorageMapFirstRunView` 桌面拓扑，直接铺在画布上、无卡片容器，`min-height` 440）：
   - **左列扫描中心**（`layout.home.discovery.scan-center.width` = 320）：官方品牌图标（36 pt，顶对齐）+ 单列文字层级——绿色「刚刚发现」标签 → 名称（`type.title`）→ 来源（caption），每次确认以 `.id(home.id)` + fade/8 pt 位移整体换新（find-disk 用 `blurReplace`，macOS 14 以 opacity+offset 等效替代）→「来源 / 疑似」中性指标（数值 17 medium 等宽 + caption 标题，不上色）→ `Spacer` 撑高后底部为信任事实列表（本机分析 · 只读元数据 · 不执行清理，顶部分隔线）。无结果时以小 `ProgressView` +「正在检查已知位置」+ 当前阶段就地提示。
   - **右列拓扑栏**：标题「本次扫描路径」+ 说明「连线表示扫描来源，不表示容量大小」+ 右翼「只读取位置，不读取文件内容」盾牌；下方按发现来源（默认路径 / 环境变量 / 用户添加 / 用户确认）分成四个分支，每支：来源图标（chart series 色）+ 来源名 + 「N 个已发现 / 正在检查」，其下为自适应网格芯片（官方品牌图标 24 pt + 名称 + 路径 + 绿色勾 /「疑似」徽章），随确认逐个以 fade/位移插入，整区 `.animation(value: homes.map(\.id))`（`motion.enter`）驱动；分支左侧用静态 `Canvas` 绘制连线（竖干线 + 分支线 + 色点，secondary 0.24 / 来源色 0.72），只表归属、不表容量。
@@ -302,8 +299,11 @@ AgentNest 的侧边栏是一等公民，遵循"克制的仪器导航"：
 | `nav.row.selected` | `surface.selection` 配方；图标与文字转为 `color.accent.primary` |
 | `nav.row.gap` | 2 pt |
 | `nav.divider` | `surface.divider` 配方 |
+| `layout.window.chrome.top-inset` | 44 pt：无标题栏窗口下侧边栏顶部让出红绿灯位 |
 
 分组顺序固定：**首页** | Agent / Skill / 空间 / 活动 / 历史 | 设置。底部状态区显示授权状态圆点（`status.positive` / `status.caution`）与版本号（`type.micro` / `tertiary`）。
+
+主窗口使用 `windowStyle(.hiddenTitleBar)`：无标题栏文字，侧边栏顶部按 `layout.window.chrome.top-inset`（44 pt）让出红绿灯位；页面身份由选中行与窗口标题表达。
 
 导航不使用系统 sidebar 材质；hover 在指针离开或窗口失活时立即清除。
 
@@ -502,7 +502,6 @@ hover 在指针离开或窗口失活时清除；pressed 不叠加 hover；focus 
 | 门户信任徽章 | `DSTrustBadge`（ActivationView.swift） | 激活门户 |
 | 门户能力行 | `DSFeatureRow`（ActivationView.swift） | 激活门户 |
 | 门户产品预览 | `DSProductPreview`（ActivationView.swift） | 激活门户 |
-| 页面首部 | `DSPageHeader` | HomeView |
 | 原生列表画布 | `.dsInstrumentList()` | Agent / Skill / 空间 / 活动 / 设置 / 历史 |
 | 导航行 | `SidebarRow`（ContentView） | 侧边栏 |
 | 面积折线 | `DSLineChart` | HistoryView CPU 趋势 |

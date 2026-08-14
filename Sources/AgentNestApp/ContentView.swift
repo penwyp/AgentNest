@@ -53,7 +53,7 @@ struct ContentView: View {
                     SidebarRow(model: model, item: .settings)
                 }
                 .padding(.horizontal, DS.Space.x200)
-                .padding(.top, DS.Space.x250)
+                .padding(.top, DS.Layout.windowChromeTopInset)
             }
 
             Spacer(minLength: 0)
@@ -69,7 +69,7 @@ struct ContentView: View {
                         .lineLimit(1)
                         .truncationMode(.tail)
                 }
-                Text("AgentNest 0.1.0")
+                Text("v0.1.0")
                     .font(DS.Typeface.micro)
                     .foregroundStyle(.tertiary)
             }
@@ -160,31 +160,7 @@ private struct HomeView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: DS.Space.x400) {
-                DSPageHeader(
-                    title: model.localized(model.isScanning ? "正在发现本机 Agent 环境" : "发现并维护你的 Agent 环境"),
-                    subtitle: model.localized(
-                        model.isScanning
-                            ? scanningStatusLine
-                            : "仅扫描 Agent Definition 声明和你明确添加的 Agent Home，数据只在本机分析。"
-                    ),
-                    systemImage: model.isScanning ? "magnifyingglass" : "bird.fill",
-                    animatesSubtitle: model.isScanning
-                ) {
-                    if model.isScanning {
-                        Button(model.localized(model.isStoppingScan ? "正在停止…" : "停止"), role: .cancel) {
-                            model.stopScan()
-                        }
-                        .buttonStyle(.dsAction())
-                        .disabled(model.isStoppingScan)
-                    } else {
-                        Button(action: model.startScan) {
-                            Label("扫描", systemImage: "magnifyingglass")
-                                .frame(minWidth: DS.Layout.homeActionMinWidth)
-                        }
-                        .buttonStyle(.dsAction(.accent, size: .large))
-                        .keyboardShortcut(.defaultAction)
-                    }
-                }
+                scanActionRow
 
                 if let progress = model.progress, model.isScanning {
                     HomeDiscoveryView(model: model, progress: progress)
@@ -204,7 +180,7 @@ private struct HomeView: View {
                                     .accessibilityHidden(true)
                                 Text("尚无 Agent 结果")
                                     .font(DS.Typeface.section)
-                                Text("先在首页扫描。")
+                                Text("点击右上角「扫描」开始发现本机 Agent 环境。")
                                     .font(DS.Typeface.caption)
                                     .foregroundStyle(.secondary)
                             }
@@ -227,22 +203,30 @@ private struct HomeView: View {
             .frame(maxWidth: model.isScanning ? DS.Layout.discoveryPageMaxWidth : DS.Layout.pageMaxWidth)
             .frame(maxWidth: .infinity)
         }
-        .navigationTitle(model.localized("首页"))
         .onAppear {
             model.autoStartInitialScanIfNeeded()
         }
     }
 
-    /// 扫描中的状态行：已发现计数 + 当前阶段，各出现一次（页面标题与发现区不再重复）。
-    private var scanningStatusLine: String {
-        guard let progress = model.progress, !progress.confirmedHomes.isEmpty else {
-            return model.localized("正在检查已知位置")
+    /// 扫描 / 停止主操作：固定于首页内容右上角，不依附任何标题横幅。
+    private var scanActionRow: some View {
+        HStack(spacing: DS.Space.x300) {
+            Spacer(minLength: 0)
+            if model.isScanning {
+                Button(model.localized(model.isStoppingScan ? "正在停止…" : "停止"), role: .cancel) {
+                    model.stopScan()
+                }
+                .buttonStyle(.dsAction())
+                .disabled(model.isStoppingScan)
+            } else {
+                Button(action: model.startScan) {
+                    Label("扫描", systemImage: "magnifyingglass")
+                        .frame(minWidth: DS.Layout.homeActionMinWidth)
+                }
+                .buttonStyle(.dsAction(.accent, size: .large))
+                .keyboardShortcut(.defaultAction)
+            }
         }
-        return model.localized(
-            "%d 个 Agent Home 已发现 · %@",
-            progress.confirmedHomes.count,
-            model.scanPhaseTitle(progress.phase)
-        )
     }
 }
 
@@ -438,7 +422,6 @@ private struct AgentListView: View {
                 DSSkeletonList(sections: [3, 4])
             }
         }
-        .navigationTitle(model.localized("Agent"))
     }
 }
 
@@ -454,6 +437,27 @@ private struct SkillView: View {
     @State private var createName = ""
     @State private var createDescription = ""
     @State private var localError: String?
+
+    /// 新建 Skill 主操作：无页面首部后收进内容右上角。
+    private var skillActionRow: some View {
+        HStack {
+            Spacer()
+            Button {
+                guard let first = model.skillWriteTargets.first else { return }
+                createTargetID = first.id
+                createName = ""
+                createDescription = ""
+                isCreating = true
+            } label: {
+                Label("新建 Skill", systemImage: "plus")
+            }
+            .buttonStyle(.dsAction(.accent, size: .regular))
+            .disabled(!model.allows(.skillWrite) || model.skillWriteTargets.isEmpty)
+        }
+        .padding(.horizontal, DS.Layout.pageHorizontalInset)
+        .padding(.vertical, DS.Space.x200)
+        .background(Color(nsColor: DS.Neutral.canvas))
+    }
 
     var body: some View {
         Group {
@@ -534,18 +538,8 @@ private struct SkillView: View {
                 )
             }
         }
-        .navigationTitle(model.localized("Skill"))
-        .toolbar {
-            Button {
-                guard let first = model.skillWriteTargets.first else { return }
-                createTargetID = first.id
-                createName = ""
-                createDescription = ""
-                isCreating = true
-            } label: {
-                Label("新建 Skill", systemImage: "plus")
-            }
-            .disabled(!model.allows(.skillWrite) || model.skillWriteTargets.isEmpty)
+        .safeAreaInset(edge: .top, spacing: 0) {
+            skillActionRow
         }
         .sheet(isPresented: $isCreating) {
             NavigationStack {
@@ -859,7 +853,6 @@ private struct StorageView: View {
                 DSSkeletonList(sections: [3, 4, 3])
             }
         }
-        .navigationTitle(model.localized("空间"))
         .task(id: deriveKey) { await recomputeDerived() }
         .sheet(isPresented: $showingCleanupReview) {
             CleanupReviewSheet(model: model, units: pendingReviewUnits) {
@@ -1512,7 +1505,6 @@ private struct SettingsView: View {
         }
         .formStyle(.grouped)
         .dsInstrumentList()
-        .navigationTitle(model.localized("设置"))
         .alert("准备卸载 AgentNest？", isPresented: $confirmUninstall) {
             Button("清除并准备卸载", role: .destructive) { model.prepareForUninstall() }
             Button("取消", role: .cancel) {}
@@ -1524,6 +1516,23 @@ private struct SettingsView: View {
 
 private struct HistoryView: View {
     @Bindable var model: AppModel
+
+    /// 导出主操作：无页面首部后收进内容右上角。
+    private var historyActionRow: some View {
+        HStack {
+            Spacer()
+            Menu("导出") {
+                Button("CSV") { model.exportHistoryCSV() }
+                Button("PDF") { model.exportHistoryPDF() }
+            }
+            .menuStyle(.button)
+            .fixedSize()
+            .disabled(!model.historyEnabled || !model.allows(.export))
+        }
+        .padding(.horizontal, DS.Layout.pageHorizontalInset)
+        .padding(.vertical, DS.Space.x200)
+        .background(Color(nsColor: DS.Neutral.canvas))
+    }
 
     var body: some View {
         Group {
@@ -1570,13 +1579,8 @@ private struct HistoryView: View {
                 .dsInstrumentList()
             }
         }
-        .navigationTitle(model.localized("历史"))
-        .toolbar {
-            Menu("导出") {
-                Button("CSV") { model.exportHistoryCSV() }
-                Button("PDF") { model.exportHistoryPDF() }
-            }
-            .disabled(!model.historyEnabled || !model.allows(.export))
+        .safeAreaInset(edge: .top, spacing: 0) {
+            historyActionRow
         }
         .task { await model.refreshHistory() }
     }
