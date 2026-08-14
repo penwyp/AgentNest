@@ -37,6 +37,8 @@ enum DS {
     enum Layout {
         static let pageMaxWidth: CGFloat = 920
         static let activityPageMaxWidth: CGFloat = 1_320
+        static let discoveryPageMaxWidth: CGFloat = 1_320
+        static let homeDiscoveryScanCenterWidth: CGFloat = 320
         static let pageHorizontalInset: CGFloat = 32
         static let pageVerticalInset: CGFloat = 24
         static let heroIconFrame: CGFloat = 40

@@ -234,7 +234,7 @@ private struct HomeView: View {
             }
             .padding(.horizontal, DS.Layout.pageHorizontalInset)
             .padding(.vertical, DS.Layout.pageVerticalInset)
-            .frame(maxWidth: DS.Layout.pageMaxWidth)
+            .frame(maxWidth: model.isScanning ? DS.Layout.discoveryPageMaxWidth : DS.Layout.pageMaxWidth)
             .frame(maxWidth: .infinity)
         }
         .navigationTitle(model.localized("首页"))

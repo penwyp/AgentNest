@@ -276,13 +276,11 @@ Reduce Motion 将全部时长解析为 `0 s`，保留最终视觉状态。
 
 首页是「扫描中 = 发现模式 / 扫描后 = 管理模式」的两态页面，借鉴 find-disk-killer `StorageMapDiscoveryView` 的逐个确认体验，但两态互斥：**扫描进行时只呈现发现界面，扫描完成后的摘要与影响卡（`SnapshotSummary` + `ImpactCards`）在扫描结束前不出现**（重扫同理）。每一处动效都折算进 AgentNest 的性能约束（无循环动画、无多层阴影、无材质）：
 
-- **页面首部（扫描中）**：标题「正在发现本机 Agent 环境」；副标题为实时状态行「N 个 Agent Home 已发现 · 当前阶段」（`DSPageHeader.animatesSubtitle`：等宽数字 + `contentTransition(.numericText())` + `motion.sample`），无结果时为「正在检查已知位置」。计数与阶段**只在状态行出现一次**，发现区不再重复放标题块。
-- **发现界面**（`HomeDiscoveryView`，直接铺在画布上、无卡片容器）：
-  - **刚刚发现**：仅发现/验证阶段且有结果时显示——最近一个 Home 的产品图标（纯图标，无容器）+ 绿色「刚刚发现」+ 名称 + 来源；每次确认以 `.id(home.id)` + fade/8 pt 位移过渡换新（find-disk 用 `blurReplace`，macOS 14 以 opacity+offset 等效替代）。
-  - **已发现的 Agent**：自适应网格芯片（产品图标 + 名称 + 来源 + 绿色勾 /「疑似」徽章），随确认逐个以 fade/位移插入，整区 `.animation(value: homes.map(\.id))`（`motion.enter`）驱动；无结果时以小 `ProgressView` + 当前阶段文案就地提示。
-  - **正在确认的范围**：默认路径 / 环境变量 / 用户添加 / 用户确认四个来源区，实时显示「N 个已发现 / 正在检查」；右翼「只读取位置，不读取文件内容」盾牌标注。
+- **页面首部（扫描中）**：标题「正在发现本机 Agent 环境」；副标题为实时状态行「N 个 Agent Home 已发现 · 当前阶段」（`DSPageHeader.animatesSubtitle`：等宽数字 + `contentTransition(.numericText())` + `motion.sample`），无结果时为「正在检查已知位置」。计数与阶段**只在状态行出现一次**，发现区不再重复放标题块。扫描态内容加宽（`layout.discovery.max-width` = 1320），与窗口同宽展开。
+- **发现界面**（`HomeDiscoveryView`，借鉴 find-disk-killer `StorageMapFirstRunView` 桌面拓扑，直接铺在画布上、无卡片容器，`min-height` 440）：
+  - **左列扫描中心**（`layout.home.discovery.scan-center.width` = 320）：刚发现的 Agent（产品图标 + 绿色「刚刚发现」+ 名称 + 来源，每次确认以 `.id(home.id)` + fade/8 pt 位移换新；find-disk 用 `blurReplace`，macOS 14 以 opacity+offset 等效替代）→「来源 / 疑似」两项指标 → `Spacer` 撑高后底部为信任事实列表（本机分析 · 只读元数据 · 不执行清理，顶部分隔线）。无结果时以小 `ProgressView` +「正在检查已知位置」+ 当前阶段就地提示。
+  - **右列拓扑栏**：标题「本次扫描路径」+ 说明「连线表示扫描来源，不表示容量大小」+ 右翼「只读取位置，不读取文件内容」盾牌；下方按发现来源（默认路径 / 环境变量 / 用户添加 / 用户确认）分成四个分支，每支：来源图标（chart series 色）+ 来源名 + 「N 个已发现 / 正在检查」，其下为自适应网格芯片（产品图标 + 名称 + 路径 + 绿色勾 /「疑似」徽章），随确认逐个以 fade/位移插入，整区 `.animation(value: homes.map(\.id))`（`motion.enter`）驱动；分支左侧用静态 `Canvas` 绘制连线（竖干线 + 分支线 + 色点，secondary 0.24 / 来源色 0.72），只表归属、不表容量。
   - **进度行**：进入索引阶段后显示 `Recessed` 就地进度（当前位置 + 已处理项数，numericText）；阶段文案不重复（状态行已承载），验证阶段不显示。
-  - **信任底栏**：分隔线下的「本机分析 · 只读元数据 · 不执行清理」，只陈述真实行为。
   - **渐进数据**：`ScanProgress.confirmedHomes` 由 `ScanUseCase` 每验证一个 Home 立即发布；`AppModel` 对发现计数变化即时放行（位置刻度仍按 0.25 s 节流）。首次进入首页且无快照时自动开始首次扫描（仅一次，用户停止后不自动重启）。
   - 数值滚动与插入过渡一律尊重 Reduce Motion。
 
@@ -513,7 +511,8 @@ hover 在指针离开或窗口失活时清除；pressed 不叠加 hover；focus 
 | 分段仪表 | `DSSegmentedMeter` | ActivityView CPU / 进程 |
 | 环形进度 | `DSDonut` | ActivityView 卷容量 |
 | 发现界面 | `HomeDiscoveryView`（HomeView.swift） | HomeView 扫描中（逐个确认 Agent） |
-| 发现芯片 | `HomeDiscoveryChip`（HomeView.swift） | HomeView 发现界面 |
+| 拓扑分支 | `HomeDiscoveryBranch`（HomeView.swift） | 发现界面来源分组连线 |
+| 发现芯片 | `HomeDiscoveryChip`（HomeView.swift） | 发现界面 |
 | 产品视觉映射 | `HomeProductStyle`（HomeView.swift） | 发现芯片产品图标与色相 |
 
 ---

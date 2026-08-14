@@ -458,10 +458,11 @@
 "%d 个 Agent Home 已发现 · %@" = "%d agent homes discovered · %@";
 "刚刚发现" = "Just discovered";
 "正在检查已知位置" = "Checking known locations";
-"已发现的 Agent" = "Discovered agents";
 "%d 个已发现" = "%d discovered";
-"正在确认的范围" = "Scan scope";
 "只读取位置，不读取文件内容" = "Reads locations only, never file contents";
 "正在检查" = "Checking";
 "只读元数据" = "Read-only metadata";
 "不执行清理" = "No cleanup performed";
+"来源" = "Sources";
+"本次扫描路径" = "Scan paths";
+"连线表示扫描来源，不表示容量大小" = "Connections show scan attribution, not capacity";
