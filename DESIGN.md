@@ -302,7 +302,7 @@ Reduce Motion 将全部时长解析为 `0 s`，保留最终视觉状态。
   - 数值滚动与插入过渡一律尊重 Reduce Motion。
   - **稳定态（环境总览台，`layout.home.max-width` = 1160）**：扫描完成后首页进入「环境总览台」——读数带 → Agent 环境图 → 管理入口 → 信任行；全部静态排版、动效仅 hover（`motion.hover`），无材质、无渐变，阴影仅入口卡保留 `DSCard` 单层投影：
     - **读数带**（`HomeReadingsStrip`）：无卡片容器、无边框的四个大号仪器读数横排，标签（`type.label`）在数值上方，数值 `type.reading`（36 Light）等宽数字；「已确认 Home」accent /「物理占用」primary /「Skill 安装」次强调 violet /「疑似位置」>0 时 amber；读数间 hairline 竖分隔（`home.reading.spacing` = 64）。Skill 未索引时数值显示「—」。
-    - **Agent 环境图**（`HomeEnvironmentMap` + `HomeProductBand`）：按产品的全宽档案带，只呈现产品级聚合，Home 级明细完全在 Agent 页（两页职责区分）——左侧品牌图标 28 pt + 产品名（`type.body` semibold）+ 信心点阵（每点一个 Home，6 pt，绿 = 已核验 / 琥珀 = 疑似，颜色之外以「N 个 Home · M 个疑似」文字表达）+ 右侧产品合计占用（`type.title` 等宽数字）与占比细仪表（3 pt 轨道，`home.product.share-meter.width` = 72，accent 填充宽度 = 产品占全环境物理占用比例）；hover 出 chevron，点击整带 → Agent 页；产品间 `space.300` 纵向排列，右翼「N 个产品 · 只读分析」。单产品用户即一条全宽横带，左右均衡不空旷。
+    - **Agent 环境图**（`HomeEnvironmentMap` + `HomeProductCard`）：按产品的紧凑档案卡（自适应网格 min 240 / max 340，一行多卡；单个产品即一张小卡、不撑满整行），只呈现产品级聚合，Home 级明细完全在 Agent 页（两页职责区分）——首行品牌图标 24 pt + 产品名（`type.body` semibold）+ 右侧合计占用（`type.title` 等宽数字）+ hover chevron，次行信心点阵（每点一个 Home，6 pt，绿 = 已核验 / 琥珀 = 疑似，缩进 `home.product-card.content-inset` = 34）+「N 个 Home · M 个疑似」文字计数；点击卡片 → Agent 页；右翼「N 个产品 · 只读分析」。
     - **管理入口**（`HomeManagementTiles` + `HomeManagementTile`）：标题「维护」下一行四个安静入口卡（自适应网格 min `home.tile.min-width` = 240），裸色符号（无图标底座）+ 标题 `type.label` + 单行状态 `type.body`（Agent「N 个来源 · 全部核验/有疑似」、Skill「无冲突/N 个冲突 · N 个无效/未索引」、空间「最大类别」、活动「N 个已归因进程」）；dsCard 表面，chevron 仅 hover 出现。
     - **信任行**（`HomeTrustFooter`）：底部安静事实行「本机分析 · 只读元数据 · 不执行清理」（`type.caption` secondary + 盾牌符号），顶部分隔线，与发现态信任列表呼应。
     - **空态**（`HomeEmptyState`）：无卡片容器，居中裸符号 40 pt tertiary + 标题「尚未建立 Agent 环境档案」+ 指引文案（扫描主操作在身份区右上角）。
@@ -539,7 +539,7 @@ hover 在指针离开或窗口失活时清除；pressed 不叠加 hover；focus 
 | 发现芯片 | `HomeDiscoveryChip`（HomeView.swift） | 发现界面 |
 | 首页稳定态 | `HomeOverview`（ContentView.swift） | HomeView 扫描后总览 |
 | 读数带 | `HomeReadingsStrip`（ContentView.swift） | 首页稳定态大号读数 |
-| 环境图 | `HomeEnvironmentMap` / `HomeProductBand`（ContentView.swift） | 首页稳定态产品档案带 |
+| 环境图 | `HomeEnvironmentMap` / `HomeProductCard`（ContentView.swift） | 首页稳定态产品档案卡 |
 | 管理入口 | `HomeManagementTiles` / `HomeManagementTile`（ContentView.swift） | 首页稳定态入口卡 |
 | 信任行 | `HomeTrustFooter`（ContentView.swift） | 首页稳定态事实行 |
 | 空态 | `HomeEmptyState`（ContentView.swift） | 首页无快照时 |
