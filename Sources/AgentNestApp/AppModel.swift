@@ -69,6 +69,7 @@ final class AppModel {
     private(set) var snapshot: DeviceSnapshot?
     private(set) var errorMessage: String?
     private(set) var licenseState: LicenseState = .missing
+    private(set) var licenseActionError: String?
     private(set) var activationPhase: ActivationPhase = .idle
     private(set) var licenseConfigurationAvailable = false
     private(set) var activitySnapshot: ActivitySnapshot?
@@ -722,6 +723,7 @@ final class AppModel {
     func startTrial() {
         guard let licenseManager, activationPhase == .idle else { return }
         activationPhase = .trialInFlight
+        licenseActionError = nil
         Task {
             updateLicenseState(await licenseManager.startTrial())
             activationPhase = .idle
@@ -734,10 +736,21 @@ final class AppModel {
               !licenseKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         let key = licenseKey
         activationPhase = .activateInFlight
+        licenseActionError = nil
         Task {
-            updateLicenseState(await licenseManager.activate(licenseKey: key))
-            if hasCoreAccess {
-                licenseKey = ""
+            let state = await licenseManager.activate(licenseKey: key)
+            if hasCoreAccess, case .rejected(let code) = state {
+                // 已有有效授权（如试用）时激活失败：保留现有状态并就地提示，不把用户踢回门户。
+                licenseActionError = localized("授权被服务端拒绝：%@", code)
+            } else if hasCoreAccess, case .invalid(let error) = state {
+                licenseActionError = localized("本地授权无效：%@", error.rawValue)
+            } else if hasCoreAccess, case .expired = state {
+                licenseActionError = localized("试用或授权已到期")
+            } else {
+                updateLicenseState(state)
+                if hasCoreAccess {
+                    licenseKey = ""
+                }
             }
             activationPhase = .idle
             reconcileLicensedTasks()
@@ -773,6 +786,7 @@ final class AppModel {
     }
 
     func retryLicense() {
+        licenseActionError = nil
         Task { await refreshLicenseNow(force: true) }
     }
 

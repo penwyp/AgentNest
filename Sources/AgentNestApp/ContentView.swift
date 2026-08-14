@@ -1481,6 +1481,31 @@ private struct SettingsView: View {
             }
             Section("License") {
                 LabeledContent("状态", value: model.licenseStatusText)
+                if model.licenseConfigurationAvailable {
+                    HStack {
+                        TextField(model.localized("License Key"), text: $model.licenseKey)
+                            .textFieldStyle(.roundedBorder)
+                            .font(DS.Typeface.data)
+                            .onSubmit { model.activate() }
+                        Button(model.localized("激活")) { model.activate() }
+                            .buttonStyle(.dsAction(.accent))
+                            .disabled(
+                                model.licenseKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                                    || model.activationPhase != .idle
+                            )
+                    }
+                    if let message = model.licenseActionError {
+                        HStack(spacing: DS.Space.x150) {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundStyle(DS.Semantic.statusCaution)
+                                .accessibilityHidden(true)
+                            Text(message)
+                                .font(DS.Typeface.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
                 Button("立即重试刷新") { model.retryLicense() }
                     .buttonStyle(.dsAction())
                     .disabled(!model.licenseConfigurationAvailable)

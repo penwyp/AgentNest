@@ -1,4 +1,5 @@
 import AgentNestCore
+import AppKit
 import SwiftUI
 
 /// 激活门户 v2：参考 Raycast / Linear / Arc / CleanShot 的 onboarding 惯例。
@@ -10,6 +11,7 @@ struct ActivationView: View {
     @State private var appeared = false
     @State private var showAbout = false
     @State private var showPrivacy = false
+    @FocusState private var keyFieldFocused: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
@@ -29,7 +31,12 @@ struct ActivationView: View {
             }
         }
         .preferredColorScheme(.dark)
-        .onAppear { appeared = true }
+        .onAppear {
+            // 以裸可执行文件启动时 AppKit 可能未激活、窗口非 key window：
+            // 主动激活，保证密钥输入框能接收键盘输入。
+            NSApp.activate(ignoringOtherApps: true)
+            appeared = true
+        }
         .sheet(isPresented: $showAbout) { AboutSheet(model: model).preferredColorScheme(.dark) }
         .sheet(isPresented: $showPrivacy) { PrivacySheet(model: model).preferredColorScheme(.dark) }
     }
@@ -166,6 +173,9 @@ struct ActivationView: View {
                 withAnimation(reduceMotion ? nil : .easeInOut(duration: DS.Motion.state)) {
                     showKeyEntry.toggle()
                 }
+                if showKeyEntry {
+                    keyFieldFocused = true
+                }
             } label: {
                 HStack(spacing: DS.Space.x100) {
                     Text(model.localized("已有授权密钥？"))
@@ -193,9 +203,10 @@ struct ActivationView: View {
 
     private var keyEntryForm: some View {
         HStack(spacing: DS.Space.x200) {
-                SecureField(model.localized("License Key"), text: $model.licenseKey)
+                TextField(model.localized("License Key"), text: $model.licenseKey)
                     .textFieldStyle(.roundedBorder)
                     .font(DS.Typeface.data)
+                    .focused($keyFieldFocused)
                     .onSubmit { model.activate() }
                     .disabled(model.activationPhase != .idle)
                 if model.activationPhase == .activateInFlight {

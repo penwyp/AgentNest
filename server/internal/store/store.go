@@ -161,11 +161,15 @@ func (s *FileStore) Trial(productID, machineIDHash string, now time.Time) (domai
 	defer s.mu.Unlock()
 	key := productID + ":" + machineIDHash
 	if trial, ok := s.state.Trials[key]; ok {
-		return trial, nil
+		if now.Before(trial.ExpiresAt) {
+			return trial, nil
+		}
+		s.appendAuditLocked("trial.renewed", key, now)
+	} else {
+		s.appendAuditLocked("trial.created", key, now)
 	}
 	trial := domain.Trial{ProductID: productID, MachineIDHash: machineIDHash, StartedAt: now.UTC(), ExpiresAt: now.UTC().Add(domain.TrialDuration)}
 	s.state.Trials[key] = trial
-	s.appendAuditLocked("trial.created", key, now)
 	return trial, s.persistLocked()
 }
 
