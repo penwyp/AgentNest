@@ -27,6 +27,8 @@ public struct ScanProgress: Equatable, Sendable {
     public let discoveredCount: Int
     public let processedCount: Int
     public let processedBytes: UInt64
+    /// 截至当前已逐一验证的 Agent Home（渐进发现：随验证逐个追加，供 UI 逐个确认展示）。
+    public let confirmedHomes: [AgentHome]
 
     public init(
         generation: UUID,
@@ -34,7 +36,8 @@ public struct ScanProgress: Equatable, Sendable {
         currentLocation: String? = nil,
         discoveredCount: Int = 0,
         processedCount: Int = 0,
-        processedBytes: UInt64 = 0
+        processedBytes: UInt64 = 0,
+        confirmedHomes: [AgentHome] = []
     ) {
         self.generation = generation
         self.phase = phase
@@ -42,6 +45,7 @@ public struct ScanProgress: Equatable, Sendable {
         self.discoveredCount = discoveredCount
         self.processedCount = processedCount
         self.processedBytes = processedBytes
+        self.confirmedHomes = confirmedHomes
     }
 }
 

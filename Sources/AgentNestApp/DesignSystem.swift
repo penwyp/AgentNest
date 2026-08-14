@@ -63,6 +63,14 @@ enum DS {
         static let activityEmptyTableHeight: CGFloat = 220
         static let activityCapacityWidth: CGFloat = 180
         static let activitySkeletonLineHeight: CGFloat = 12
+        static let homeSearchWidth: CGFloat = 232
+        static let homeSearchHeight: CGFloat = 30
+        static let homeActionWidth: CGFloat = 184
+        static let homeActionHeight: CGFloat = 58
+        static let homeSummaryDividerHeight: CGFloat = 40
+        static let homeMapCardSpacing: CGFloat = 10
+        static let homeMapIdealHeight: CGFloat = 316
+        static let homeQuickLinkHeight: CGFloat = 84
     }
 
     enum IconSize {
@@ -173,6 +181,8 @@ enum DS {
         static let micro = Font.system(size: 10, weight: .regular, design: .default)
         static let valueLarge = Font.system(size: 48, weight: .light, design: .default)
         static let valueMedium = Font.system(size: 36, weight: .regular, design: .default)
+        static let valueMap = Font.system(size: 22, weight: .light, design: .default)
+        static let valueMapEmphasized = Font.system(size: 30, weight: .light, design: .default)
         static let data = Font.system(size: 12, weight: .regular, design: .monospaced)
     }
 
@@ -853,6 +863,337 @@ struct DSFooterButtonStyle: ButtonStyle {
 extension ButtonStyle where Self == DSFooterButtonStyle {
     static func dsFooterLink(destructive: Bool = false) -> DSFooterButtonStyle {
         DSFooterButtonStyle(destructive: destructive)
+    }
+}
+
+// MARK: - 首页组件
+
+/// 搜索字段：控制背景填充 + 放大镜 + 清除按钮，聚焦时 accent 描边。
+/// 交互响应优先：文本绑定本地状态，过滤在 body 派生一次完成。
+struct DSSearchField: View {
+    let prompt: String
+    @Binding var text: String
+    var clearAccessibilityLabel: String? = nil
+    var height: CGFloat = DS.Layout.homeSearchHeight
+
+    @FocusState private var isFocused: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        HStack(spacing: DS.Space.x150) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.secondary)
+                .accessibilityHidden(true)
+
+            TextField(prompt, text: $text)
+                .textFieldStyle(.plain)
+                .font(DS.Typeface.body)
+                .focused($isFocused)
+                .lineLimit(1)
+
+            if !text.isEmpty {
+                Button {
+                    text = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(.tertiary)
+                }
+                .buttonStyle(.plain)
+                .transition(.opacity)
+                .accessibilityLabel(clearAccessibilityLabel ?? "")
+            }
+        }
+        .padding(.horizontal, DS.Space.x250)
+        .frame(height: height)
+        .background(
+            RoundedRectangle(cornerRadius: DS.Radius.controlRegular, style: .continuous)
+                .fill(Color(nsColor: .controlBackgroundColor))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: DS.Radius.controlRegular, style: .continuous)
+                .strokeBorder(
+                    isFocused
+                        ? DS.Semantic.accentPrimary.opacity(0.55)
+                        : Color.primary.opacity(DS.Opacity.borderStandard),
+                    lineWidth: isFocused ? DS.Stroke.surface : DS.Stroke.hairline
+                )
+        )
+        .animation(reduceMotion ? nil : .easeOut(duration: DS.Motion.state), value: isFocused)
+    }
+}
+
+/// 摘要指标：等宽数字 + 数值滚动（numericText），值变化时以 motion.sample 过渡。
+struct DSHeaderMetric: View {
+    let value: String
+    let label: String
+    var minWidth: CGFloat = 76
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: DS.Space.x050) {
+            Text(value)
+                .font(DS.Typeface.section)
+                .monospacedDigit()
+                .lineLimit(1)
+                .contentTransition(.numericText())
+            Text(label)
+                .font(DS.Typeface.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+        }
+        .frame(minWidth: minWidth, alignment: .leading)
+        .accessibilityElement(children: .combine)
+        .animation(reduceMotion ? nil : .easeInOut(duration: DS.Motion.sample), value: value)
+    }
+}
+
+/// 一次性流动描边：进入 active 时 sweep 一次（≤ motion.settle），随后静态保持；
+/// 退出时淡出。不循环、不脉冲，符合 DESIGN.md §4.8/§5.6。
+private struct DSFlowStrokeModifier: ViewModifier {
+    let isActive: Bool
+    let color: Color
+    let cornerRadius: CGFloat
+
+    @State private var sweepAngle: Double = 90
+    @State private var isVisible = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func body(content: Content) -> some View {
+        content
+            .overlay {
+                if isVisible {
+                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                        .strokeBorder(
+                            AngularGradient(
+                                gradient: Gradient(stops: [
+                                    .init(color: color.opacity(0.02), location: 0.0),
+                                    .init(color: color.opacity(0.14), location: 0.35),
+                                    .init(color: color.opacity(0.62), location: 0.5),
+                                    .init(color: color.opacity(0.14), location: 0.65),
+                                    .init(color: color.opacity(0.02), location: 1.0),
+                                ]),
+                                center: .center,
+                                angle: .degrees(sweepAngle)
+                            ),
+                            lineWidth: 1.6
+                        )
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
+                }
+            }
+            .onAppear {
+                isVisible = isActive
+                sweepAngle = isActive ? 90 : -42
+            }
+            .onChange(of: isActive) { _, active in
+                if active {
+                    isVisible = true
+                    sweepAngle = -42
+                    guard !reduceMotion else {
+                        sweepAngle = 90
+                        return
+                    }
+                    withAnimation(.easeOut(duration: DS.Motion.settle)) {
+                        sweepAngle = 90
+                    }
+                } else {
+                    withAnimation(.easeOut(duration: DS.Motion.state)) {
+                        isVisible = false
+                    }
+                }
+            }
+    }
+}
+
+extension View {
+    /// 一次性流动描边（用于扫描中的主操作按钮），不做循环动画。
+    func dsFlowStroke(isActive: Bool, color: Color, cornerRadius: CGFloat = DS.Radius.controlRegular) -> some View {
+        modifier(DSFlowStrokeModifier(isActive: isActive, color: color, cornerRadius: cornerRadius))
+    }
+}
+
+/// 加权马赛克权重键（layoutValue）。
+struct DSMosaicWeightKey: LayoutValueKey {
+    static let defaultValue: Double = 1
+}
+
+/// 加权马赛克布局：按权重把区域切成近似列/行结构，首项为大块 hero，
+/// 其余按权重细分。用于首页「Agent 空间地图」。
+struct DSMosaicLayout: Layout {
+    var spacing: CGFloat = DS.Layout.homeMapCardSpacing
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        CGSize(width: proposal.width ?? 720, height: proposal.height ?? DS.Layout.homeMapIdealHeight)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let weights = subviews.map { max(1, $0[DSMosaicWeightKey.self]) }
+        let frames = Self.frames(in: bounds, weights: weights, spacing: spacing)
+        for (index, subview) in subviews.enumerated() where index < frames.count {
+            subview.place(
+                at: frames[index].origin,
+                anchor: .topLeading,
+                proposal: ProposedViewSize(frames[index].size)
+            )
+        }
+    }
+
+    static func frames(in bounds: CGRect, weights: [Double], spacing: CGFloat) -> [CGRect] {
+        switch weights.count {
+        case 0:
+            return []
+        case 1:
+            return [bounds]
+        case 2:
+            return horizontalFrames(in: bounds, weights: weights, spacing: spacing, minimumShare: 0.34)
+        case 3:
+            let leadingShare = clampedShare(weights[0] / weights.reduce(0, +), minimum: 0.46, maximum: 0.62)
+            let leadingWidth = (bounds.width - spacing) * leadingShare
+            let trailingWidth = bounds.width - spacing - leadingWidth
+            let leading = CGRect(x: bounds.minX, y: bounds.minY, width: leadingWidth, height: bounds.height)
+            let trailingBounds = CGRect(
+                x: leading.maxX + spacing,
+                y: bounds.minY,
+                width: trailingWidth,
+                height: bounds.height
+            )
+            return [leading] + verticalFrames(
+                in: trailingBounds,
+                weights: Array(weights.dropFirst()),
+                spacing: spacing,
+                minimumShare: 0.34
+            )
+        case 4:
+            let rowWeights = [weights[0] + weights[1], weights[2] + weights[3]]
+            let rows = verticalFrames(in: bounds, weights: rowWeights, spacing: spacing, minimumShare: 0.40)
+            return horizontalFrames(in: rows[0], weights: Array(weights[0...1]), spacing: spacing, minimumShare: 0.34)
+                + horizontalFrames(in: rows[1], weights: Array(weights[2...3]), spacing: spacing, minimumShare: 0.34)
+        default:
+            let topWeight = weights[0] + weights[1]
+            let bottomWeight = weights[2...4].reduce(0, +)
+            let topShare = clampedShare(
+                topWeight / (topWeight + bottomWeight),
+                minimum: 0.56,
+                maximum: 0.68
+            )
+            let availableHeight = max(0, bounds.height - spacing)
+            let minimumBottomHeight = min(180, availableHeight)
+            let topHeight = min(
+                availableHeight * topShare,
+                max(0, availableHeight - minimumBottomHeight)
+            )
+            let topBounds = CGRect(
+                x: bounds.minX,
+                y: bounds.minY,
+                width: bounds.width,
+                height: topHeight
+            )
+            let bottomBounds = CGRect(
+                x: bounds.minX,
+                y: topBounds.maxY + spacing,
+                width: bounds.width,
+                height: bounds.height - spacing - topHeight
+            )
+            return horizontalFrames(in: topBounds, weights: Array(weights[0...1]), spacing: spacing, minimumShare: 0.34)
+                + horizontalFrames(
+                    in: bottomBounds,
+                    weights: Array(weights[2...4]),
+                    spacing: spacing,
+                    minimumShare: 0,
+                    minimumLength: 124
+                )
+        }
+    }
+
+    private static func horizontalFrames(
+        in bounds: CGRect,
+        weights: [Double],
+        spacing: CGFloat,
+        minimumShare: Double,
+        minimumLength: CGFloat = 0
+    ) -> [CGRect] {
+        let widths = weightedLengths(
+            available: bounds.width,
+            weights: weights,
+            spacing: spacing,
+            minimumShare: minimumShare,
+            minimumLength: minimumLength
+        )
+        var x = bounds.minX
+        return widths.map { width in
+            defer { x += width + spacing }
+            return CGRect(x: x, y: bounds.minY, width: width, height: bounds.height)
+        }
+    }
+
+    private static func verticalFrames(
+        in bounds: CGRect,
+        weights: [Double],
+        spacing: CGFloat,
+        minimumShare: Double
+    ) -> [CGRect] {
+        let heights = weightedLengths(
+            available: bounds.height,
+            weights: weights,
+            spacing: spacing,
+            minimumShare: minimumShare
+        )
+        var y = bounds.minY
+        return heights.map { height in
+            defer { y += height + spacing }
+            return CGRect(x: bounds.minX, y: y, width: bounds.width, height: height)
+        }
+    }
+
+    private static func weightedLengths(
+        available: CGFloat,
+        weights: [Double],
+        spacing: CGFloat,
+        minimumShare: Double,
+        minimumLength: CGFloat = 0
+    ) -> [CGFloat] {
+        guard !weights.isEmpty else { return [] }
+        let contentLength = max(0, available - spacing * CGFloat(weights.count - 1))
+        let totalWeight = max(1, weights.reduce(0, +))
+        let shares = weights.map { $0 / totalWeight }
+        let floorShare = min(minimumShare, 1 / Double(weights.count))
+        let floored = shares.map { max(floorShare, $0) }
+        let normalizedTotal = floored.reduce(0, +)
+        var lengths = floored.map { contentLength * CGFloat($0 / normalizedTotal) }
+        let readableMinimum = min(minimumLength, contentLength / CGFloat(weights.count))
+        guard readableMinimum > 0 else { return lengths }
+
+        var fixedIndices = Set<Int>()
+        while true {
+            let newlyFixed = lengths.indices.filter {
+                !fixedIndices.contains($0) && lengths[$0] < readableMinimum
+            }
+            guard !newlyFixed.isEmpty else { break }
+            fixedIndices.formUnion(newlyFixed)
+
+            let remainingLength = max(
+                0,
+                contentLength - readableMinimum * CGFloat(fixedIndices.count)
+            )
+            let flexibleIndices = lengths.indices.filter { !fixedIndices.contains($0) }
+            let flexibleWeight = max(
+                0.000_001,
+                flexibleIndices.reduce(0) { $0 + floored[$1] }
+            )
+            for index in lengths.indices {
+                lengths[index] = fixedIndices.contains(index)
+                    ? readableMinimum
+                    : remainingLength * CGFloat(floored[index] / flexibleWeight)
+            }
+        }
+        return lengths
+    }
+
+    private static func clampedShare(_ value: Double, minimum: Double, maximum: Double) -> CGFloat {
+        CGFloat(min(maximum, max(minimum, value)))
     }
 }
 

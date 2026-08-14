@@ -103,6 +103,7 @@ final class AppModel {
     private var networkAvailable = false
     private var lastHistoryPersistedAt: Date?
     private var lastProgressPublishedAt = Date.distantPast
+    private var didAutoStartInitialScan = false
     private let catalog: AgentDefinitionCatalog?
     private let coordinator: ScanCoordinator?
     private let activitySampler = SystemActivitySampler()
@@ -262,8 +263,11 @@ final class AppModel {
                     await MainActor.run {
                         guard let self else { return }
                         let phaseChanged = self.progress?.phase != value.phase
+                        // 渐进发现：每确认一个 Home 立即发布（界面逐个展示）；
+                        // 高频位置刻度仍按 0.25 s 节流。
+                        let homesChanged = value.confirmedHomes.count != self.progress?.confirmedHomes.count
                         let now = Date()
-                        guard phaseChanged || now.timeIntervalSince(self.lastProgressPublishedAt) >= 0.25 else { return }
+                        guard homesChanged || phaseChanged || now.timeIntervalSince(self.lastProgressPublishedAt) >= 0.25 else { return }
                         self.progress = value
                         self.lastProgressPublishedAt = now
                     }
@@ -288,6 +292,14 @@ final class AppModel {
         isStoppingScan = true
         scanTask?.cancel()
         Task { await coordinator?.cancel() }
+    }
+
+    /// 首次进入首页且尚无快照时自动开始首次扫描（发现设备上的 Agent 环境）。
+    /// 仅尝试一次：用户主动停止后不再自动重启；已有快照时也不触发。
+    func autoStartInitialScanIfNeeded() {
+        guard !didAutoStartInitialScan, snapshot == nil, !isScanning else { return }
+        didAutoStartInitialScan = true
+        startScan()
     }
 
     func addCustomScanLocations() {
