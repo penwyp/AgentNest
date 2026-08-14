@@ -487,3 +487,4 @@
 "%d 个已归因进程" = "%d attributed processes";
 "尚未建立 Agent 环境档案" = "No Agent environment profile yet";
 "%@：%@" = "%@: %@";
+"%d 个 Home · %d 个疑似" = "%d homes · %d possible";

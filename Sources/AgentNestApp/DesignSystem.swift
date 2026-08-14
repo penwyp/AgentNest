@@ -76,6 +76,8 @@ enum DS {
         static let homeReadingSpacing: CGFloat = 64
         /// 管理入口自适应网格的最小列宽。
         static let homeManagementTileMinWidth: CGFloat = 240
+        /// 产品档案带占比细仪表轨道宽度。
+        static let homeProductShareMeterWidth: CGFloat = 72
     }
 
     enum IconSize {
