@@ -32,6 +32,9 @@
 "完整" = "Complete";
 "尚无 Agent 结果" = "No Agent results";
 "点击右上角「扫描」开始发现本机 Agent 环境。" = "Tap Scan in the top-right corner to start discovering your Agent environment.";
+"%d 个 Home · %@" = "%d homes · %@";
+"%d 个已确认 · %d 个疑似" = "%d confirmed · %d possible";
+"%d 个安装 · %d 个冲突 · %d 个无效" = "%d installations · %d conflicts · %d invalid";
 "先在首页扫描。" = "Run a scan from Home first.";
 "已确认" = "Confirmed";
 "尚无 Skill 索引" = "No Skill index";
