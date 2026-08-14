@@ -55,16 +55,24 @@ public struct ScanUseCase: Sendable {
                 ) else { continue }
                 guard seenHomeIdentities.insert(home.id).inserted else { continue }
                 homes.append(home)
+                // 渐进发现：每验证一个 Home 立即发布，界面逐个确认展示。
+                await progress(ScanProgress(
+                    generation: generation,
+                    phase: .validatingHomes,
+                    discoveredCount: candidateCount,
+                    confirmedHomes: homes
+                ))
             }
         }
 
         let confirmedRoots = homes
             .filter { $0.confidence == .confirmed }
             .map { URL(fileURLWithPath: $0.path, isDirectory: true) }
-        await progress(ScanProgress(generation: generation, phase: .indexingSkills, discoveredCount: confirmedRoots.count))
+        await progress(ScanProgress(generation: generation, phase: .indexingSkills, discoveredCount: confirmedRoots.count, confirmedHomes: homes))
         try Task.checkCancellation()
 
         var indexes: [DirectoryIndex] = []
+        let confirmedHomesAtIndexing = homes
         for root in confirmedRoots {
             try Task.checkCancellation()
             let baseProcessedCount = processedCount
@@ -76,7 +84,8 @@ public struct ScanUseCase: Sendable {
                     currentLocation: path,
                     discoveredCount: confirmedRoots.count,
                     processedCount: baseProcessedCount + count,
-                    processedBytes: baseProcessedBytes &+ bytes
+                    processedBytes: baseProcessedBytes &+ bytes,
+                    confirmedHomes: confirmedHomesAtIndexing
                 ))
             }
             indexes.append(index)
@@ -89,7 +98,8 @@ public struct ScanUseCase: Sendable {
             phase: .measuringSpace,
             discoveredCount: homes.count,
             processedCount: processedCount,
-            processedBytes: processedBytes
+            processedBytes: processedBytes,
+            confirmedHomes: homes
         ))
         try Task.checkCancellation()
         let unstablePaths = detectUnstablePaths(in: indexes)
@@ -127,9 +137,9 @@ public struct ScanUseCase: Sendable {
                 arguments: [String(unstablePaths.count)]
             ))
         }
-        await progress(ScanProgress(generation: generation, phase: .generatingFindings, discoveredCount: homes.count))
+        await progress(ScanProgress(generation: generation, phase: .generatingFindings, discoveredCount: homes.count, confirmedHomes: homes))
         try Task.checkCancellation()
-        await progress(ScanProgress(generation: generation, phase: .reconciling, discoveredCount: homes.count, processedBytes: storageLedger.total.physicalBytes))
+        await progress(ScanProgress(generation: generation, phase: .reconciling, discoveredCount: homes.count, processedBytes: storageLedger.total.physicalBytes, confirmedHomes: homes))
         try Task.checkCancellation()
 
         let isPartial = unreadableCount > 0 || !unstablePaths.isEmpty
