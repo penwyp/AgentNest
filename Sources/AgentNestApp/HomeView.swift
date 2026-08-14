@@ -198,8 +198,8 @@ struct HomeDiscoveryView: View {
             }
 
             HStack(alignment: .firstTextBaseline, spacing: DS.Space.x400) {
-                scanMetric(model.localized("来源"), "\(activeSourceCount(homes))")
-                scanMetric(model.localized("疑似"), "\(homes.filter { $0.confidence == .possible }.count)")
+                scanMetric(model.localized("发现来源"), "\(activeSourceCount(homes))")
+                scanMetric(model.localized("疑似位置"), "\(homes.filter { $0.confidence == .possible }.count)")
             }
             .padding(.top, DS.Space.x400)
 
@@ -235,8 +235,8 @@ struct HomeDiscoveryView: View {
                     .contentTransition(.numericText())
                 Spacer(minLength: DS.Space.x200)
                 HStack(spacing: DS.Space.x400) {
-                    scanMetric(model.localized("来源"), "\(activeSourceCount(homes))")
-                    scanMetric(model.localized("疑似"), "\(homes.filter { $0.confidence == .possible }.count)")
+                    scanMetric(model.localized("发现来源"), "\(activeSourceCount(homes))")
+                    scanMetric(model.localized("疑似位置"), "\(homes.filter { $0.confidence == .possible }.count)")
                 }
             }
             if let latest = homes.last {

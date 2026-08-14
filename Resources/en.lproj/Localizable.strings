@@ -469,5 +469,7 @@
 "只读元数据" = "Read-only metadata";
 "不执行清理" = "No cleanup performed";
 "来源" = "Sources";
+"发现来源" = "Discovery sources";
+"疑似位置" = "Suspect locations";
 "本次扫描路径" = "Scan paths";
 "连线表示扫描来源，不表示容量大小" = "Connections show scan attribution, not capacity";
