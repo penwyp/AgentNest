@@ -78,6 +78,11 @@ enum DS {
         static let homeManagementTileMinWidth: CGFloat = 240
         /// 产品档案卡次行（信心点阵 + 计数）相对卡片的缩进（图标 24 + space.250）。
         static let homeProductCardContentInset: CGFloat = 34
+        /// Agent 页档案卡网格的最小 / 最大列宽。
+        static let agentCardColumnMinWidth: CGFloat = 380
+        static let agentCardColumnMaxWidth: CGFloat = 460
+        /// Agent 档案卡类别空间构成条高度。
+        static let agentStorageBarHeight: CGFloat = 4
     }
 
     enum IconSize {

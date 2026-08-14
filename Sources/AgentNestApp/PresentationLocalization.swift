@@ -129,6 +129,7 @@ extension AppModel {
     }
 
     func formatBytes(_ value: UInt64) -> String {
+        if value == 0 { return localized("0 B") }
         let formatter = ByteCountFormatter()
         formatter.countStyle = .file
         formatter.allowedUnits = .useAll

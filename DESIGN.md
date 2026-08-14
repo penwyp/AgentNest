@@ -307,6 +307,21 @@ Reduce Motion 将全部时长解析为 `0 s`，保留最终视觉状态。
     - **信任行**（`HomeTrustFooter`）：底部安静事实行「本机分析 · 只读元数据 · 不执行清理」（`type.caption` secondary + 盾牌符号），顶部分隔线，与发现态信任列表呼应。
     - **空态**（`HomeEmptyState`）：无卡片容器，居中裸符号 40 pt tertiary + 标题「尚未建立 Agent 环境档案」+ 指引文案（扫描主操作在身份区右上角）。
 
+### 5.9 Agent 页（档案卡）
+
+Agent 页以「档案卡」呈现每个 Agent Home（自适应网格 `agent.card.column.min-width` = 380 / `max-width` = 460，920 页宽下双列），替代平铺列表行；Home 级明细与操作集中在此页，首页只保留产品级聚合。
+
+| Token | 值 |
+| --- | --- |
+| `agent.card.column.min-width` | `380 pt` |
+| `agent.card.column.max-width` | `460 pt` |
+| `agent.card.storage-bar.height` | `4 pt` |
+
+- **卡片结构**（`AgentHomeCard`，`DSCard` 表面）：头部（官方品牌图标 32 pt + Home 名 `type.section` + 路径 `type.caption` secondary、中间截断、隐私脱敏 + 右上「已确认/疑似」`DSBadge`）→ 事实行（来源 · 物理占用 · 条目数 · 证据数，`type.caption` secondary 等宽数字；hover 显示原始证据清单）→ 类别空间构成条（4 pt 堆叠条 + 前三类别图例，含「未归属」剩余）→ 条件操作行（疑似 → 确认/忽略；用户确认 → 撤销；已确认无操作行，顶部 hairline 分隔）。
+- **类别 → 系列色固定映射**（§8.1 系列色的组件级延伸）：会话 `series.01`、日志 `series.02`、缓存 `series.03`、配置 `series.04`、运行时 `series.05`、Skill `series.06`、浏览器 `series.07`、数据库 `series.08`、未归属剩余 `text.secondary` 0.55。
+- **派生计算**：构成数据由 `computeAgentCardDerived` 在后台（`Task.detached(.utility)`）一次遍历存储账本、按 `homeIDs` 聚合类别物理占用；`AgentListView` 按 `snapshot.generation` 缓存、主线程发布、generation 校验丢弃迟到结果；未就绪时构成条以空轨道占位、图例行以空格占位（固定尺寸防跳动）。
+- **骨架屏**：`AgentCardGridSkeleton` 镜像档案卡网格（4 张骨架卡：图标块 + 名称/路径条 + 事实条 + 构成轨道），数据未就绪时占位；空态保持原生 `ContentUnavailableView`。
+
 
 ---
 
@@ -528,7 +543,10 @@ hover 在指针离开或窗口失活时清除；pressed 不叠加 hover；focus 
 | 门户信任徽章 | `DSTrustBadge`（ActivationView.swift） | 激活门户 |
 | 门户能力行 | `DSFeatureRow`（ActivationView.swift） | 激活门户 |
 | 门户产品预览 | `DSProductPreview`（ActivationView.swift） | 激活门户 |
-| 原生列表画布 | `.dsInstrumentList()` | Agent / Skill / 空间 / 活动 / 设置 / 历史 |
+| 原生列表画布 | `.dsInstrumentList()` | Skill / 空间 / 活动 / 设置 / 历史 |
+| Agent 档案卡 | `AgentHomeCard`（ContentView.swift） | Agent 页卡片（品牌图标 / 事实行 / 构成条 / 操作行） |
+| Agent 骨架卡 | `AgentCardGridSkeleton` / `AgentCardSkeleton`（ContentView.swift） | Agent 页数据占位 |
+| 类别构成派生 | `computeAgentCardDerived`（ContentView.swift） | Agent 档案卡空间构成（后台派生） |
 | 导航行 | `SidebarRow`（ContentView） | 侧边栏 |
 | 面积折线 | `DSLineChart` | HistoryView CPU 趋势 |
 | 微柱状图 | `DSMicroHistogram` | 预留（速率分布） |

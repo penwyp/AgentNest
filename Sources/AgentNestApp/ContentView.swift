@@ -632,6 +632,10 @@ private struct HomeEmptyState: View {
 
 private struct AgentListView: View {
     @Bindable var model: AppModel
+    /// 类别空间构成派生数据（后台计算，按 generation 缓存）。
+    @State private var derived: AgentCardDerived?
+
+    private var deriveKey: UUID? { model.snapshot?.generation }
 
     /// 页面身份区：标题 + 已确认/疑似统计。
     private var agentIdentity: some View {
@@ -658,48 +662,315 @@ private struct AgentListView: View {
                 if snapshot.homes.isEmpty {
                     ContentUnavailableView("尚无 Agent 结果", systemImage: "cpu", description: Text("先在首页扫描。"))
                 } else {
-                List(snapshot.homes) { home in
-                    VStack(alignment: .leading, spacing: DS.Space.x150) {
-                        HStack(spacing: DS.Space.x200) {
-                            Image(systemName: home.confidence == .confirmed ? "checkmark.circle.fill" : "questionmark.circle.fill")
-                                .font(.system(size: 15, weight: .medium))
-                                .foregroundStyle(home.confidence == .confirmed ? DS.Semantic.statusPositive : DS.Semantic.statusCaution)
-                            Text(home.displayName).font(DS.Typeface.section)
-                            DSBadge(
-                                text: model.localized(home.confidence == .confirmed ? "已确认" : "疑似"),
-                                color: home.confidence == .confirmed ? DS.Semantic.statusPositive : DS.Semantic.statusCaution
-                            )
-                        }
-                        Text(model.displayPath(home.path)).font(DS.Typeface.caption).foregroundStyle(.secondary).privacySensitive()
-                        Text(model.localized("%@ · %@", model.discoverySourceTitle(home.source), model.formatBytes(home.storage.physicalBytes)))
-                            .font(DS.Typeface.micro)
-                            .foregroundStyle(.tertiary)
-                            .monospacedDigit()
-                        if home.confidence == .possible {
-                            HStack(spacing: DS.Space.x200) {
-                                Button(model.localized("确认为 %@", home.displayName)) { model.confirmCandidate(home) }
-                                    .buttonStyle(.dsAction(.accent, size: .compact))
-                                Button("忽略此位置", role: .destructive) { model.ignoreCandidate(home) }
-                                    .buttonStyle(.dsAction(.destructive, size: .compact))
-                            }
-                        } else if home.source == .userConfirmed {
-                            Button("撤销本机确认") { model.revokeCandidateConfirmation(home) }
-                                .buttonStyle(.dsAction(size: .compact))
-                        }
-                    }
-                    .padding(.vertical, DS.Space.x150)
-                }
-                .dsInstrumentList()
+                    agentCardGrid(snapshot: snapshot)
                 }
             } else {
-                DSSkeletonList(sections: [3, 4])
+                AgentCardGridSkeleton()
             }
         }
         .safeAreaInset(edge: .top, spacing: 0) {
             agentIdentity
         }
+        .task(id: deriveKey) { await recomputeDerived() }
+    }
+
+    private func agentCardGrid(snapshot: DeviceSnapshot) -> some View {
+        ScrollView {
+            LazyVGrid(
+                columns: [GridItem(.adaptive(minimum: DS.Layout.agentCardColumnMinWidth, maximum: DS.Layout.agentCardColumnMaxWidth), spacing: DS.Space.x300)],
+                alignment: .leading,
+                spacing: DS.Space.x300
+            ) {
+                ForEach(snapshot.homes) { home in
+                    AgentHomeCard(
+                        model: model,
+                        home: home,
+                        slices: derived?.slicesByHome[home.id] ?? []
+                    )
+                }
+            }
+            .padding(.horizontal, DS.Layout.pageHorizontalInset)
+            .padding(.vertical, DS.Layout.pageVerticalInset)
+            .frame(maxWidth: DS.Layout.pageMaxWidth)
+            .frame(maxWidth: .infinity)
+        }
+    }
+
+    @MainActor
+    private func recomputeDerived() async {
+        guard let snapshot = model.snapshot else { return }
+        let generation = snapshot.generation
+        let value = await Task.detached(priority: .utility) {
+            computeAgentCardDerived(snapshot: snapshot)
+        }.value
+        guard model.snapshot?.generation == generation else { return }
+        derived = value
     }
 }
+
+/// 单类别占用切片（按 Home 聚合、按字节降序）。
+private struct AgentCategorySlice: Sendable {
+    let category: ArtifactCategory
+    let bytes: UInt64
+}
+
+/// 档案卡派生数据：Home → 类别占用切片（降序、仅 > 0）。
+private struct AgentCardDerived: Sendable {
+    let slicesByHome: [PhysicalResourceIdentity: [AgentCategorySlice]]
+}
+
+/// 纯数据派生（无 UI 依赖，后台执行）：一次遍历账本，按 homeIDs 聚合每个 Home 的类别物理占用。
+private func computeAgentCardDerived(snapshot: DeviceSnapshot) -> AgentCardDerived {
+    var accum: [PhysicalResourceIdentity: [ArtifactCategory: UInt64]] = [:]
+    for artifact in snapshot.storageLedger.artifacts {
+        for homeID in artifact.homeIDs {
+            accum[homeID, default: [:]][artifact.category, default: 0] &+= artifact.storage.physicalBytes
+        }
+    }
+    var slicesByHome: [PhysicalResourceIdentity: [AgentCategorySlice]] = [:]
+    for (homeID, byCategory) in accum {
+        slicesByHome[homeID] = byCategory
+            .filter { $0.value > 0 }
+            .map { AgentCategorySlice(category: $0.key, bytes: $0.value) }
+            .sorted { $0.bytes > $1.bytes }
+    }
+    return AgentCardDerived(slicesByHome: slicesByHome)
+}
+
+/// Agent 档案卡：品牌图标 + 名称/路径 + 状态徽章 + 事实行 + 类别空间构成条 + 条件操作行。
+/// 静态卡片表面（DSCard），动效仅在按钮 hover/press；构成数据由后台派生注入。
+private struct AgentHomeCard: View {
+    let model: AppModel
+    let home: AgentHome
+    let slices: [AgentCategorySlice]
+
+    private var totalBytes: UInt64 { home.storage.physicalBytes }
+    private var attributedBytes: UInt64 { slices.reduce(UInt64(0)) { $0 &+ $1.bytes } }
+    private var remainderBytes: UInt64 { totalBytes > attributedBytes ? totalBytes - attributedBytes : 0 }
+    private var needsActions: Bool { home.confidence == .possible || home.source == .userConfirmed }
+
+    var body: some View {
+        DSCard(padding: DS.Space.x400) {
+            VStack(alignment: .leading, spacing: DS.Space.x300) {
+                header
+                factsRow
+                storageBreakdown
+                if needsActions {
+                    actionRow
+                }
+            }
+        }
+        .accessibilityElement(children: .contain)
+    }
+
+    private var header: some View {
+        HStack(alignment: .top, spacing: DS.Space.x300) {
+            HomeBrandIcon(productID: home.productID, size: 32)
+            VStack(alignment: .leading, spacing: DS.Space.x050) {
+                Text(home.displayName)
+                    .font(DS.Typeface.section)
+                    .lineLimit(1)
+                Text(model.displayPath(home.path))
+                    .font(DS.Typeface.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .privacySensitive()
+            }
+            Spacer(minLength: DS.Space.x200)
+            DSBadge(
+                text: model.localized(home.confidence == .confirmed ? "已确认" : "疑似"),
+                color: home.confidence == .confirmed ? DS.Semantic.statusPositive : DS.Semantic.statusCaution
+            )
+        }
+    }
+
+    /// 事实行：来源 · 物理占用 · 条目数 · 证据数；hover 显示原始证据清单。
+    private var factsRow: some View {
+        let base = Text(model.localized(
+            "%@ · %@ · %d 项 · %d 条证据",
+            model.discoverySourceTitle(home.source),
+            model.formatBytes(totalBytes),
+            home.storage.itemCount,
+            home.evidence.count
+        ))
+        .font(DS.Typeface.caption)
+        .foregroundStyle(.secondary)
+        .monospacedDigit()
+        .lineLimit(1)
+        .truncationMode(.tail)
+        return Group {
+            if home.evidence.isEmpty {
+                base
+            } else {
+                base.help(Text(home.evidence.joined(separator: "\n")))
+            }
+        }
+    }
+
+    /// 类别空间构成：4 pt 堆叠条（类别 → chart series 固定映射）+ 前三类别图例（含未归属剩余）。
+    private var storageBreakdown: some View {
+        VStack(alignment: .leading, spacing: DS.Space.x100) {
+            storageBar
+            Text(legendText.isEmpty ? " " : legendText)
+                .font(DS.Typeface.caption)
+                .foregroundStyle(.secondary)
+                .monospacedDigit()
+                .lineLimit(1)
+                .truncationMode(.tail)
+        }
+    }
+
+    private var legendText: String {
+        var parts: [String] = []
+        for slice in slices.prefix(3) {
+            parts.append(model.localized("%@ %@", model.artifactCategoryTitle(slice.category), model.formatBytes(slice.bytes)))
+        }
+        if remainderBytes > 0 {
+            parts.append(model.localized("%@ %@", model.localized("未归属"), model.formatBytes(remainderBytes)))
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    private var storageBar: some View {
+        GeometryReader { proxy in
+            let width = proxy.size.width
+            let total = Double(totalBytes)
+            HStack(spacing: 1) {
+                ForEach(slices, id: \.category) { slice in
+                    segment(
+                        color: Self.color(for: slice.category),
+                        fraction: total > 0 ? Double(slice.bytes) / total : 0,
+                        totalWidth: width
+                    )
+                }
+                if remainderBytes > 0 {
+                    segment(
+                        color: Color.secondary.opacity(0.55),
+                        fraction: total > 0 ? Double(remainderBytes) / total : 0,
+                        totalWidth: width
+                    )
+                }
+                Spacer(minLength: 0)
+            }
+        }
+        .frame(height: DS.Layout.agentStorageBarHeight)
+        .background(
+            RoundedRectangle(cornerRadius: 1.5, style: .continuous)
+                .fill(Color.primary.opacity(DS.Opacity.fillQuiet))
+        )
+        .accessibilityHidden(true)
+    }
+
+    private func segment(color: Color, fraction: Double, totalWidth: CGFloat) -> some View {
+        RoundedRectangle(cornerRadius: 1, style: .continuous)
+            .fill(color)
+            .frame(
+                width: fraction > 0 ? max(2, totalWidth * fraction) : 0,
+                height: DS.Layout.agentStorageBarHeight
+            )
+    }
+
+    /// 类别 → chart series 固定映射（见 DESIGN.md §5.9）。
+    private static func color(for category: ArtifactCategory) -> Color {
+        switch category {
+        case .sessions: return DS.Chart.series01
+        case .logs: return DS.Chart.series02
+        case .cache: return DS.Chart.series03
+        case .configuration: return DS.Chart.series04
+        case .runtime: return DS.Chart.series05
+        case .skill: return DS.Chart.series06
+        case .browser: return DS.Chart.series07
+        case .database: return DS.Chart.series08
+        case .unattributed: return Color.secondary.opacity(0.55)
+        }
+    }
+
+    /// 条件操作行：疑似 → 确认/忽略；用户确认 → 撤销；已确认 → 无此行。
+    private var actionRow: some View {
+        VStack(spacing: 0) {
+            Rectangle()
+                .fill(Color.primary.opacity(DS.Opacity.borderQuiet))
+                .frame(height: DS.Stroke.hairline)
+                .accessibilityHidden(true)
+            HStack(spacing: DS.Space.x200) {
+                Spacer(minLength: 0)
+                if home.confidence == .possible {
+                    Button(model.localized("确认为 %@", home.displayName)) { model.confirmCandidate(home) }
+                        .buttonStyle(.dsAction(.accent, size: .compact))
+                    Button("忽略此位置", role: .destructive) { model.ignoreCandidate(home) }
+                        .buttonStyle(.dsAction(.destructive, size: .compact))
+                } else if home.source == .userConfirmed {
+                    Button("撤销本机确认") { model.revokeCandidateConfirmation(home) }
+                        .buttonStyle(.dsAction(size: .compact))
+                }
+            }
+            .padding(.top, DS.Space.x300)
+        }
+    }
+}
+
+/// 骨架屏：镜像档案卡网格（4 张骨架卡，固定尺寸防跳动），数据未就绪时的占位。
+private struct AgentCardGridSkeleton: View {
+    var body: some View {
+        ScrollView {
+            LazyVGrid(
+                columns: [GridItem(.adaptive(minimum: DS.Layout.agentCardColumnMinWidth, maximum: DS.Layout.agentCardColumnMaxWidth), spacing: DS.Space.x300)],
+                alignment: .leading,
+                spacing: DS.Space.x300
+            ) {
+                ForEach(0..<4, id: \.self) { _ in
+                    AgentCardSkeleton()
+                }
+            }
+            .padding(.horizontal, DS.Layout.pageHorizontalInset)
+            .padding(.vertical, DS.Layout.pageVerticalInset)
+            .frame(maxWidth: DS.Layout.pageMaxWidth)
+            .frame(maxWidth: .infinity)
+        }
+        .accessibilityHidden(true)
+        .allowsHitTesting(false)
+    }
+}
+
+/// 骨架卡：图标块 + 名称/路径条 + 事实条 + 构成轨道，镜像档案卡结构。
+private struct AgentCardSkeleton: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: DS.Space.x300) {
+            HStack(alignment: .top, spacing: DS.Space.x300) {
+                RoundedRectangle(cornerRadius: DS.Radius.icon, style: .continuous)
+                    .fill(Color.primary.opacity(DS.Opacity.fillSkeleton))
+                    .frame(width: 32, height: 32)
+                VStack(alignment: .leading, spacing: DS.Space.x150) {
+                    RoundedRectangle(cornerRadius: 3, style: .continuous)
+                        .fill(Color.primary.opacity(0.09))
+                        .frame(width: 140, height: 14)
+                    RoundedRectangle(cornerRadius: 3, style: .continuous)
+                        .fill(Color.primary.opacity(0.05))
+                        .frame(width: 220, height: 10)
+                }
+                Spacer(minLength: 0)
+            }
+            RoundedRectangle(cornerRadius: 3, style: .continuous)
+                .fill(Color.primary.opacity(0.05))
+                .frame(maxWidth: 280, alignment: .leading)
+                .frame(height: 10)
+            RoundedRectangle(cornerRadius: 1.5, style: .continuous)
+                .fill(Color.primary.opacity(DS.Opacity.fillSkeleton))
+                .frame(height: DS.Layout.agentStorageBarHeight)
+        }
+        .padding(DS.Space.x400)
+        .background(
+            RoundedRectangle(cornerRadius: DS.Radius.panel, style: .continuous)
+                .fill(Color(nsColor: DS.Neutral.raised))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: DS.Radius.panel, style: .continuous)
+                .strokeBorder(Color.primary.opacity(DS.Opacity.borderStandard), lineWidth: DS.Stroke.surface)
+        )
+    }
+}
+
 
 private struct SkillView: View {
     @Bindable var model: AppModel
