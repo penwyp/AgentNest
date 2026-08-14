@@ -164,68 +164,6 @@ private struct SidebarRow: View {
     }
 }
 
-private struct ActivationView: View {
-    @Bindable var model: AppModel
-
-    var body: some View {
-        ZStack {
-            DSCanvasBackground()
-            VStack(spacing: DS.Space.x400) {
-                Image(systemName: "checkmark.shield")
-                    .font(.system(size: 56, weight: .medium))
-                    .foregroundStyle(DS.Semantic.accentPrimary)
-                    .accessibilityHidden(true)
-                Text("AgentNest")
-                    .font(DS.Typeface.title)
-                Text(model.licenseStatusText)
-                    .font(DS.Typeface.label)
-                    .foregroundStyle(.secondary)
-
-                DSCard(padding: DS.Space.x400, cornerRadius: DS.Radius.panel) {
-                    VStack(spacing: DS.Space.x250) {
-                        Text("试用和设备额度由授权服务记录。本机只信任绑定设备且经过 Ed25519 验签的限时 Receipt。")
-                            .font(DS.Typeface.body)
-                            .foregroundStyle(.secondary)
-                            .multilineTextAlignment(.center)
-                        if model.licenseConfigurationAvailable {
-                            Button("开始 7 天试用") { model.startTrial() }
-                                .buttonStyle(.dsAction(.accent, size: .large))
-                            Button("重试授权服务") { model.retryLicense() }
-                                .buttonStyle(.dsAction())
-                            HStack(spacing: DS.Space.x200) {
-                                SecureField("License Key", text: $model.licenseKey)
-                                    .textFieldStyle(.roundedBorder)
-                                    .frame(width: 320)
-                                Button("激活") { model.activate() }
-                                    .buttonStyle(.dsAction(.accent))
-                                    .disabled(model.licenseKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                            }
-                        } else {
-                            Text("开发构建需配置 AGENTNEST_LICENSE_SERVER_URL 与 AGENTNEST_LICENSE_PUBLIC_KEY。")
-                                .font(DS.Typeface.caption)
-                                .foregroundStyle(DS.Semantic.statusCaution)
-                        }
-                    }
-                    .frame(maxWidth: 520)
-                }
-                .frame(maxWidth: 560)
-
-                HStack(spacing: DS.Space.x300) {
-                    Button("隐私说明") {}
-                        .buttonStyle(.dsAction())
-                    Button("删除本地数据", role: .destructive) { model.deleteLocalData() }
-                        .buttonStyle(.dsAction(.destructive))
-                    Button("关于") {}
-                        .buttonStyle(.dsAction())
-                    Button("退出") { NSApplication.shared.terminate(nil) }
-                        .buttonStyle(.dsAction())
-                }
-            }
-            .padding(40)
-        }
-    }
-}
-
 private struct HomeView: View {
     @Bindable var model: AppModel
 

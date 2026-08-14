@@ -139,10 +139,12 @@ AgentNest 的界面应当像一块安静的 macOS 原生仪器面板：
 
 | Token | 家族 | 字号 | 字重 | 用途 |
 | --- | --- | ---: | --- | --- |
+| `type.displayLarge` | SF Pro Display | `34` | Semibold | 激活门户主标题 |
 | `type.display` | SF Pro Display | `26` | Semibold | 首页主标题 |
 | `type.title` | SF Pro Display | `20` | Semibold | 页面/卡片主数值 |
 | `type.section` | SF Pro Display | `17` | Medium | 行标题、小节标题 |
 | `type.body` | SF Pro Text | `13` | Regular | 正文 |
+| `type.lead` | SF Pro Text | `15` | Regular | 激活门户副标题 |
 | `type.label` | SF Pro Text | `12` | Medium | 标签、紧凑注释 |
 | `type.caption` | SF Pro Text | `11` | Regular | 辅助说明 |
 | `type.micro` | SF Pro Text | `10` | Regular | 密集辅助文字 |
@@ -176,6 +178,7 @@ AgentNest 的界面应当像一块安静的 macOS 原生仪器面板：
 | `motion.chart.histogram` | `0.50 s` | easeInOut | 柱高过渡 |
 | `motion.chart.meter` | `0.48 s` | easeInOut | 分段仪表过渡 |
 | `motion.chart.donut` | `0.55 s` | easeInOut | 环形弧过渡 |
+| `motion.entranceStagger` | `0.06 s` | — | 门户入场编排段间错峰 |
 
 Reduce Motion 将全部时长解析为 `0 s`，保留最终视觉状态。
 
@@ -250,6 +253,25 @@ Reduce Motion 将全部时长解析为 `0 s`，保留最终视觉状态。
 
 首页扫描状态在页面首部下方使用 `Recessed` 配方就地更新；不得用循环脉冲、旋转图标或放大的装饰图形表达后台工作。
 
+### 5.7 激活门户（Onboarding 门户）
+
+激活门户是未授权状态下用户进入后的首页，也是产品唯一的品牌页面。它遵循优秀桌面产品的 onboarding 惯例（Linear / Raycast / Arc / CleanShot 的「深色 + 大标题 + 产品预览 + 强 CTA + 信任徽章」范式），在性能策略内实现：
+
+| Token | 值 |
+| --- | --- |
+| `layout.activation.max-width` | `960 pt` |
+| `layout.activation.feature.icon` | `32 pt` 能力行图标基底 |
+| `type.displayLarge` | `34 pt` 门户主标题（负字距 −0.4） |
+| `type.lead` | `15 pt` 门户副标题 |
+
+- **外观**：门户及其弹窗固定深色外观（`preferredColorScheme(.dark)`），与系统外观解耦；进入主界面后恢复跟随系统。这是「品牌页」与「仪器页」的刻意区分。
+- **布局**：顶部品牌行（鸟标 + 应用名 + 关于/隐私/退出）→ 分屏 Hero（左：overline + 主标题 + 副标题 + 双 CTA + 信任徽章；右：产品预览窗口 `DSProductPreview`）→ 2×2 能力卡（`DSFeatureRow`）→ 页脚（版本 · 删除本地数据）。
+- **产品预览**（`DSProductPreview`）：用真实 DS 原语绘制 Home 页缩影（页面首部、Recessed 进度、面积折线、微柱图、环形容量、徽章），带窗口 chrome（红黄绿三色点 + 标题栏 + 细描边 + 单层投影）。它是产品本身，不是虚构装饰；入场一次性 fade/位移，柱图与环形做一次性绘制入场，面积折线静态，无循环。
+- **氛围渐变例外**：仅激活门户 Hero 允许 `DSHeroWash`——单层静态 `RadialGradient`（accent 0.12 → 0.04 → 透明），无模糊、无辉光、无循环、位于内容之下。这是 §2「禁止大面积装饰渐变」的唯一登记例外。
+- **文案原则**：主标题传达「全流程、一站式」定位（「你的 Agent，一站式打理。」）；副标题点名生命周期环节（安装、空间、配置、Skill）；主 CTA 动词 + 具体利益（「免费试用 7 天」，`control.action.hero`、320 pt 宽铺满按钮面）；次路径为句子式内联链接「已有授权密钥？输入密钥激活 ›」，与主按钮左边缘对齐，chevron 随展开右→下旋转；信任徽章只陈述真实事实（本机分析 / 数据不出 Mac / 设备绑定 · Ed25519 验签）。
+- **动效**：一次性入场编排（fade + ≤ 8 pt 位移，段间 `motion.entranceStagger` 错峰）；之后回到纯交互动效；Reduce Motion 直接落定。
+- 页脚与顶部链接使用 `DSFooterButtonStyle`，视觉降级为 caption 链接。
+
 ---
 
 ## 6. 导航配方（侧边栏）
@@ -284,6 +306,7 @@ AgentNest 的侧边栏是一等公民，遵循"克制的仪器导航"：
 | `control.action.compact` | `30 pt` | `10 pt` | 11 Semibold | `radius.control.compact` |
 | `control.action.regular` | `34 pt` | `13 pt` | 12 Semibold | `radius.control.regular` |
 | `control.action.large` | `38 pt` | `16 pt` | 13 Semibold | `radius.control.regular` |
+| `control.action.hero` | `44 pt` | `22 pt` | 15 Semibold | `radius.control.regular` |
 
 顶部白色高光：中性 0.07 / 强调与破坏 0.16，0.5 pt。
 
@@ -461,7 +484,12 @@ hover 在指针离开或窗口失活时清除；pressed 不叠加 hover；focus 
 | Action Button | `DSActionButtonStyle`（`.dsAction(_:size:)`） | 扫描、激活、清理、设置 |
 | Icon Button | `DSIconButtonStyle`（`.dsIcon`） | 预留（工具按钮） |
 | Badge | `DSBadge` | Agent 列表、进程行 |
-| 页面布局 / 图标尺寸 | `DS.Layout.*`、`DS.IconSize.*` | 首页、导航、状态行 |
+| 页面布局 / 图标尺寸 | `DS.Layout.*`、`DS.IconSize.*` | 首页、导航、状态行、激活门户 |
+| 门户页脚链接 | `DSFooterButtonStyle` | 激活门户 |
+| 门户氛围渐变 | `DSHeroWash`（ActivationView.swift） | 激活门户 |
+| 门户信任徽章 | `DSTrustBadge`（ActivationView.swift） | 激活门户 |
+| 门户能力行 | `DSFeatureRow`（ActivationView.swift） | 激活门户 |
+| 门户产品预览 | `DSProductPreview`（ActivationView.swift） | 激活门户 |
 | 页面首部 | `DSPageHeader` | HomeView |
 | 原生列表画布 | `.dsInstrumentList()` | Agent / Skill / 空间 / 活动 / 设置 / 历史 |
 | 导航行 | `SidebarRow`（ContentView） | 侧边栏 |
