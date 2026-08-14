@@ -26,6 +26,16 @@ enum HomeProductStyle {
 
     private static var brandImageCache: [String: NSImage] = [:]
 
+    /// 打包文件名映射：产品 ID → BrandIcons 内的 PNG 文件名（不带 .png 后缀）。
+    /// SwiftPM `.process` 会拍平资源目录，按文件名在包根查找；文件名与产品 ID 不一致的产品必须在此登记。
+    private static let iconFiles: [String: String] = [
+        "openai.codex": "codex",
+        "anthropic.claude-code": "claude-code",
+        "cursor.cursor": "cursor",
+        "bytedance.trae": "trae",
+        "workbuddy": "workbuddy",
+    ]
+
     /// AgentNestCore 资源包（裸可执行文件与 .app 两种布局都兼容）。
     private static let resourceBundle: Bundle = {
         let mainURL = Bundle.main.bundleURL
@@ -45,7 +55,8 @@ enum HomeProductStyle {
     /// 注意：SwiftPM `.process` 会把资源目录拍平，因此按文件名在包根查找。
     static func brandImage(for productID: String) -> NSImage? {
         if let cached = brandImageCache[productID] { return cached }
-        guard let url = resourceBundle.url(forResource: productID, withExtension: "png"),
+        let fileName = iconFiles[productID] ?? productID
+        guard let url = resourceBundle.url(forResource: fileName, withExtension: "png"),
               let image = NSImage(contentsOf: url) else { return nil }
         brandImageCache[productID] = image
         return image
