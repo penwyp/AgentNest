@@ -337,8 +337,8 @@ private struct HomeReadingsStrip: View {
     }
 }
 
-/// Agent 环境图：按产品分组的落定拓扑——品牌图标 + 产品名 + Home 芯片网格 + 产品合计占用。
-/// 芯片 hover 出 accent 描边、点击直达 Agent 页，.help() 显示完整路径。
+/// Agent 环境图：按产品的全宽档案带（产品级聚合）——品牌图标 + 产品名 + 信心点阵 +
+/// 合计占用 + 占比仪表；Home 级明细在 Agent 页，两页职责区分。
 private struct HomeEnvironmentMap: View {
     let model: AppModel
     let snapshot: DeviceSnapshot
@@ -360,121 +360,123 @@ private struct HomeEnvironmentMap: View {
             }
             .padding(.bottom, DS.Space.x300)
 
-            VStack(alignment: .leading, spacing: 0) {
-                ForEach(Array(products.enumerated()), id: \.element.id) { index, product in
-                    productLane(product)
-                    if index < products.count - 1 {
-                        Rectangle()
-                            .fill(Color.primary.opacity(DS.Opacity.borderQuiet))
-                            .frame(height: DS.Stroke.hairline)
-                            .padding(.vertical, DS.Space.x400)
-                            .accessibilityHidden(true)
-                    }
-                }
-            }
-        }
-    }
-
-    private func productLane(_ product: AgentProduct) -> some View {
-        let homes = product.homes.sorted { $0.path.localizedStandardCompare($1.path) == .orderedAscending }
-        let totalBytes = homes.reduce(UInt64(0)) { $0 &+ $1.storage.physicalBytes }
-        return VStack(alignment: .leading, spacing: DS.Space.x300) {
-            HStack(spacing: DS.Space.x250) {
-                HomeBrandIcon(productID: product.id, size: 24)
-                VStack(alignment: .leading, spacing: DS.Space.x050) {
-                    Text(product.displayName)
-                        .font(DS.Typeface.body.weight(.semibold))
-                        .lineLimit(1)
-                    Text(model.localized("%d 个 Home", homes.count))
-                        .font(DS.Typeface.caption)
-                        .foregroundStyle(.secondary)
-                        .monospacedDigit()
-                }
-                Spacer(minLength: DS.Space.x400)
-                Text(model.formatBytes(totalBytes))
-                    .font(DS.Typeface.data)
-                    .foregroundStyle(.secondary)
-                    .monospacedDigit()
-            }
-            LazyVGrid(
-                columns: [GridItem(.adaptive(minimum: 200, maximum: 340), spacing: DS.Space.x250)],
-                alignment: .leading,
-                spacing: DS.Space.x250
-            ) {
-                ForEach(homes) { home in
-                    HomeEnvironmentChip(model: model, home: home)
+            VStack(alignment: .leading, spacing: DS.Space.x300) {
+                ForEach(products) { product in
+                    HomeProductBand(
+                        model: model,
+                        product: product,
+                        environmentBytes: snapshot.totalStorage.physicalBytes
+                    )
                 }
             }
         }
     }
 }
 
-/// 环境图 Home 芯片：品牌图标 + 名称 + 空间占用 + 核验状态；hover 出 accent 描边，点击进 Agent 页。
-private struct HomeEnvironmentChip: View {
+/// 产品档案带：全宽横条——左侧品牌图标 + 产品名 + 信心点阵（每点一个 Home，绿=已核验/
+/// 琥珀=疑似，并以文字计数表达），右侧合计占用 + 占比细仪表；hover 出 chevron，点击整带 → Agent 页。
+private struct HomeProductBand: View {
     let model: AppModel
-    let home: AgentHome
+    let product: AgentProduct
+    let environmentBytes: UInt64
     @State private var isHovering = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Environment(\.controlActiveState) private var controlActiveState
 
-    private var isActiveHovering: Bool {
-        isHovering && controlActiveState == .active
+    private var homes: [AgentHome] {
+        product.homes.sorted { $0.path.localizedStandardCompare($1.path) == .orderedAscending }
+    }
+
+    private var totalBytes: UInt64 {
+        homes.reduce(UInt64(0)) { $0 &+ $1.storage.physicalBytes }
+    }
+
+    private var possibleCount: Int {
+        homes.filter { $0.confidence == .possible }.count
+    }
+
+    private var share: CGFloat {
+        guard environmentBytes > 0 else { return 0 }
+        return min(max(CGFloat(totalBytes) / CGFloat(environmentBytes), 0), 1)
+    }
+
+    private var countLine: String {
+        if possibleCount == 0 {
+            return model.localized("%d 个 Home", homes.count)
+        }
+        return model.localized("%d 个 Home · %d 个疑似", homes.count, possibleCount)
     }
 
     var body: some View {
         Button { model.selection = .agents } label: {
-            HStack(spacing: DS.Space.x200) {
-                HomeBrandIcon(productID: home.productID, size: 18)
-                VStack(alignment: .leading, spacing: DS.Space.x050) {
-                    Text(home.displayName)
+            HStack(spacing: DS.Space.x300) {
+                HomeBrandIcon(productID: product.id, size: 28)
+                VStack(alignment: .leading, spacing: DS.Space.x100) {
+                    Text(product.displayName)
                         .font(DS.Typeface.body.weight(.semibold))
                         .lineLimit(1)
-                    Text(model.formatBytes(home.storage.physicalBytes))
-                        .font(DS.Typeface.caption)
-                        .foregroundStyle(.secondary)
-                        .monospacedDigit()
-                        .lineLimit(1)
-                }
-                Spacer(minLength: DS.Space.x100)
-                if home.confidence == .possible {
-                    DSBadge(text: model.localized("疑似"), color: DS.Semantic.statusCaution)
-                } else {
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(DS.Semantic.statusPositive)
+                    HStack(spacing: DS.Space.x100) {
+                        HStack(spacing: 3) {
+                            ForEach(homes) { home in
+                                Circle()
+                                    .fill(home.confidence == .possible ? DS.Semantic.statusCaution : DS.Semantic.statusPositive)
+                                    .frame(width: 6, height: 6)
+                            }
+                        }
                         .accessibilityHidden(true)
+                        Text(countLine)
+                            .font(DS.Typeface.caption)
+                            .foregroundStyle(.secondary)
+                            .monospacedDigit()
+                            .lineLimit(1)
+                    }
                 }
+                Spacer(minLength: DS.Space.x300)
+                VStack(alignment: .trailing, spacing: DS.Space.x100) {
+                    Text(model.formatBytes(totalBytes))
+                        .font(DS.Typeface.title)
+                        .monospacedDigit()
+                    shareMeter
+                }
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.tertiary)
+                    .opacity(isHovering ? 1 : 0)
+                    .accessibilityHidden(true)
             }
-            .padding(.horizontal, DS.Space.x250)
-            .frame(minHeight: 48)
-            .background(
-                RoundedRectangle(cornerRadius: DS.Radius.controlCompact, style: .continuous)
-                    .fill(Color(nsColor: .controlBackgroundColor).opacity(0.52))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: DS.Radius.controlCompact, style: .continuous)
-                    .strokeBorder(
-                        isActiveHovering
-                            ? DS.Semantic.accentPrimary.opacity(0.30)
-                            : Color.primary.opacity(DS.Opacity.borderQuiet),
-                        lineWidth: isActiveHovering ? 1 : DS.Stroke.hairline
-                    )
-            )
-            .contentShape(RoundedRectangle(cornerRadius: DS.Radius.controlCompact, style: .continuous))
+            .padding(.horizontal, DS.Space.x400)
+            .padding(.vertical, DS.Space.x300)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .buttonStyle(.plain)
-        .help(model.displayPath(home.path))
+        .buttonStyle(.dsCard)
         .onHover { hovering in
             withAnimation(reduceMotion ? nil : .easeOut(duration: DS.Motion.hover)) {
                 isHovering = hovering
             }
         }
-        .onChange(of: controlActiveState) { _, state in
-            if state != .active { isHovering = false }
+        .accessibilityLabel(model.localized("%@ · %@", product.displayName, countLine + " · " + model.formatBytes(totalBytes)))
+        .accessibilityHint(model.localized("打开%@详情", model.localized("Agent")))
+    }
+
+    /// 占比细仪表：3 pt 轨道 + accent 填充，宽度 = 产品占全环境物理占用比例。
+    private var shareMeter: some View {
+        HStack(spacing: 0) {
+            RoundedRectangle(cornerRadius: 1.5, style: .continuous)
+                .fill(DS.Semantic.accentPrimary.opacity(0.78))
+                .frame(
+                    width: max(DS.Layout.homeProductShareMeterWidth * share, share > 0 ? 3 : 0),
+                    height: 3
+                )
+            Spacer(minLength: 0)
         }
-        .accessibilityLabel(model.localized("%@ · %@ · %@", home.displayName, model.displayPath(home.path), model.formatBytes(home.storage.physicalBytes)))
+        .frame(width: DS.Layout.homeProductShareMeterWidth, height: 3)
+        .background(
+            RoundedRectangle(cornerRadius: 1.5, style: .continuous)
+                .fill(Color.primary.opacity(DS.Opacity.fillQuiet))
+        )
+        .accessibilityHidden(true)
     }
 }
+
 
 /// 管理入口：一行四个安静入口卡——裸色符号 + 标题 + 单行状态，chevron 仅 hover 出现。
 private struct HomeManagementTiles: View {
