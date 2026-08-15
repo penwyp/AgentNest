@@ -249,7 +249,7 @@ private struct AgentMarketCatalogView: View {
                 marketEmptyState
             } else {
                 LazyVGrid(
-                    columns: [GridItem(.adaptive(minimum: 360, maximum: 480), spacing: DS.Space.x300)],
+                    columns: [GridItem(.adaptive(minimum: 320, maximum: .infinity), spacing: DS.Space.x300)],
                     alignment: .leading,
                     spacing: DS.Space.x300
                 ) {
@@ -347,13 +347,14 @@ private struct AgentMarketCard: View {
                                 .lineLimit(1)
                                 .truncationMode(.middle)
                         }
-                        Button {
-                            NSWorkspace.shared.open(link)
-                        } label: {
-                            Label(model.localized("打开主页"), systemImage: "arrow.up.right.square")
+                        Link(destination: link) {
+                            Image(systemName: "arrow.up.right")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(DS.Semantic.accentPrimary)
                         }
-                        .buttonStyle(.dsAction(size: .compact))
-                        .accessibilityHint(model.localized("打开主页"))
+                        .buttonStyle(.plain)
+                        .help(model.localized("打开主页"))
+                        .accessibilityLabel(model.localized("打开主页"))
                     }
                 }
 
@@ -437,14 +438,6 @@ private struct SkillsMarketCatalogView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: DS.Space.x300) {
-            DSRecessed {
-                Label(
-                    model.localized("Skills 通过 git clone 安装到 Agent 的 skills 目录，安装后请重新扫描。"),
-                    systemImage: "terminal"
-                )
-                .font(DS.Typeface.body)
-                .foregroundStyle(.secondary)
-            }
             if filteredItems.isEmpty {
                 ContentUnavailableView(
                     model.localized("暂无匹配的市场项目。"),
@@ -454,7 +447,7 @@ private struct SkillsMarketCatalogView: View {
                 .frame(maxWidth: .infinity, minHeight: 360)
             } else {
                 LazyVGrid(
-                    columns: [GridItem(.adaptive(minimum: 320, maximum: 400), spacing: DS.Space.x300)],
+                    columns: [GridItem(.adaptive(minimum: 300, maximum: .infinity), spacing: DS.Space.x300)],
                     alignment: .leading,
                     spacing: DS.Space.x300
                 ) {
@@ -576,14 +569,6 @@ private struct MCPServerMarketCatalogView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: DS.Space.x300) {
-            DSRecessed {
-                Label(
-                    model.localized("MCP 配置可直接粘贴到 Claude Desktop 或支持 MCP 的客户端。"),
-                    systemImage: "point.3.connected.trianglepath.dotted"
-                )
-                .font(DS.Typeface.body)
-                .foregroundStyle(.secondary)
-            }
             if filteredItems.isEmpty {
                 ContentUnavailableView(
                     model.localized("暂无匹配的市场项目。"),
@@ -593,7 +578,7 @@ private struct MCPServerMarketCatalogView: View {
                 .frame(maxWidth: .infinity, minHeight: 360)
             } else {
                 LazyVGrid(
-                    columns: [GridItem(.adaptive(minimum: 430, maximum: 560), spacing: DS.Space.x300)],
+                    columns: [GridItem(.adaptive(minimum: 420, maximum: .infinity), spacing: DS.Space.x300)],
                     alignment: .leading,
                     spacing: DS.Space.x300
                 ) {
