@@ -74,6 +74,13 @@ enum DS {
         static let homeOverviewMaxWidth: CGFloat = 1_160
         /// 读数带相邻读数间距（分隔线居中于其间）。
         static let homeReadingSpacing: CGFloat = 64
+        /// 首页读数仪表卡网格的最小 / 最大列宽与固定高度。
+        static let homeReadingTileMinWidth: CGFloat = 220
+        static let homeReadingTileMaxWidth: CGFloat = 320
+        static let homeReadingTileHeight: CGFloat = 104
+        /// 首页读数仪表卡右侧图表区的统一宽高。
+        static let homeReadingChartWidth: CGFloat = 64
+        static let homeReadingChartHeight: CGFloat = 44
         /// 管理入口自适应网格的最小列宽。
         static let homeManagementTileMinWidth: CGFloat = 240
         /// 产品档案卡次行（信心点阵 + 计数）相对卡片的缩进（图标 24 + space.250）。
@@ -83,8 +90,8 @@ enum DS {
         static let agentCardColumnMaxWidth: CGFloat = 460
         /// Agent 档案卡类别空间构成条高度。
         static let agentStorageBarHeight: CGFloat = 4
-        /// Agent 页搜索栏宽度。
-        static let agentSearchWidth: CGFloat = 320
+        /// Agent 页搜索栏高度（宽度跟随页面内容列，避免固定窄栏造成左重右轻）。
+        static let agentSearchHeight: CGFloat = 30
         /// 页面主 CTA（dsPrimary）高度与水平内边距。
         static let primaryActionHeight: CGFloat = 44
         static let primaryActionHorizontalInset: CGFloat = 18

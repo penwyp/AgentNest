@@ -166,6 +166,10 @@ private struct HomeView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// 本次扫描开始时刻（底部栏已用时计时用，随 generation 重置）。
     @State private var scanStartedAt: Date?
+    /// 首页稳定态派生数据：按 snapshot generation 只计算一次，避免卡片反复遍历存储账本。
+    @State private var storageDerived: HomeStorageDerived?
+
+    private var storageDeriveKey: UUID? { model.snapshot?.generation }
 
     var body: some View {
         ScrollView {
@@ -179,7 +183,7 @@ private struct HomeView: View {
                 // 扫描中只呈现发现界面；扫描完成后进入「环境总览台」稳定态。
                 if !model.isScanning {
                     if let snapshot = model.snapshot {
-                        HomeOverview(model: model, snapshot: snapshot)
+                        HomeOverview(model: model, snapshot: snapshot, storageDerived: storageDerived)
                     } else {
                         HomeEmptyState(model: model)
                     }
@@ -210,6 +214,21 @@ private struct HomeView: View {
         .onChange(of: model.progress?.generation) { _, newGeneration in
             if newGeneration != nil { scanStartedAt = Date() }
         }
+        .task(id: storageDeriveKey) { await recomputeStorageDerived() }
+    }
+
+    @MainActor
+    private func recomputeStorageDerived() async {
+        guard model.isScanning == false, let snapshot = model.snapshot else {
+            storageDerived = nil
+            return
+        }
+        let generation = snapshot.generation
+        let value = await Task.detached(priority: .utility) {
+            computeHomeStorageDerived(snapshot: snapshot)
+        }.value
+        guard model.snapshot?.generation == generation else { return }
+        storageDerived = value
     }
 
     /// 页面身份区：大标题 + 按状态定制的信息行，主操作右对齐在标题基线行。
@@ -308,62 +327,310 @@ private struct HomeView: View {
 private struct HomeOverview: View {
     let model: AppModel
     let snapshot: DeviceSnapshot
+    let storageDerived: HomeStorageDerived?
 
     var body: some View {
         VStack(alignment: .leading, spacing: DS.Space.x450) {
-            HomeReadingsStrip(model: model, snapshot: snapshot)
+            HomeReadingsStrip(model: model, snapshot: snapshot, storageDerived: storageDerived)
             HomeEnvironmentMap(model: model, snapshot: snapshot)
-            HomeManagementTiles(model: model, snapshot: snapshot)
+            HomeManagementTiles(model: model, snapshot: snapshot, storageDerived: storageDerived)
             HomeTrustFooter(model: model)
         }
         .accessibilityElement(children: .contain)
     }
 }
 
-/// 读数带：无卡片容器、无边框的四个大号仪器读数，标签在数值上方，hairline 竖分隔。
+/// 首页稳定态中只依赖存储账本的派生数据，后台计算一次并随 generation 缓存。
+private struct HomeStorageSlice: Sendable {
+    let category: ArtifactCategory
+    let bytes: UInt64
+}
+
+private struct HomeStorageDerived: Sendable {
+    let slices: [HomeStorageSlice]
+    let largestCategory: ArtifactCategory?
+}
+
+private func computeHomeStorageDerived(snapshot: DeviceSnapshot) -> HomeStorageDerived {
+    let slices = Dictionary(grouping: snapshot.storageLedger.artifacts, by: \.category)
+        .map { HomeStorageSlice(category: $0.key, bytes: $0.value.reduce(UInt64(0)) { $0 &+ $1.storage.physicalBytes }) }
+        .filter { $0.bytes > 0 }
+        .sorted { $0.bytes > $1.bytes }
+        .prefix(5)
+        .map { $0 }
+    return HomeStorageDerived(slices: slices, largestCategory: slices.first?.category)
+}
+
+/// 读数带：四个等宽仪表卡，左侧文字信息、右侧图表，横向构图。
+/// 使用 LazyVGrid 自适应四列，窄窗口自动回落到 2 列。
 private struct HomeReadingsStrip: View {
     let model: AppModel
     let snapshot: DeviceSnapshot
+    let storageDerived: HomeStorageDerived?
+
+    private enum Metric: CaseIterable, Hashable {
+        case confirmed, storage, skills, possible
+    }
 
     private var confirmed: Int { snapshot.homes.filter { $0.confidence == .confirmed }.count }
     private var possible: Int { snapshot.homes.filter { $0.confidence == .possible }.count }
+    private var totalHomes: Int { snapshot.homes.count }
+
+    private var confirmedFraction: Double {
+        totalHomes > 0 ? Double(confirmed) / Double(totalHomes) : 0
+    }
+
+    private var possibleFraction: Double {
+        totalHomes > 0 ? Double(possible) / Double(totalHomes) : 0
+    }
 
     var body: some View {
-        HStack(alignment: .center, spacing: DS.Layout.homeReadingSpacing) {
-            reading(model.localized("已确认 Home"), "\(confirmed)", color: DS.Semantic.accentPrimary)
-            readingDivider
-            reading(model.localized("物理占用"), model.formatBytes(snapshot.totalStorage.physicalBytes), color: Color.primary)
-            readingDivider
-            reading(model.localized("Skill 安装"), skillInstallationsText, color: DS.Semantic.accentSecondary)
-            readingDivider
-            reading(model.localized("疑似位置"), "\(possible)", color: possible > 0 ? DS.Semantic.statusCaution : Color.primary)
+        LazyVGrid(
+            columns: [GridItem(
+                .adaptive(minimum: DS.Layout.homeReadingTileMinWidth, maximum: DS.Layout.homeReadingTileMaxWidth),
+                spacing: DS.Space.x300
+            )],
+            alignment: .center,
+            spacing: DS.Space.x300
+        ) {
+            ForEach(Metric.allCases, id: \.self) { metric in
+                tile(for: metric)
+            }
         }
     }
 
-    private var skillInstallationsText: String {
-        model.skillIndex.map { "\($0.installationCount)" } ?? "—"
-    }
+    // MARK: 指标内容
 
-    private var readingDivider: some View {
-        Rectangle()
-            .fill(Color.primary.opacity(DS.Opacity.borderQuiet))
-            .frame(width: DS.Stroke.hairline, height: 44)
-            .accessibilityHidden(true)
-    }
-
-    private func reading(_ label: String, _ value: String, color: Color) -> some View {
-        VStack(alignment: .leading, spacing: DS.Space.x100) {
-            Text(label)
-                .font(DS.Typeface.label)
-                .foregroundStyle(.secondary)
-            Text(value)
-                .font(DS.Typeface.reading)
-                .monospacedDigit()
-                .foregroundStyle(color)
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
+    private func title(for metric: Metric) -> String {
+        switch metric {
+        case .confirmed: return model.localized("已确认 Home")
+        case .storage: return model.localized("物理占用")
+        case .skills: return model.localized("Skill 安装")
+        case .possible: return model.localized("疑似位置")
         }
+    }
+
+    private func value(for metric: Metric) -> String {
+        switch metric {
+        case .confirmed: return "\(confirmed)"
+        case .storage: return model.formatBytes(snapshot.totalStorage.physicalBytes)
+        case .skills: return model.skillIndex.map { "\($0.installationCount)" } ?? "—"
+        case .possible: return "\(possible)"
+        }
+    }
+
+    private func valueColor(for metric: Metric) -> Color {
+        switch metric {
+        case .confirmed: return DS.Semantic.accentPrimary
+        case .storage: return Color.primary
+        case .skills: return skillColor
+        case .possible: return possible > 0 ? DS.Semantic.statusCaution : Color.primary
+        }
+    }
+
+    private func annotation(for metric: Metric) -> String {
+        switch metric {
+        case .confirmed: return model.localized("%d 个 Home", totalHomes)
+        case .storage: return storageAnnotation
+        case .skills: return skillAnnotation
+        case .possible:
+            return possible > 0
+                ? model.localized("%d 个 Home · %d 个疑似", totalHomes, possible)
+                : model.localized("发现结果已核验")
+        }
+    }
+
+    @ViewBuilder
+    private func chart(for metric: Metric) -> some View {
+        switch metric {
+        case .confirmed:
+            DSDonut(fraction: confirmedFraction, color: DS.Semantic.statusPositive, size: 44)
+        case .storage:
+            HomeStorageCategoryBars(slices: storageDerived?.slices ?? [])
+        case .skills:
+            HomeSkillMeter(fraction: skillHealthFraction, color: skillColor)
+        case .possible:
+            DSDonut(
+                fraction: possibleFraction,
+                color: possible > 0 ? DS.Semantic.statusCaution : Color.secondary,
+                size: 44
+            )
+        }
+    }
+
+    private func glyph(for metric: Metric) -> String {
+        switch metric {
+        case .confirmed: return "checkmark.seal.fill"
+        case .storage: return "internaldrive.fill"
+        case .skills: return "hammer.fill"
+        case .possible: return "exclamationmark.triangle.fill"
+        }
+    }
+
+    private func tile(for metric: Metric) -> some View {
+        HomeMetricTile(
+            glyph: glyph(for: metric),
+            title: title(for: metric),
+            value: value(for: metric),
+            valueColor: valueColor(for: metric),
+            annotation: annotation(for: metric)
+        ) {
+            chart(for: metric)
+        }
+    }
+
+    // MARK: 辅助数据
+
+    private var storageAnnotation: String {
+        if let category = storageDerived?.largestCategory {
+            return model.localized("最大类别：%@", model.artifactCategoryTitle(category))
+        }
+        return snapshot.storageLedger.artifacts.isEmpty ? model.localized("暂无物理资源") : " "
+    }
+
+    private var skillAnnotation: String {
+        guard let index = model.skillIndex else { return model.localized("尚未索引") }
+        if index.installationCount == 0 { return model.localized("当前 Agent 未声明 Skill 来源") }
+        if index.conflictCount + index.invalidCount == 0 { return model.localized("无冲突") }
+        return model.localized("%d 个冲突 · %d 个无效", index.conflictCount, index.invalidCount)
+    }
+
+    private var skillColor: Color {
+        guard let index = model.skillIndex else { return Color.secondary }
+        return index.conflictCount + index.invalidCount > 0
+            ? DS.Semantic.statusCaution
+            : DS.Semantic.accentSecondary
+    }
+
+    private var skillHealthFraction: Double {
+        guard let index = model.skillIndex, index.installationCount > 0 else { return 0 }
+        let valid = max(0, index.installationCount - index.invalidCount)
+        return min(max(Double(valid) / Double(index.installationCount), 0), 1)
+    }
+}
+
+/// 首页读数仪表卡：左侧为标签 + 数值 + 注脚，右侧为统一尺寸的辅助图表；
+/// raised 表面与等宽网格让四个指标既独立成块，又保持同一水平重心。
+private struct HomeMetricTile<Chart: View>: View {
+    let glyph: String
+    let title: String
+    let value: String
+    let valueColor: Color
+    let annotation: String
+    let chart: Chart
+
+    init(
+        glyph: String,
+        title: String,
+        value: String,
+        valueColor: Color,
+        annotation: String,
+        @ViewBuilder chart: () -> Chart
+    ) {
+        self.glyph = glyph
+        self.title = title
+        self.value = value
+        self.valueColor = valueColor
+        self.annotation = annotation
+        self.chart = chart()
+    }
+
+    var body: some View {
+        HStack(alignment: .center, spacing: DS.Space.x300) {
+            VStack(alignment: .leading, spacing: DS.Space.x100) {
+                HStack(spacing: DS.Space.x150) {
+                    Image(systemName: glyph)
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(valueColor)
+                        .frame(width: 13)
+                        .accessibilityHidden(true)
+                    Text(title)
+                        .font(DS.Typeface.label)
+                        .foregroundStyle(.secondary)
+                }
+                Text(value)
+                    .font(DS.Typeface.metricValue)
+                    .monospacedDigit()
+                    .foregroundStyle(valueColor)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                Text(annotation)
+                    .font(DS.Typeface.caption)
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
+            }
+            Spacer(minLength: DS.Space.x250)
+            chart
+                .frame(
+                    width: DS.Layout.homeReadingChartWidth,
+                    height: DS.Layout.homeReadingChartHeight,
+                    alignment: .center
+                )
+                .accessibilityHidden(true)
+        }
+        .padding(.horizontal, DS.Space.x300)
+        .padding(.vertical, DS.Space.x250)
+        .frame(maxWidth: .infinity, minHeight: DS.Layout.homeReadingTileHeight)
+        .background(
+            RoundedRectangle(cornerRadius: DS.Radius.panel, style: .continuous)
+                .fill(Color(nsColor: DS.Neutral.raised))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: DS.Radius.panel, style: .continuous)
+                .strokeBorder(Color.primary.opacity(DS.Opacity.borderQuiet), lineWidth: DS.Stroke.hairline)
+        )
         .accessibilityElement(children: .combine)
+    }
+}
+
+/// 物理占用类别微柱图：前 5 类按字节高度绘制，颜色沿用 Agent 类别系列色。
+/// 切片由 HomeStorageDerived 预计算注入，不在 body 中重复遍历账本。
+private struct HomeStorageCategoryBars: View {
+    let slices: [HomeStorageSlice]
+
+    private var maxBytes: UInt64 {
+        max(slices.first?.bytes ?? 1, 1)
+    }
+
+    var body: some View {
+        HStack(alignment: .bottom, spacing: 3) {
+            if slices.isEmpty {
+                ForEach(0..<5, id: \.self) { _ in
+                    RoundedRectangle(cornerRadius: 2, style: .continuous)
+                        .fill(Color.primary.opacity(DS.Opacity.fillQuiet))
+                        .frame(width: 9, height: 6)
+                }
+            } else {
+                ForEach(Array(slices.enumerated()), id: \.offset) { _, slice in
+                    let fraction = min(max(Double(slice.bytes) / Double(maxBytes), 0), 1)
+                    RoundedRectangle(cornerRadius: 2, style: .continuous)
+                        .fill(AgentCategoryPalette.color(for: slice.category))
+                        .frame(width: 9, height: max(8, 38 * CGFloat(fraction)))
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+        .accessibilityHidden(true)
+    }
+}
+
+/// Skill 安装健康度：8 段纵向仪表，按有效安装占比点亮。
+private struct HomeSkillMeter: View {
+    let fraction: Double
+    let color: Color
+
+    var body: some View {
+        HStack(alignment: .bottom, spacing: 2) {
+            ForEach(0..<8, id: \.self) { index in
+                let active = Double(index) < (min(max(fraction, 0), 1) * 8).rounded()
+                Capsule(style: .continuous)
+                    .fill(active ? color : Color.primary.opacity(0.10))
+                    .frame(width: 5, height: 8 + CGFloat(index) * 4)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+        .accessibilityHidden(true)
     }
 }
 
@@ -487,6 +754,7 @@ private struct HomeProductCard: View {
 private struct HomeManagementTiles: View {
     let model: AppModel
     let snapshot: DeviceSnapshot
+    let storageDerived: HomeStorageDerived?
 
     var body: some View {
         VStack(alignment: .leading, spacing: DS.Space.x300) {
@@ -550,11 +818,10 @@ private struct HomeManagementTiles: View {
     }
 
     private var storageStatus: String {
-        let totals = Dictionary(grouping: snapshot.storageLedger.artifacts, by: \.category).mapValues {
-            $0.reduce(UInt64(0)) { $0 &+ $1.storage.physicalBytes }
+        if let category = storageDerived?.largestCategory {
+            return model.localized("最大类别：%@", model.artifactCategoryTitle(category))
         }
-        guard let largest = totals.max(by: { $0.value < $1.value }) else { return model.localized("暂无物理资源") }
-        return model.localized("最大类别：%@", model.artifactCategoryTitle(largest.key))
+        return snapshot.storageLedger.artifacts.isEmpty ? model.localized("暂无物理资源") : " "
     }
 
     private var activityStatus: String {
@@ -682,6 +949,7 @@ private struct AgentListView: View {
     }
 
     /// 页面身份区：标题 + 已确认/疑似统计；右侧主操作 = 打开 Agent 市场。
+    /// 身份区只负责排版，页边距与背景统一由 agentHeader 提供。
     private var agentIdentity: some View {
         DSPageIdentity(
             title: model.localized("Agent"),
@@ -696,9 +964,6 @@ private struct AgentListView: View {
             }
             .buttonStyle(.dsPrimary)
         }
-        .padding(.horizontal, DS.Layout.pageHorizontalInset)
-        .padding(.vertical, DS.Space.x300)
-        .background(Color(nsColor: DS.Neutral.canvas))
     }
 
     private var agentIdentityDetail: String? {
@@ -727,10 +992,7 @@ private struct AgentListView: View {
             }
         }
         .safeAreaInset(edge: .top, spacing: 0) {
-            VStack(alignment: .leading, spacing: 0) {
-                agentIdentity
-                searchField
-            }
+            agentHeader
         }
         .task(id: deriveKey) { await recomputeDerived() }
         .sheet(isPresented: Binding(
@@ -741,7 +1003,22 @@ private struct AgentListView: View {
         }
     }
 
-    /// 搜索栏：钉在身份区下方，放大镜 + 输入框 + 清空按钮。
+    /// 固定页头：身份区 + 搜索栏共享同一内容列（pageMaxWidth），
+    /// 与下方档案卡网格保持同一左右边界；背景仍铺满安全区。
+    private var agentHeader: some View {
+        VStack(alignment: .leading, spacing: DS.Space.x300) {
+            agentIdentity
+            searchField
+        }
+        .padding(.horizontal, DS.Layout.pageHorizontalInset)
+        .padding(.vertical, DS.Space.x300)
+        .frame(maxWidth: DS.Layout.pageMaxWidth)
+        .frame(maxWidth: .infinity)
+        .background(Color(nsColor: DS.Neutral.canvas))
+    }
+
+    /// 搜索栏：与身份区信息行共用 content-inset 左缩进，宽度填满内容列，
+    /// 右侧与「Agent 市场」按钮和卡片网格边缘对齐，避免左侧堆叠、右侧留空。
     private var searchField: some View {
         HStack(spacing: DS.Space.x200) {
             Image(systemName: "magnifyingglass")
@@ -751,6 +1028,7 @@ private struct AgentListView: View {
             TextField(model.localized("搜索 Agent"), text: $searchText)
                 .textFieldStyle(.plain)
                 .font(DS.Typeface.body)
+                .frame(maxWidth: .infinity, alignment: .leading)
             if !searchText.isEmpty {
                 Button {
                     searchText = ""
@@ -764,7 +1042,8 @@ private struct AgentListView: View {
             }
         }
         .padding(.horizontal, DS.Space.x250)
-        .frame(width: DS.Layout.agentSearchWidth, height: 30)
+        .frame(height: DS.Layout.agentSearchHeight)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: DS.Radius.controlCompact, style: .continuous)
                 .fill(Color(nsColor: .controlBackgroundColor).opacity(0.62))
@@ -773,9 +1052,7 @@ private struct AgentListView: View {
             RoundedRectangle(cornerRadius: DS.Radius.controlCompact, style: .continuous)
                 .strokeBorder(Color.primary.opacity(DS.Opacity.borderQuiet), lineWidth: DS.Stroke.hairline)
         )
-        .padding(.horizontal, DS.Layout.pageHorizontalInset)
-        .padding(.bottom, DS.Space.x300)
-        .background(Color(nsColor: DS.Neutral.canvas))
+        .padding(.leading, DS.Layout.pageIdentityContentInset)
     }
 
     private func agentCardGrid(homes: [AgentHome]) -> some View {
@@ -1334,7 +1611,7 @@ private struct AgentDetailView: View {
             .frame(maxWidth: .infinity)
         }
         .safeAreaInset(edge: .top, spacing: 0) {
-            detailIdentity
+            detailHeader
         }
         .task(id: deriveKey) { await recomputeDerived() }
         .sheet(isPresented: $showingCleanupReview) {
@@ -1346,6 +1623,16 @@ private struct AgentDetailView: View {
     }
 
     // MARK: 身份区
+
+    /// 固定页头：与列表页一致，身份区共享 pageMaxWidth 内容列并铺满安全区背景。
+    private var detailHeader: some View {
+        detailIdentity
+            .padding(.horizontal, DS.Layout.pageHorizontalInset)
+            .padding(.vertical, DS.Space.x300)
+            .frame(maxWidth: DS.Layout.pageMaxWidth)
+            .frame(maxWidth: .infinity)
+            .background(Color(nsColor: DS.Neutral.canvas))
+    }
 
     private var detailIdentity: some View {
         DSPageIdentity(
@@ -1369,9 +1656,6 @@ private struct AgentDetailView: View {
                     .buttonStyle(.dsAction(size: .regular))
             }
         }
-        .padding(.horizontal, DS.Layout.pageHorizontalInset)
-        .padding(.vertical, DS.Space.x300)
-        .background(Color(nsColor: DS.Neutral.canvas))
     }
 
     private var detailLine: String? {

@@ -304,7 +304,7 @@ Reduce Motion 将全部时长解析为 `0 s`，保留最终视觉状态。
   - **渐进数据**：`ScanProgress.confirmedHomes` 由 `ScanUseCase` 每验证一个 Home 立即发布；`AppModel` 对发现计数变化即时放行（位置刻度仍按 0.25 s 节流）。首次进入首页且无快照时自动开始首次扫描（仅一次，用户停止后不自动重启）。
   - 数值滚动与插入过渡一律尊重 Reduce Motion。
   - **稳定态（环境总览台，`layout.home.max-width` = 1160）**：扫描完成后首页进入「环境总览台」——读数带 → Agent 环境图 → 管理入口 → 信任行；全部静态排版、动效仅 hover（`motion.hover`），无材质、无渐变，阴影仅入口卡保留 `DSCard` 单层投影：
-    - **读数带**（`HomeReadingsStrip`）：无卡片容器、无边框的四个大号仪器读数横排，标签（`type.label`）在数值上方，数值 `type.reading`（36 Light）等宽数字；「已确认 Home」accent /「物理占用」primary /「Skill 安装」次强调 violet /「疑似位置」>0 时 amber；读数间 hairline 竖分隔（`home.reading.spacing` = 64）。Skill 未索引时数值显示「—」。
+    - **读数带**（`HomeReadingsStrip` + `HomeMetricTile`）：四个等宽 raised 仪表卡（宽窗口一行四列，窄窗口自动 2×2；`home.reading.tile.min-width` = 220 / height = 104）——左侧为状态点 + 标签、`type.metricValue` 数值、`type.caption` 注脚，右侧统一 64×44 图表区，形成稳定的横向构图；右缘与下方内容列对齐；「已确认 Home」使用 `DSDonut` 核验率环、「物理占用」使用 `HomeStorageCategoryBars` 前 5 类别微柱图（切片由 `HomeStorageDerived` 按 generation 后台计算一次）、「Skill 安装」使用 `HomeSkillMeter` 8 段健康仪表、「疑似位置」使用 caution `DSDonut` 风险环。Skill 未索引时数值显示「—」。
     - **Agent 环境图**（`HomeEnvironmentMap` + `HomeProductCard`）：按产品的紧凑档案卡（自适应网格 min 240 / max 340，一行多卡；单个产品即一张小卡、不撑满整行），只呈现产品级聚合，Home 级明细完全在 Agent 页（两页职责区分）——首行品牌图标 24 pt + 产品名（`type.body` semibold）+ 右侧合计占用（`type.title` 等宽数字）+ hover chevron，次行信心点阵（每点一个 Home，6 pt，绿 = 已核验 / 琥珀 = 疑似，缩进 `home.product-card.content-inset` = 34）+「N 个 Home · M 个疑似」文字计数；点击卡片 → Agent 页；右翼「N 个产品 · 只读分析」。
     - **管理入口**（`HomeManagementTiles` + `HomeManagementTile`）：标题「维护」下一行四个安静入口卡（自适应网格 min `home.tile.min-width` = 240），裸色符号（无图标底座）+ 标题 `type.label` + 单行状态 `type.body`（Agent「N 个来源 · 全部核验/有疑似」、Skill「无冲突/N 个冲突 · N 个无效/未索引」、空间「最大类别」、活动「N 个已归因进程」）；dsCard 表面，chevron 仅 hover 出现。
     - **信任行**（`HomeTrustFooter`）：底部安静事实行「本机分析 · 只读元数据 · 不执行清理」（`type.caption` secondary + 盾牌符号），顶部分隔线，与发现态信任列表呼应。
@@ -312,14 +312,14 @@ Reduce Motion 将全部时长解析为 `0 s`，保留最终视觉状态。
 
 ### 5.9 Agent 页（档案卡）
 
-Agent 页以「档案卡」呈现每个 Agent Home（自适应网格 `agent.card.column.min-width` = 380 / `max-width` = 460，920 页宽下双列），替代平铺列表行；Home 级明细与操作集中在详情页，首页只保留产品级聚合。**每张档案卡都是可点击表面**（dsCard 按钮，点击进入该 Home 的详情页；卡内「确认/忽略」等内层按钮优先响应）。身份区下方钉有**搜索栏**（`agent.search.width` = 320）：放大镜 + 输入框 + 清空按钮，实时过滤名称/路径/产品名（不区分大小写），无匹配时显示「没有匹配的 Agent」空态。
+Agent 页以「档案卡」呈现每个 Agent Home（自适应网格 `agent.card.column.min-width` = 380 / `max-width` = 460，920 页宽下双列），替代平铺列表行；Home 级明细与操作集中在详情页，首页只保留产品级聚合。**每张档案卡都是可点击表面**（dsCard 按钮，点击进入该 Home 的详情页；卡内「确认/忽略」等内层按钮优先响应）。身份区下方钉有**搜索栏**（`agent.search.height` = 30，宽度填满内容列）：放大镜 + 输入框 + 清空按钮，左边缘与身份区信息行共用 `page.identity.content-inset` 缩进，右侧与主操作及档案卡网格边缘对齐；实时过滤名称/路径/产品名（不区分大小写），无匹配时显示「没有匹配的 Agent」空态。
 
 | Token | 值 |
 | --- | --- |
 | `agent.card.column.min-width` | `380 pt` |
 | `agent.card.column.max-width` | `460 pt` |
 | `agent.card.storage-bar.height` | `4 pt` |
-| `agent.search.width` | `320 pt` |
+| `agent.search.height` | `30 pt` |
 
 - **卡片结构**（`AgentHomeCard`，`DSCard` 表面）：头部（官方品牌图标 32 pt + Home 名 `type.section` + 路径 `type.caption` secondary、中间截断、隐私脱敏 + 右上「已确认/疑似」`DSBadge`）→ 事实行（来源 · 物理占用 · 条目数 · 证据数，`type.caption` secondary 等宽数字；hover 显示原始证据清单）→ 类别空间构成条（4 pt 堆叠条 + 前三类别图例，含「未归属」剩余）→ 条件操作行（疑似 → 确认/忽略；用户确认 → 撤销；已确认无操作行，顶部 hairline 分隔）。
 - **类别 → 系列色固定映射**（§8.1 系列色的组件级延伸）：会话 `series.01`、日志 `series.02`、缓存 `series.03`、配置 `series.04`、运行时 `series.05`、Skill `series.06`、浏览器 `series.07`、数据库 `series.08`、未归属剩余 `text.secondary` 0.55。
@@ -331,7 +331,7 @@ Agent 页以「档案卡」呈现每个 Agent Home（自适应网格 `agent.card
 
 点击档案卡进入（`AppModel.selectedAgentHomeID` 导航；返回/重进 Agent 页清空），headerless 单页结构：
 
-- **身份区**：标题 = Home 名，信息行 = 「产品名 · 路径（脱敏）· 来源 · 信心」；右侧操作 = 返回 + 疑似「确认/忽略」、用户确认「撤销本机确认」。
+- **身份区**：标题 = Home 名，信息行 = 「产品名 · 路径（脱敏）· 来源 · 信心」；右侧操作 = 返回 + 疑似「确认/忽略」、用户确认「撤销本机确认」；身份区与页面内容共享 `layout.page.max-width` 内容列，避免宽窗口下标题贴左、操作贴右。
 - **概览读数带**：物理占用 / 逻辑占用 / 条目数 / 证据数（`type.reading` 36 Light 等宽，hairline 分隔）。
 - **容量分析**：完整类别堆叠条（4 pt）+ 全部类别明细行（6 pt 色点 + 类别名 + 条目数 + 字节，降序，含「未归属」剩余）；无数据时「暂无容量明细。」。
 - **对话**：会话列表（`CleanupUnit`，`homeIdentity` + `category == sessions`，按最后活动倒序）——会话名（`cleanupUnitTitle`）+ 最后活动相对时间 + 大小 + 「清理」按钮（destructive compact，`cleanup` 特性门禁，走 `CleanupReviewSheet` 复核后 `executeCleanup`）；清理结果与操作消息就地显示；空态「此 Home 没有对话记录。」。
