@@ -86,6 +86,8 @@ final class AppModel {
     private(set) var ignoredScanPaths: [String] = UserDefaults.standard.stringArray(forKey: "ignoredScanPaths") ?? []
     private(set) var userConfirmedHomes: [String: String] = UserDefaults.standard.dictionary(forKey: "userConfirmedHomes") as? [String: String] ?? [:]
     private(set) var uninstallReport: String?
+    /// Agent 详情页当前选中的 Home（nil = 列表页）。
+    var selectedAgentHomeID: PhysicalResourceIdentity?
     /// Agent 市场：面板可见性 + 每个产品的安装状态（真实流式状态，随事件更新）。
     var isMarketPresented = false
     private(set) var marketInstallations: [String: MarketInstallState] = [:]
@@ -283,6 +285,7 @@ final class AppModel {
                 }
                 snapshot = result
                 try? snapshotStore.save(result)
+                clearSelectedAgentHomeIfMissing()
                 refreshCleanupInventory()
                 await refreshSkillIndex()
             } catch is CancellationError {
@@ -501,6 +504,19 @@ final class AppModel {
         cleanupTask?.cancel()
     }
 
+    // MARK: Agent 详情导航
+
+    func agentHome(withID id: PhysicalResourceIdentity) -> AgentHome? {
+        snapshot?.homes.first { $0.id == id }
+    }
+
+    private func clearSelectedAgentHomeIfMissing() {
+        guard let selectedAgentHomeID, snapshot?.homes.contains(where: { $0.id == selectedAgentHomeID }) != true else {
+            return
+        }
+        self.selectedAgentHomeID = nil
+    }
+
     // MARK: Agent 市场
 
     /// 市场安装状态（随事件流更新；失败以结构化原因表达，文案由 installFailureTitle 翻译）。
@@ -611,6 +627,7 @@ final class AppModel {
             }
             snapshot = baseline
             try? snapshotStore.save(baseline)
+            clearSelectedAgentHomeIfMissing()
             refreshCleanupInventory()
             await refreshSkillIndex()
         } catch is CancellationError {

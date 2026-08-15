@@ -83,6 +83,8 @@ enum DS {
         static let agentCardColumnMaxWidth: CGFloat = 460
         /// Agent 档案卡类别空间构成条高度。
         static let agentStorageBarHeight: CGFloat = 4
+        /// Agent 页搜索栏宽度。
+        static let agentSearchWidth: CGFloat = 320
     }
 
     enum IconSize {
