@@ -341,7 +341,7 @@ Agent 页以「档案卡」呈现每个 Agent Home（自适应网格 `agent.card
 
 ### 5.10 Agent 市场（Marketplace）
 
-Agent 页身份区右侧主操作「Agent 市场」（accent 大按钮 + sparkles，**浏览始终可用**；安装动作受 `install` 授权门禁——授权不足时面板顶部显示提示条、安装按钮禁用）打开市场面板（sheet，最小 880×640）：
+Agent 页身份区右侧主操作「Agent 市场」（通透玻璃大按钮 + storefront.fill 商店图标，**浏览始终可用**；安装动作受 `install` 授权门禁——授权不足时面板顶部显示提示条、安装按钮禁用）打开市场面板（sheet，最小 880×640）：
 
 - **面板结构**（`AgentMarketSheet`）：`NavigationStack` + 标题「Agent 市场」+ 取消关闭；滚动区为自适应网格（min 380 / max 460，920 内双列）的目录产品卡；授权不含 `install` 时顶部 recessed 提示条「当前授权不包含安装能力，可浏览目录。」；安装完成时顶部出现 recessed 提示条（「已安装的 Agent 会在下次扫描后纳入环境。」+「重新扫描」按钮 → 关闭面板并触发真实扫描）。
 - **产品卡**（`AgentMarketCard`，`DSCard`）：官方品牌图标 32 pt + 名称（`type.section`）+ 简介（`type.caption` secondary，来自目录 `marketplace.summary`）+ 右上状态——已安装 → 绿色「已安装」徽章（`AppModel.installedMarketProductIDs` 持久化，重启后仍生效，覆盖无扫描规则的市场条目）；未安装且无安装方式 → 「暂无安装方式」caption；未安装 → accent「安装」按钮（`install` 特性不足或已有安装进行中时禁用）；安装中 → 「取消」+ recessed 输出区（spinner + 阶段文案 + 输出尾部 3 行，`type.data` 等宽可选中）；失败 → 「重试」+ 错误行。卡内下方为安装方式徽章（brew / cask）与主页链接。
@@ -435,9 +435,9 @@ hover 在指针离开或窗口失活时清除；pressed 不叠加 hover；focus 
 | primary.action.inset.horizontal | 18 pt |
 | primary.action.title | 13 pt Semibold，负字距 −0.1 |
 
-- **材料（随外观切换，ultraThinMaterial 打底 + 单层均匀玻璃 tint，§2 登记例外）**：深色外观 = 白色雾面玻璃（白 0.78）+ color.blue.deep 文字 + accent 图标，深色画布上的最高对比 CTA；浅色外观 = 蓝色雾面玻璃（accent.primary 0.72）+ 白色文字/图标；不做顶部高光与纵向渐变，保持玻璃面平整。
-- **边缘与深度**：外轮廓仅保留一条白 0.38（深）/ 0.26（浅）hairline 描边，按钮内部无第二圈线；**单层投影**黑 0.22、blur 6、y 2（§2 阴影条款的 CTA 特例）。
-- **状态配方**：hover 提亮玻璃（叠加白 0.16 深 / 0.14 浅）、轮廓白升至 0.58（深）/ 0.46（浅）、投影升至黑 0.30 / blur 6 / y 3；press 叠加黑 0.12 + 缩放 0.98；disabled 整体 × opacity.disabled.control；动效 motion.hover / motion.press，尊重 Reduce Motion；hover 在窗口失活时清除。
+- **材料（随外观切换，ultraThinMaterial 唯一材质层 + 单层均匀 tint，§2 登记例外）**：浅色外观 = 白雾玻璃（白 0.32）+ color.blue.deep 文字 + accent 图标 + accent 描边；深色外观 = 蓝雾玻璃（blue.deep 0.38）+ 白色文字 + 亮蓝图标 + blue.luminous 描边；无顶部高光、无内圈线、无纵向渐变。
+- **边缘与深度**：外轮廓 1 pt 描边，浅色 accent.primary 0.42 / 深色 blue.luminous 0.52；**单层投影**浅色黑 0.12 / 深色黑 0.26，blur 6、y 2（§2 阴影条款的 CTA 特例）。
+- **状态配方**：hover 微放大至 1.02，浅色叠加 accent.primary 0.15、描边升至 0.75、accent 外发光 0.32（blur 12）；深色叠加白 0.10、描边升至 0.90、blue.luminous 外发光 0.36（blur 12）；press 浅色叠加 accent.primary 0.24 / 深色叠加黑 0.16 + 缩放 0.98；disabled 整体 × opacity.disabled.control；动效 motion.hover / motion.press，尊重 Reduce Motion；hover 在窗口失活时清除。
 - 无键帽提示与快捷键展示；无循环动效。
 
 

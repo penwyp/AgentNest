@@ -959,7 +959,7 @@ private struct AgentListView: View {
             Button {
                 model.isMarketPresented = true
             } label: {
-                Label(model.localized("Agent 市场"), systemImage: "sparkles")
+                Label(model.localized("Agent 市场"), systemImage: "storefront.fill")
                     .labelStyle(DSPrimaryLabelStyle())
             }
             .buttonStyle(.dsPrimary)
