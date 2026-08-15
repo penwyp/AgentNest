@@ -633,8 +633,8 @@ struct DSPrimaryActionButtonStyle: ButtonStyle {
 
     private var glowColor: Color {
         isDark
-            ? DS.Chroma.blueLuminous.opacity(isActiveHovering ? 0.50 : 0)
-            : DS.Semantic.accentPrimary.opacity(isActiveHovering ? 0.45 : 0)
+            ? DS.Chroma.blueLuminous.opacity(isActiveHovering ? 0.22 : 0)
+            : DS.Semantic.accentPrimary.opacity(isActiveHovering ? 0.16 : 0)
     }
 
     func makeBody(configuration: Configuration) -> some View {
@@ -664,7 +664,7 @@ struct DSPrimaryActionButtonStyle: ButtonStyle {
                 RoundedRectangle(cornerRadius: DS.Radius.controlRegular, style: .continuous)
                     .strokeBorder(borderColor, lineWidth: 1)
             )
-            .shadow(color: glowColor, radius: isActiveHovering ? 14 : 0, y: 0)
+            .shadow(color: glowColor, radius: isActiveHovering ? 9 : 0, y: 0)
             .shadow(color: shadowColor, radius: 6, y: 2)
             .scaleEffect(isPressed && isEnabled ? 0.98 : (isActiveHovering ? 1.025 : 1))
             .opacity(isEnabled ? 1 : DS.Opacity.disabledControl)
