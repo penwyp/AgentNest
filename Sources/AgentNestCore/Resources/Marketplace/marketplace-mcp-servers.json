@@ -1,0 +1,166 @@
+{
+  "mcpServers": [
+    {
+      "id": "github",
+      "name": "GitHub",
+      "publisher": "GitHub",
+      "summary": "Repository, issue, pull-request, and Actions automation through the official GitHub API.",
+      "homepageURL": "https://github.com/github/github-mcp-server",
+      "category": "development",
+      "transport": "stdio",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "environment": {
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "your-token"
+      },
+      "repositoryURL": "https://github.com/github/github-mcp-server",
+      "tags": ["git", "issues", "pull-requests"],
+      "verified": true
+    },
+    {
+      "id": "filesystem",
+      "name": "Filesystem",
+      "publisher": "Model Context Protocol",
+      "summary": "Secure read/write file operations restricted to explicitly allowed directories.",
+      "homepageURL": "https://github.com/modelcontextprotocol/servers",
+      "category": "development",
+      "transport": "stdio",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/allowed-directory"],
+      "environment": {},
+      "repositoryURL": "https://github.com/modelcontextprotocol/servers",
+      "tags": ["files", "directories", "local"],
+      "verified": true
+    },
+    {
+      "id": "memory",
+      "name": "Knowledge Graph Memory",
+      "publisher": "Model Context Protocol",
+      "summary": "A persistent knowledge graph so conversations can remember entities and relationships.",
+      "homepageURL": "https://github.com/modelcontextprotocol/servers",
+      "category": "data",
+      "transport": "stdio",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-memory"],
+      "environment": {},
+      "repositoryURL": "https://github.com/modelcontextprotocol/servers",
+      "tags": ["memory", "knowledge-graph"],
+      "verified": true
+    },
+    {
+      "id": "fetch",
+      "name": "Fetch",
+      "publisher": "Model Context Protocol",
+      "summary": "Fetch web content and convert it to markdown for agent consumption.",
+      "homepageURL": "https://github.com/modelcontextprotocol/servers",
+      "category": "web",
+      "transport": "stdio",
+      "command": "uvx",
+      "args": ["mcp-server-fetch"],
+      "environment": {},
+      "repositoryURL": "https://github.com/modelcontextprotocol/servers",
+      "tags": ["web", "markdown", "http"],
+      "verified": true
+    },
+    {
+      "id": "brave-search",
+      "name": "Brave Search",
+      "publisher": "Brave",
+      "summary": "Web and local search results through the Brave Search API.",
+      "homepageURL": "https://github.com/modelcontextprotocol/servers",
+      "category": "search",
+      "transport": "stdio",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-brave-search"],
+      "environment": {
+        "BRAVE_API_KEY": "your-key"
+      },
+      "repositoryURL": "https://github.com/modelcontextprotocol/servers",
+      "tags": ["search", "web", "brave"],
+      "verified": true
+    },
+    {
+      "id": "puppeteer",
+      "name": "Puppeteer",
+      "publisher": "Model Context Protocol",
+      "summary": "Browser automation for screenshots, navigation, and page interaction.",
+      "homepageURL": "https://github.com/modelcontextprotocol/servers",
+      "category": "browser",
+      "transport": "stdio",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-puppeteer"],
+      "environment": {},
+      "repositoryURL": "https://github.com/modelcontextprotocol/servers",
+      "tags": ["browser", "automation", "screenshots"],
+      "verified": true
+    },
+    {
+      "id": "postgres",
+      "name": "PostgreSQL",
+      "publisher": "Model Context Protocol",
+      "summary": "Schema inspection and read-only SQL queries with safe query planning.",
+      "homepageURL": "https://github.com/modelcontextprotocol/servers",
+      "category": "data",
+      "transport": "stdio",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-postgres", "postgresql://localhost/mydb"],
+      "environment": {},
+      "repositoryURL": "https://github.com/modelcontextprotocol/servers",
+      "tags": ["sql", "database", "postgres"],
+      "verified": true
+    },
+    {
+      "id": "slack",
+      "name": "Slack",
+      "publisher": "Slack",
+      "summary": "Read and post messages in allowed Slack channels and direct messages.",
+      "homepageURL": "https://github.com/modelcontextprotocol/servers",
+      "category": "communication",
+      "transport": "stdio",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-slack"],
+      "environment": {
+        "SLACK_BOT_TOKEN": "your-token",
+        "SLACK_TEAM_ID": "your-team"
+      },
+      "repositoryURL": "https://github.com/modelcontextprotocol/servers",
+      "tags": ["slack", "messages", "team"],
+      "verified": true
+    },
+    {
+      "id": "sentry",
+      "name": "Sentry",
+      "publisher": "Sentry",
+      "summary": "Inspect issues, releases, and error traces from Sentry projects.",
+      "homepageURL": "https://github.com/modelcontextprotocol/servers",
+      "category": "observability",
+      "transport": "stdio",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-sentry"],
+      "environment": {
+        "SENTRY_AUTH_TOKEN": "your-token",
+        "SENTRY_ORG": "your-org"
+      },
+      "repositoryURL": "https://github.com/modelcontextprotocol/servers",
+      "tags": ["errors", "tracing", "releases"],
+      "verified": true
+    },
+    {
+      "id": "everart",
+      "name": "EverArt",
+      "publisher": "EverArt",
+      "summary": "Generate and search AI images through the EverArt API.",
+      "homepageURL": "https://github.com/modelcontextprotocol/servers",
+      "category": "creative",
+      "transport": "stdio",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-everart"],
+      "environment": {
+        "EVERART_API_KEY": "your-key"
+      },
+      "repositoryURL": "https://github.com/modelcontextprotocol/servers",
+      "tags": ["images", "generation", "api"],
+      "verified": true
+    }
+  ]
+}

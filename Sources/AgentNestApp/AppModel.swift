@@ -31,6 +31,7 @@ final class AppModel {
     enum Destination: String, CaseIterable, Identifiable {
         case home = "首页"
         case agents = "Agent"
+        case market = "市场"
         case skills = "Skill"
         case storage = "空间"
         case activity = "活动"
@@ -40,12 +41,13 @@ final class AppModel {
         var id: String { rawValue }
 
         /// 侧栏导航项（按视觉分组顺序）。
-        static let navigationItems: [Destination] = [.home, .agents, .skills, .storage, .activity, .history, .settings]
+        static let navigationItems: [Destination] = [.home, .agents, .market, .skills, .storage, .activity, .history, .settings]
 
         var systemImage: String {
             switch self {
             case .home: "house"
             case .agents: "cpu"
+            case .market: "storefront"
             case .skills: "hammer"
             case .storage: "internaldrive"
             case .activity: "waveform.path.ecg"
@@ -88,8 +90,7 @@ final class AppModel {
     private(set) var uninstallReport: String?
     /// Agent 详情页当前选中的 Home（nil = 列表页）。
     var selectedAgentHomeID: PhysicalResourceIdentity?
-    /// Agent 市场：面板可见性 + 每个产品的安装状态（真实流式状态，随事件更新）。
-    var isMarketPresented = false
+    /// 市场：Agent 安装状态（真实流式状态，随事件更新）。
     private(set) var marketInstallations: [String: MarketInstallState] = [:]
     /// 已通过市场成功安装的产品 ID（持久化：重启后仍显示「已安装」，覆盖无扫描规则的市场条目）。
     private(set) var installedMarketProductIDs: Set<String> = Set(
@@ -116,6 +117,7 @@ final class AppModel {
     private var lastProgressPublishedAt = Date.distantPast
     private var didAutoStartInitialScan = false
     private let catalog: AgentDefinitionCatalog?
+    private let marketplaceCatalog: MarketplaceCatalog?
     private let coordinator: ScanCoordinator?
     private let activitySampler = SystemActivitySampler()
     private var activityAccumulator = ActivityWorkspaceAccumulator()
@@ -136,6 +138,7 @@ final class AppModel {
         )
         let loadedCatalog = try? AgentDefinitionCatalog.bundled()
         catalog = loadedCatalog
+        marketplaceCatalog = try? MarketplaceCatalog.bundled()
         coordinator = loadedCatalog.map { ScanCoordinator(useCase: ScanUseCase(catalog: $0)) }
         snapshot = try? snapshotStore.load()
         refreshCleanupInventory()
@@ -529,6 +532,20 @@ final class AppModel {
     var marketDefinitions: [AgentDefinition] {
         (catalog?.definitions ?? []).sorted {
             $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending
+        }
+    }
+
+    /// Skills 市场目录（按发布者/名称排序）。
+    var marketplaceSkillItems: [SkillMarketplaceItem] {
+        (marketplaceCatalog?.skills ?? []).sorted {
+            ($0.publisher, $0.name) < ($1.publisher, $1.name)
+        }
+    }
+
+    /// MCP 市场目录（按发布者/名称排序）。
+    var marketplaceMCPServers: [MCPServerMarketplaceItem] {
+        (marketplaceCatalog?.mcpServers ?? []).sorted {
+            ($0.publisher, $0.name) < ($1.publisher, $1.name)
         }
     }
 

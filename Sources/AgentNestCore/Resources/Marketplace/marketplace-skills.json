@@ -1,0 +1,100 @@
+{
+  "skills": [
+    {
+      "id": "anthropic.skill-creator",
+      "name": "Skill Creator",
+      "publisher": "Anthropic",
+      "summary": "A guided workflow for creating well-structured, validated Agent Skills.",
+      "homepageURL": "https://github.com/anthropics/skills",
+      "repositoryURL": "https://github.com/anthropics/skills",
+      "installCommand": "git clone --depth 1 https://github.com/anthropics/skills.git ~/.claude/skills/anthropic-skills",
+      "category": "development",
+      "tags": ["skill", "authoring", "claude"],
+      "verified": true
+    },
+    {
+      "id": "anthropic.docx",
+      "name": "DOCX",
+      "publisher": "Anthropic",
+      "summary": "Create, edit, and analyze Word documents with comments and tracked changes.",
+      "homepageURL": "https://github.com/anthropics/skills",
+      "repositoryURL": "https://github.com/anthropics/skills",
+      "installCommand": "git clone --depth 1 https://github.com/anthropics/skills.git ~/.claude/skills/anthropic-skills",
+      "category": "documents",
+      "tags": ["office", "word", "documents"],
+      "verified": true
+    },
+    {
+      "id": "anthropic.pptx",
+      "name": "PPTX",
+      "publisher": "Anthropic",
+      "summary": "Build, inspect, and edit PowerPoint presentations with precise slide layouts.",
+      "homepageURL": "https://github.com/anthropics/skills",
+      "repositoryURL": "https://github.com/anthropics/skills",
+      "installCommand": "git clone --depth 1 https://github.com/anthropics/skills.git ~/.claude/skills/anthropic-skills",
+      "category": "documents",
+      "tags": ["office", "powerpoint", "presentations"],
+      "verified": true
+    },
+    {
+      "id": "anthropic.xlsx",
+      "name": "XLSX",
+      "publisher": "Anthropic",
+      "summary": "Work with Excel workbooks, formulas, formatting, and recalculation.",
+      "homepageURL": "https://github.com/anthropics/skills",
+      "repositoryURL": "https://github.com/anthropics/skills",
+      "installCommand": "git clone --depth 1 https://github.com/anthropics/skills.git ~/.claude/skills/anthropic-skills",
+      "category": "documents",
+      "tags": ["office", "excel", "spreadsheets"],
+      "verified": true
+    },
+    {
+      "id": "anthropic.pdf",
+      "name": "PDF",
+      "publisher": "Anthropic",
+      "summary": "Extract text and tables, fill forms, and merge or split PDF documents.",
+      "homepageURL": "https://github.com/anthropics/skills",
+      "repositoryURL": "https://github.com/anthropics/skills",
+      "installCommand": "git clone --depth 1 https://github.com/anthropics/skills.git ~/.claude/skills/anthropic-skills",
+      "category": "documents",
+      "tags": ["pdf", "forms", "documents"],
+      "verified": true
+    },
+    {
+      "id": "anthropic.artifacts-builder",
+      "name": "Artifacts Builder",
+      "publisher": "Anthropic",
+      "summary": "Generate complex, multi-file Claude Artifacts with a structured build workflow.",
+      "homepageURL": "https://github.com/anthropics/skills",
+      "repositoryURL": "https://github.com/anthropics/skills",
+      "installCommand": "git clone --depth 1 https://github.com/anthropics/skills.git ~/.claude/skills/anthropic-skills",
+      "category": "development",
+      "tags": ["artifacts", "frontend", "claude"],
+      "verified": true
+    },
+    {
+      "id": "community.web-research",
+      "name": "Web Research",
+      "publisher": "Community",
+      "summary": "Plan a research question, gather sources, and synthesize a cited brief.",
+      "homepageURL": "https://github.com/anthropics/skills",
+      "repositoryURL": "https://github.com/anthropics/skills",
+      "installCommand": "git clone --depth 1 https://github.com/anthropics/skills.git ~/.claude/skills/community-skills",
+      "category": "research",
+      "tags": ["web", "research", "citations"],
+      "verified": false
+    },
+    {
+      "id": "community.meeting-notes",
+      "name": "Meeting Notes",
+      "publisher": "Community",
+      "summary": "Turn transcripts into structured decisions, owners, and follow-up actions.",
+      "homepageURL": "https://github.com/anthropics/skills",
+      "repositoryURL": "https://github.com/anthropics/skills",
+      "installCommand": "git clone --depth 1 https://github.com/anthropics/skills.git ~/.claude/skills/community-skills",
+      "category": "productivity",
+      "tags": ["meetings", "notes", "productivity"],
+      "verified": false
+    }
+  ]
+}

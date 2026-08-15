@@ -35,6 +35,7 @@ public struct AgentDefinitionCatalog: Sendable {
         let nested = Bundle.module.urls(forResourcesWithExtension: "json", subdirectory: "AgentDefinitions") ?? []
         let flattened = Bundle.module.urls(forResourcesWithExtension: "json", subdirectory: nil) ?? []
         let urls = Array(Set(nested + flattened))
+            .filter { !$0.lastPathComponent.hasPrefix("marketplace-") }
         guard !urls.isEmpty else {
             throw AgentDefinitionError.missingBundledResources
         }

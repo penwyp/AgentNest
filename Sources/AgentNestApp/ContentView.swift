@@ -27,6 +27,7 @@ struct ContentView: View {
                         } else {
                             AgentListView(model: model)
                         }
+                    case .market: MarketView(model: model)
                     case .skills: SkillView(model: model)
                     case .storage: StorageView(model: model)
                     case .activity: ActivityView(model: model)
@@ -50,6 +51,7 @@ struct ContentView: View {
                     SidebarRow(model: model, item: .home)
                     sidebarDivider
                     SidebarRow(model: model, item: .agents)
+                    SidebarRow(model: model, item: .market)
                     SidebarRow(model: model, item: .skills)
                     SidebarRow(model: model, item: .storage)
                     SidebarRow(model: model, item: .activity)
@@ -948,7 +950,7 @@ private struct AgentListView: View {
         }
     }
 
-    /// 页面身份区：标题 + 已确认/疑似统计；右侧主操作 = 打开 Agent 市场。
+    /// 页面身份区：标题 + 已确认/疑似统计；市场入口统一收敛到侧边栏「市场」。
     /// 身份区只负责排版，页边距与背景统一由 agentHeader 提供。
     private var agentIdentity: some View {
         DSPageIdentity(
@@ -956,13 +958,7 @@ private struct AgentListView: View {
             glyph: "cpu",
             detail: agentIdentityDetail
         ) {
-            Button {
-                model.isMarketPresented = true
-            } label: {
-                Label(model.localized("Agent 市场"), systemImage: "storefront.fill")
-                    .labelStyle(DSPrimaryLabelStyle())
-            }
-            .buttonStyle(.dsPrimary)
+            EmptyView()
         }
     }
 
@@ -995,12 +991,6 @@ private struct AgentListView: View {
             agentHeader
         }
         .task(id: deriveKey) { await recomputeDerived() }
-        .sheet(isPresented: Binding(
-            get: { model.isMarketPresented },
-            set: { model.isMarketPresented = $0 }
-        )) {
-            AgentMarketSheet(model: model)
-        }
     }
 
     /// 固定页头：身份区 + 搜索栏共享同一内容列（pageMaxWidth），
@@ -1018,7 +1008,7 @@ private struct AgentListView: View {
     }
 
     /// 搜索栏：与身份区信息行共用 content-inset 左缩进，宽度填满内容列，
-    /// 右侧与「Agent 市场」按钮和卡片网格边缘对齐，避免左侧堆叠、右侧留空。
+    /// 右侧与卡片网格边缘对齐，避免左侧堆叠、右侧留空。
     private var searchField: some View {
         HStack(spacing: DS.Space.x200) {
             Image(systemName: "magnifyingglass")
@@ -1795,206 +1785,6 @@ private struct AgentCardSkeleton: View {
     }
 }
 
-
-
-// MARK: - Agent 市场
-
-/// Agent 市场面板：列出目录中全部 Agent，展示安装状态并提供真实 Homebrew 安装。
-/// 安装中流式显示输出尾部；完成后提示重新扫描；install 授权特性不足时禁用安装。
-private struct AgentMarketSheet: View {
-    @Bindable var model: AppModel
-
-    private var hasCompletedInstall: Bool {
-        model.marketInstallations.values.contains { $0.phase == .completed }
-    }
-
-    var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: DS.Space.x300) {
-                    if !model.allows(.install) {
-                        licenseBanner
-                    }
-                    if hasCompletedInstall {
-                        completedBanner
-                    }
-                    LazyVGrid(
-                        columns: [GridItem(.adaptive(minimum: 380, maximum: 460), spacing: DS.Space.x300)],
-                        alignment: .leading,
-                        spacing: DS.Space.x300
-                    ) {
-                        ForEach(model.marketDefinitions, id: \.id) { definition in
-                            AgentMarketCard(model: model, definition: definition)
-                        }
-                    }
-                }
-                .padding(.horizontal, DS.Layout.pageHorizontalInset)
-                .padding(.vertical, DS.Layout.pageVerticalInset)
-                .frame(maxWidth: DS.Layout.pageMaxWidth)
-                .frame(maxWidth: .infinity)
-            }
-            .navigationTitle(model.localized("Agent 市场"))
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button(model.localized("关闭")) { model.isMarketPresented = false }
-                        .keyboardShortcut(.cancelAction)
-                }
-            }
-        }
-        .frame(minWidth: 880, minHeight: 640)
-    }
-
-    /// 授权提示：市场可浏览，安装动作需含 install 特性的授权。
-    private var licenseBanner: some View {
-        DSRecessed {
-            Label(model.localized("当前授权不包含安装能力，可浏览目录。"), systemImage: "lock.shield")
-                .font(DS.Typeface.body)
-                .foregroundStyle(.secondary)
-        }
-    }
-
-    /// 安装完成提示：引导重新扫描将新 Agent 纳入环境。
-    private var completedBanner: some View {
-        DSRecessed {
-            HStack(spacing: DS.Space.x300) {
-                Label(model.localized("已安装的 Agent 会在下次扫描后纳入环境。"), systemImage: "checkmark.circle.fill")
-                    .font(DS.Typeface.body)
-                    .foregroundStyle(DS.Semantic.statusPositive)
-                Spacer(minLength: DS.Space.x300)
-                Button {
-                    model.isMarketPresented = false
-                    model.startScan()
-                } label: {
-                    Label(model.localized("重新扫描"), systemImage: "arrow.clockwise")
-                }
-                .buttonStyle(.dsAction(.accent, size: .compact))
-            }
-        }
-    }
-}
-
-/// 市场产品卡：品牌图标 + 名称/简介 + 安装方式徽章/主页链接 + 状态（已安装/安装/安装中/失败）。
-private struct AgentMarketCard: View {
-    let model: AppModel
-    let definition: AgentDefinition
-
-    private var state: AppModel.MarketInstallState? {
-        model.marketInstallations[definition.id]
-    }
-
-    private var installed: Bool {
-        if state?.phase == .completed { return true }
-        if model.installedMarketProductIDs.contains(definition.id) { return true }
-        return model.snapshot?.products.contains { $0.id == definition.id && !$0.homes.isEmpty } ?? false
-    }
-
-    private var isBusy: Bool {
-        state?.phase == .locatingBrew || state?.phase == .running
-    }
-
-    var body: some View {
-        DSCard(padding: DS.Space.x400) {
-            VStack(alignment: .leading, spacing: DS.Space.x300) {
-                HStack(alignment: .top, spacing: DS.Space.x300) {
-                    HomeBrandIcon(productID: definition.id, size: 32)
-                    VStack(alignment: .leading, spacing: DS.Space.x050) {
-                        Text(definition.displayName)
-                            .font(DS.Typeface.section)
-                            .lineLimit(1)
-                        if let summary = definition.marketplace?.summary {
-                            Text(summary)
-                                .font(DS.Typeface.caption)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(2)
-                        }
-                    }
-                    Spacer(minLength: DS.Space.x200)
-                    if installed {
-                        DSBadge(text: model.localized("已安装"), color: DS.Semantic.statusPositive)
-                    } else if definition.marketplace?.install == nil {
-                        Text(model.localized("暂无安装方式"))
-                            .font(DS.Typeface.caption)
-                            .foregroundStyle(.tertiary)
-                    } else {
-                        actionButton
-                    }
-                }
-
-                HStack(spacing: DS.Space.x200) {
-                    if let method = definition.marketplace?.install {
-                        DSBadge(text: method.kind == .brew ? "brew" : "cask", color: .secondary)
-                    }
-                    if let url = definition.marketplace?.homepageURL, let link = URL(string: url) {
-                        Link(destination: link) {
-                            Text(url)
-                                .font(DS.Typeface.caption)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                                .truncationMode(.middle)
-                        }
-                    }
-                }
-
-                if isBusy {
-                    installProgress
-                } else if case let .failed(failure) = state?.phase {
-                    Label(model.installFailureTitle(failure), systemImage: "exclamationmark.triangle")
-                        .font(DS.Typeface.caption)
-                        .foregroundStyle(DS.Semantic.statusCritical)
-                        .lineLimit(2)
-                }
-            }
-        }
-        .accessibilityElement(children: .contain)
-    }
-
-    /// 右上角操作：未安装 → 安装 / 安装中 → 取消 / 失败 → 重试。
-    private var actionButton: some View {
-        Group {
-            if isBusy {
-                Button(model.localized("取消")) { model.cancelMarketInstall(definition.id) }
-                    .buttonStyle(.dsAction(size: .compact))
-            } else if case .failed = state?.phase {
-                Button(model.localized("重试")) { model.startMarketInstall(definition.id) }
-                    .buttonStyle(.dsAction(.accent, size: .compact))
-                    .disabled(model.isAnyMarketInstallRunning || !model.allows(.install))
-            } else {
-                Button { model.startMarketInstall(definition.id) } label: {
-                    Label(model.localized("安装"), systemImage: "arrow.down.circle")
-                }
-                .buttonStyle(.dsAction(.accent, size: .compact))
-                .disabled(model.isAnyMarketInstallRunning || !model.allows(.install))
-            }
-        }
-    }
-
-    /// 安装进度：spinner + 阶段文案 + 输出尾部（recessed，等宽，可选中复制）。
-    private var installProgress: some View {
-        DSRecessed {
-            VStack(alignment: .leading, spacing: DS.Space.x100) {
-                HStack(spacing: DS.Space.x200) {
-                    ProgressView()
-                        .controlSize(.small)
-                        .accessibilityHidden(true)
-                    Text(state?.phase == .locatingBrew
-                        ? model.localized("正在定位 Homebrew")
-                        : model.localized("正在安装 %@", definition.displayName))
-                        .font(DS.Typeface.caption)
-                        .foregroundStyle(.secondary)
-                }
-                if let tail = state?.outputTail, !tail.isEmpty {
-                    Text(tail.joined(separator: "\n"))
-                        .font(DS.Typeface.data)
-                        .foregroundStyle(.tertiary)
-                        .lineLimit(3)
-                        .truncationMode(.tail)
-                        .textSelection(.enabled)
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-    }
-}
 
 
 // MARK: - Agent 详情页
