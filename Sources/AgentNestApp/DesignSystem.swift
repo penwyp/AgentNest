@@ -495,13 +495,14 @@ struct DSActionButtonStyle: ButtonStyle {
     @Environment(\.isEnabled) private var isEnabled
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.controlActiveState) private var controlActiveState
+    @Environment(\.colorScheme) private var colorScheme
     @State private var isHovering = false
 
     private func fill(isPressed: Bool) -> Color {
         let isActiveHovering = isHovering && controlActiveState == .active
         switch variant {
         case .neutral: return Color(nsColor: .controlBackgroundColor).opacity(0.92)
-        case .accent: return DS.Semantic.accentPrimary.opacity(isPressed ? 0.78 : (isActiveHovering ? 0.92 : 0.86))
+        case .accent: return DS.Semantic.accentPrimary.opacity(isPressed ? 0.82 : (isActiveHovering ? 1.0 : 0.94))
         case .destructive: return DS.Semantic.statusCritical.opacity(isPressed ? 0.78 : (isActiveHovering ? 0.90 : 1.0))
         }
     }
@@ -516,45 +517,62 @@ struct DSActionButtonStyle: ButtonStyle {
     private var border: Color {
         switch variant {
         case .neutral: return Color(nsColor: .separatorColor).opacity(0.90)
-        case .accent: return Color.white.opacity(0.18)
+        case .accent: return Color.white.opacity(0.20)
         case .destructive: return Color.white.opacity(0.20)
         }
+    }
+
+    /// 禁用态使用高对比的中性描边样式，避免浅色/深色主题下整颗按钮淡成不可见。
+    private var disabledFill: Color {
+        Color.primary.opacity(colorScheme == .dark ? 0.16 : 0.08)
+    }
+
+    private var disabledForeground: Color {
+        Color.primary.opacity(0.64)
+    }
+
+    private var disabledBorder: Color {
+        Color.primary.opacity(0.24)
     }
 
     func makeBody(configuration: Configuration) -> some View {
         let isPressed = configuration.isPressed && controlActiveState == .active
         configuration.label
             .font(size.font)
-            .foregroundStyle(isEnabled ? foreground : foreground.opacity(DS.Opacity.disabledControl))
+            .foregroundStyle(isEnabled ? foreground : disabledForeground)
             .padding(.horizontal, size.horizontalInset)
             .frame(minHeight: size.height)
             .background(
                 RoundedRectangle(cornerRadius: size.cornerRadius, style: .continuous)
-                    .fill(isEnabled ? fill(isPressed: isPressed) : fill(isPressed: false).opacity(DS.Opacity.disabledControl))
+                    .fill(isEnabled ? fill(isPressed: isPressed) : disabledFill)
             )
             .overlay(
                 RoundedRectangle(
                     cornerRadius: size.cornerRadius,
                     style: .continuous
                 )
-                .strokeBorder(border, lineWidth: variant == .neutral ? DS.Stroke.surface : 0.5)
+                .strokeBorder(
+                    isEnabled ? border : disabledBorder,
+                    lineWidth: isEnabled ? (variant == .neutral ? DS.Stroke.surface : 0.5) : 1
+                )
             )
             .overlay(alignment: .top) {
-                // 顶部白色高光（0.5 pt）
-                RoundedRectangle(
-                    cornerRadius: size.cornerRadius - 0.5,
-                    style: .continuous
-                )
-                .strokeBorder(
-                    Color.white.opacity(variant == .neutral ? 0.07 : 0.16),
-                    lineWidth: 0.5
-                )
-                .padding(.horizontal, 4)
-                .padding(.top, 1.5)
-                .allowsHitTesting(false)
+                if isEnabled {
+                    // 顶部白色高光（0.5 pt）
+                    RoundedRectangle(
+                        cornerRadius: size.cornerRadius - 0.5,
+                        style: .continuous
+                    )
+                    .strokeBorder(
+                        Color.white.opacity(variant == .neutral ? 0.07 : 0.16),
+                        lineWidth: 0.5
+                    )
+                    .padding(.horizontal, 4)
+                    .padding(.top, 1.5)
+                    .allowsHitTesting(false)
+                }
             }
             .scaleEffect(isPressed && isEnabled ? 0.985 : 1)
-            .opacity(isEnabled ? 1 : DS.Opacity.disabledControl)
             .contentShape(RoundedRectangle(cornerRadius: DS.Radius.controlRegular, style: .continuous))
             .onHover { hovering in
                 withAnimation(reduceMotion ? nil : .easeOut(duration: DS.Motion.hover)) {

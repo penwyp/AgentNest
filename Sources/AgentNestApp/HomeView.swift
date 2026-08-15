@@ -79,9 +79,45 @@ enum HomeProductStyle {
     /// 官方品牌色（模板渲染用）；单色品牌（Codex / Cursor）返回 nil → 自适应主色。
     static func brandColor(for productID: String) -> Color? {
         switch productID {
-        case "anthropic.claude-code": return Color(red: 0xD9 / 255, green: 0x77 / 255, blue: 0x57 / 255)
-        case "bytedance.trae": return Color(red: 0x32 / 255, green: 0xF0 / 255, blue: 0x8C / 255)
-        default: return nil
+        case "anthropic.claude-code", "anthropic.claude-desktop":
+            return Color(red: 0xD9 / 255, green: 0x77 / 255, blue: 0x57 / 255)
+        case "bytedance.trae":
+            return Color(red: 0x32 / 255, green: 0xF0 / 255, blue: 0x8C / 255)
+        default:
+            return nil
+        }
+    }
+
+    private static let monograms: [String: String] = [
+        "aider.aider": "A",
+        "openai.chatgpt-desktop": "GPT",
+        "google.gemini-cli": "G",
+        "xai.grok": "G",
+        "opencode.opencode": "OC",
+        "inflection.pi": "π",
+    ]
+
+    /// 无官方图标时的产品缩写，避免使用随机 SF Symbol 造成品牌误导。
+    static func monogram(for productID: String) -> String {
+        if let value = monograms[productID] { return value }
+        let suffix = productID.split(separator: ".").last.map(String.init) ?? productID
+        return String(suffix.prefix(2)).uppercased()
+    }
+
+    /// 无官方图标时的品牌色调；优先品牌色，未知产品才退回散列色。
+    static func monogramTint(for productID: String) -> Color {
+        if productID.hasPrefix("openai.") {
+            return Color(red: 0x10 / 255, green: 0xA3 / 255, blue: 0x7F / 255)
+        }
+        if productID.hasPrefix("google.") {
+            return Color(red: 0x42 / 255, green: 0x85 / 255, blue: 0xF4 / 255)
+        }
+        switch productID {
+        case "xai.grok": return Color.primary
+        case "inflection.pi": return DS.Chroma.indigo
+        case "opencode.opencode": return DS.Chroma.teal
+        case "aider.aider": return DS.Chroma.amber
+        default: return color(for: productID)
         }
     }
 
@@ -106,7 +142,7 @@ enum HomeProductStyle {
     }
 }
 
-/// 官方品牌图标：模板 + 品牌色/自适应主色；WorkBuddy 以原色渲染；无资源时回退 SF Symbol。
+/// 官方品牌图标：模板 + 品牌色/自适应主色；WorkBuddy 以原色渲染；无资源时回退品牌缩写标。
 struct HomeBrandIcon: View {
     let productID: String
     var size: CGFloat = 24
@@ -122,13 +158,42 @@ struct HomeBrandIcon: View {
                     .scaledToFit()
                     .frame(width: size, height: size)
             } else {
-                Image(systemName: HomeProductStyle.symbol(for: productID))
-                    .font(.system(size: size * 0.62, weight: .semibold))
-                    .foregroundStyle(HomeProductStyle.color(for: productID))
-                    .frame(width: size, height: size)
+                HomeMonogramIcon(productID: productID, size: size)
             }
         }
         .accessibilityHidden(true)
+    }
+}
+
+/// 无官方资源时的品牌缩写标：圆角底 + 品牌色文字，比随机 SF Symbol 更准确、更克制。
+private struct HomeMonogramIcon: View {
+    let productID: String
+    var size: CGFloat = 24
+
+    private var tint: Color {
+        HomeProductStyle.monogramTint(for: productID)
+    }
+
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: size * 0.28, style: .continuous)
+                .fill(
+                    LinearGradient(
+                        colors: [tint.opacity(0.20), tint.opacity(0.06)],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+            RoundedRectangle(cornerRadius: size * 0.28, style: .continuous)
+                .strokeBorder(tint.opacity(0.30), lineWidth: DS.Stroke.hairline)
+            Text(HomeProductStyle.monogram(for: productID))
+                .font(.system(size: size * 0.36, weight: .bold, design: .rounded))
+                .foregroundStyle(tint)
+                .lineLimit(1)
+                .minimumScaleFactor(0.55)
+                .padding(2)
+        }
+        .frame(width: size, height: size)
     }
 }
 

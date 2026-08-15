@@ -29,6 +29,9 @@ struct MarketView: View {
     @State private var section: MarketSection = .agents
     @State private var searchText = ""
     @State private var copiedItemID: String?
+    @State private var hoveredSection: MarketSection?
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var summary: String {
         model.localized(
@@ -51,7 +54,6 @@ struct MarketView: View {
         .safeAreaInset(edge: .top, spacing: 0) {
             marketHeader
         }
-        .animation(.easeInOut(duration: DS.Motion.state), value: section)
     }
 
     @ViewBuilder
@@ -99,63 +101,90 @@ struct MarketView: View {
         .background(Color(nsColor: DS.Neutral.canvas))
     }
 
-    /// 业界目录型市场常用的 segmented filter：图标 + 标题 + 数量，选中态为抬升胶囊。
+    /// 业界目录型市场常用的 segmented filter：选中项为实心 accent，未选中项为高对比文字；
+    /// 浅色/深色外观下均保持清晰边界，并带 hover 反馈。
     private var marketSectionPicker: some View {
         HStack(spacing: DS.Space.x100) {
             ForEach(MarketSection.allCases) { item in
+                let isSelected = section == item
                 Button {
-                    withAnimation(.easeInOut(duration: DS.Motion.state)) {
+                    withAnimation(reduceMotion ? nil : .easeOut(duration: DS.Motion.press)) {
                         section = item
                         searchText = ""
                     }
                 } label: {
-                    HStack(spacing: DS.Space.x200) {
-                        Image(systemName: item.systemImage)
-                            .font(.system(size: 12, weight: .semibold))
-                        Text(model.localized(item.rawValue))
-                            .font(DS.Typeface.body.weight(.semibold))
-                        Text("\(count(for: item))")
-                            .font(DS.Typeface.micro.monospacedDigit())
-                            .foregroundStyle(section == item ? DS.Semantic.accentPrimary : Color.secondary)
-                            .padding(.horizontal, DS.Space.x150)
-                            .padding(.vertical, 1)
-                            .background(
-                                Capsule(style: .continuous)
-                                    .fill(Color.primary.opacity(DS.Opacity.fillQuiet))
-                            )
-                    }
-                    .foregroundStyle(section == item ? DS.Semantic.accentPrimary : Color.secondary)
-                    .padding(.horizontal, DS.Space.x300)
-                    .frame(height: 34)
-                    .background {
-                        if section == item {
-                            RoundedRectangle(cornerRadius: DS.Radius.controlCompact, style: .continuous)
-                                .fill(Color(nsColor: DS.Neutral.raised))
-                        }
-                    }
-                    .overlay(
-                        RoundedRectangle(cornerRadius: DS.Radius.controlCompact, style: .continuous)
-                            .strokeBorder(
-                                section == item
-                                    ? DS.Semantic.accentPrimary.opacity(0.30)
-                                    : Color.clear,
-                                lineWidth: DS.Stroke.surface
-                            )
-                    )
-                    .contentShape(RoundedRectangle(cornerRadius: DS.Radius.controlCompact, style: .continuous))
+                    marketSectionLabel(item, isSelected: isSelected)
                 }
                 .buttonStyle(.plain)
+                .onHover { hovering in
+                    withAnimation(reduceMotion ? nil : .easeOut(duration: DS.Motion.hover)) {
+                        hoveredSection = hovering ? item : nil
+                    }
+                }
             }
         }
         .padding(DS.Space.x100)
         .background(
             RoundedRectangle(cornerRadius: DS.Radius.controlRegular, style: .continuous)
-                .fill(Color(nsColor: DS.Neutral.recessed))
+                .fill(Color(nsColor: .controlBackgroundColor).opacity(colorScheme == .dark ? 0.62 : 0.82))
         )
         .overlay(
             RoundedRectangle(cornerRadius: DS.Radius.controlRegular, style: .continuous)
-                .strokeBorder(Color.primary.opacity(DS.Opacity.borderQuiet), lineWidth: DS.Stroke.hairline)
+                .strokeBorder(Color.primary.opacity(0.16), lineWidth: 1)
         )
+    }
+
+    private func marketSectionLabel(_ item: MarketSection, isSelected: Bool) -> some View {
+        HStack(spacing: DS.Space.x200) {
+            Image(systemName: item.systemImage)
+                .font(.system(size: 12, weight: .semibold))
+            Text(model.localized(item.rawValue))
+                .font(DS.Typeface.body.weight(.semibold))
+            marketSectionCount(item, isSelected: isSelected)
+        }
+        .foregroundStyle(isSelected ? Color.white : Color.primary)
+        .padding(.horizontal, DS.Space.x300)
+        .frame(height: 34)
+        .background {
+            RoundedRectangle(cornerRadius: DS.Radius.controlCompact, style: .continuous)
+                .fill(marketSectionBackground(item, isSelected: isSelected))
+        }
+        .overlay(
+            RoundedRectangle(cornerRadius: DS.Radius.controlCompact, style: .continuous)
+                .strokeBorder(
+                    isSelected ? Color.white.opacity(0.22) : Color.clear,
+                    lineWidth: DS.Stroke.surface
+                )
+        )
+        .shadow(
+            color: isSelected ? DS.Semantic.accentPrimary.opacity(0.28) : Color.clear,
+            radius: 5,
+            y: 1
+        )
+        .contentShape(RoundedRectangle(cornerRadius: DS.Radius.controlCompact, style: .continuous))
+    }
+
+    private func marketSectionCount(_ item: MarketSection, isSelected: Bool) -> some View {
+        Text("\(count(for: item))")
+            .font(DS.Typeface.micro)
+            .monospacedDigit()
+            .foregroundStyle(isSelected ? Color.white.opacity(0.86) : Color.secondary)
+            .padding(.horizontal, DS.Space.x150)
+            .padding(.vertical, 1)
+            .background(
+                Capsule(style: .continuous)
+                    .fill(
+                        isSelected
+                            ? Color.white.opacity(0.18)
+                            : Color.primary.opacity(DS.Opacity.fillQuiet)
+                    )
+            )
+    }
+
+    private func marketSectionBackground(_ item: MarketSection, isSelected: Bool) -> Color {
+        if isSelected { return DS.Semantic.accentPrimary }
+        if hoveredSection == item { return Color.primary.opacity(0.07) }
+        return Color.clear
     }
 
     private var marketSearchField: some View {
@@ -308,7 +337,7 @@ private struct AgentMarketCard: View {
     }
 
     var body: some View {
-        DSCard(padding: DS.Space.x400) {
+        MarketHoverCard {
             VStack(alignment: .leading, spacing: DS.Space.x300) {
                 HStack(alignment: .top, spacing: DS.Space.x300) {
                     HomeBrandIcon(productID: definition.id, size: 32)
@@ -382,7 +411,10 @@ private struct AgentMarketCard: View {
                     .disabled(model.isAnyMarketInstallRunning || !model.allows(.install))
             } else {
                 Button { model.startMarketInstall(definition.id) } label: {
-                    Label(model.localized("安装"), systemImage: "arrow.down.circle")
+                    Label(
+                        model.localized("安装"),
+                        systemImage: model.allows(.install) ? "arrow.down.circle" : "lock.fill"
+                    )
                 }
                 .buttonStyle(.dsAction(.accent, size: .compact))
                 .disabled(model.isAnyMarketInstallRunning || !model.allows(.install))
@@ -476,7 +508,7 @@ private struct SkillMarketCard: View {
     }
 
     var body: some View {
-        DSCard(padding: DS.Space.x400) {
+        MarketHoverCard {
             VStack(alignment: .leading, spacing: DS.Space.x300) {
                 HStack(alignment: .top, spacing: DS.Space.x300) {
                     MarketIconTile(symbol: MarketCategoryStyle.symbol(for: item.category), tint: tint)
@@ -615,7 +647,7 @@ private struct MCPServerMarketCard: View {
     }
 
     var body: some View {
-        DSCard(padding: DS.Space.x400) {
+        MarketHoverCard {
             VStack(alignment: .leading, spacing: DS.Space.x300) {
                 HStack(alignment: .top, spacing: DS.Space.x300) {
                     MarketIconTile(symbol: MarketCategoryStyle.symbol(for: item.category), tint: tint)
@@ -746,6 +778,78 @@ private struct MCPServerMarketCard: View {
 }
 
 // MARK: - 市场卡共用视觉
+
+/// 市场卡统一容器：与 Agent 档案卡一致的 hover 上浮、accent 描边与柔光反馈。
+private struct MarketHoverCard<Content: View>: View {
+    @ViewBuilder var content: Content
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.controlActiveState) private var controlActiveState
+    @Environment(\.colorScheme) private var colorScheme
+    @State private var isHovering = false
+
+    private var isActiveHovering: Bool {
+        isHovering && controlActiveState != .inactive
+    }
+
+    var body: some View {
+        content
+            .padding(DS.Space.x400)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background {
+                ZStack {
+                    RoundedRectangle(cornerRadius: DS.Radius.panel, style: .continuous)
+                        .fill(Color(nsColor: DS.Neutral.raised))
+                    RoundedRectangle(cornerRadius: DS.Radius.panel, style: .continuous)
+                        .fill(
+                            LinearGradient(
+                                colors: [
+                                    Color.white.opacity(colorScheme == .dark ? 0.05 : 0.58),
+                                    Color.clear,
+                                    Color.black.opacity(0.02),
+                                ],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                    RoundedRectangle(cornerRadius: DS.Radius.panel, style: .continuous)
+                        .fill(
+                            LinearGradient(
+                                colors: [
+                                    DS.Semantic.accentPrimary.opacity(isActiveHovering ? 0.09 : 0.03),
+                                    Color.clear,
+                                ],
+                                startPoint: .top,
+                                endPoint: .center
+                            )
+                        )
+                }
+            }
+            .overlay(
+                RoundedRectangle(cornerRadius: DS.Radius.panel, style: .continuous)
+                    .strokeBorder(
+                        isActiveHovering
+                            ? DS.Semantic.accentPrimary.opacity(0.78)
+                            : Color.primary.opacity(DS.Opacity.borderStandard),
+                        lineWidth: isActiveHovering ? 1.25 : DS.Stroke.surface
+                    )
+            )
+            .shadow(
+                color: isActiveHovering
+                    ? DS.Semantic.accentPrimary.opacity(0.18)
+                    : Color.black.opacity(0.06),
+                radius: isActiveHovering ? 11 : 4,
+                y: isActiveHovering ? 5 : 1
+            )
+            .offset(y: isActiveHovering ? -2.5 : 0)
+            .contentShape(RoundedRectangle(cornerRadius: DS.Radius.panel, style: .continuous))
+            .onHover { hovering in
+                withAnimation(reduceMotion ? nil : .easeOut(duration: DS.Motion.hover)) {
+                    isHovering = hovering
+                }
+            }
+            .animation(reduceMotion ? nil : .easeOut(duration: DS.Motion.hover), value: isActiveHovering)
+    }
+}
 
 private struct MarketIconTile: View {
     let symbol: String
