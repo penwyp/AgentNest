@@ -90,6 +90,8 @@ enum DS {
         static let agentCardColumnMaxWidth: CGFloat = 460
         /// 市场页内容列最大宽度（三类市场共用）。
         static let marketPageMaxWidth: CGFloat = 1_160
+        /// 市场页搜索栏宽度（与分段控件同行的右侧搜索区）。
+        static let marketSearchWidth: CGFloat = 300
         /// Agent 档案卡类别空间构成条高度。
         static let agentStorageBarHeight: CGFloat = 6
         /// Agent 页搜索栏高度（宽度跟随页面内容列，避免固定窄栏造成左重右轻）。

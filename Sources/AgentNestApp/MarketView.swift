@@ -76,7 +76,7 @@ struct MarketView: View {
         }
     }
 
-    /// 固定页头：页面身份 + 市场分段控件 + 搜索栏，共用市场内容列宽。
+    /// 固定页头：页面身份在上，分段控件与搜索栏同处一行；tab 栏保持紧凑宽度。
     private var marketHeader: some View {
         VStack(alignment: .leading, spacing: DS.Space.x300) {
             DSPageIdentity(
@@ -86,8 +86,11 @@ struct MarketView: View {
             ) {
                 EmptyView()
             }
-            marketSectionPicker
-            marketSearchField
+            HStack(alignment: .center, spacing: DS.Space.x300) {
+                marketSectionPicker
+                Spacer(minLength: DS.Space.x250)
+                marketSearchField
+            }
         }
         .padding(.horizontal, DS.Layout.pageHorizontalInset)
         .padding(.vertical, DS.Space.x300)
@@ -145,7 +148,6 @@ struct MarketView: View {
             }
         }
         .padding(DS.Space.x100)
-        .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: DS.Radius.controlRegular, style: .continuous)
                 .fill(Color(nsColor: DS.Neutral.recessed))
@@ -179,8 +181,7 @@ struct MarketView: View {
             }
         }
         .padding(.horizontal, DS.Space.x250)
-        .frame(height: DS.Layout.agentSearchHeight)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(width: DS.Layout.marketSearchWidth, height: DS.Layout.agentSearchHeight)
         .background(
             RoundedRectangle(cornerRadius: DS.Radius.controlCompact, style: .continuous)
                 .fill(Color(nsColor: .controlBackgroundColor).opacity(0.62))
@@ -189,7 +190,6 @@ struct MarketView: View {
             RoundedRectangle(cornerRadius: DS.Radius.controlCompact, style: .continuous)
                 .strokeBorder(Color.primary.opacity(DS.Opacity.borderQuiet), lineWidth: DS.Stroke.hairline)
         )
-        .padding(.leading, DS.Layout.pageIdentityContentInset)
     }
 
     private var searchPlaceholder: String {
@@ -242,9 +242,6 @@ private struct AgentMarketCatalogView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: DS.Space.x300) {
-            if !model.allows(.install) {
-                licenseBanner
-            }
             if hasCompletedInstall {
                 completedBanner
             }
@@ -261,14 +258,6 @@ private struct AgentMarketCatalogView: View {
                     }
                 }
             }
-        }
-    }
-
-    private var licenseBanner: some View {
-        DSRecessed {
-            Label(model.localized("当前授权不包含安装能力，可浏览目录。"), systemImage: "lock.shield")
-                .font(DS.Typeface.body)
-                .foregroundStyle(.secondary)
         }
     }
 
@@ -358,6 +347,13 @@ private struct AgentMarketCard: View {
                                 .lineLimit(1)
                                 .truncationMode(.middle)
                         }
+                        Button {
+                            NSWorkspace.shared.open(link)
+                        } label: {
+                            Label(model.localized("打开主页"), systemImage: "arrow.up.right.square")
+                        }
+                        .buttonStyle(.dsAction(size: .compact))
+                        .accessibilityHint(model.localized("打开主页"))
                     }
                 }
 
