@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "id": "cursor.cursor-cli",
+  "displayName": "Cursor (CLI)",
+  "homeDiscovery": {
+    "defaultPaths": [],
+    "environmentVariables": []
+  },
+  "fingerprints": {
+    "required": [],
+    "optional": [],
+    "negative": []
+  },
+  "skills": [],
+  "artifacts": [],
+  "capabilities": {
+    "space": false,
+    "skills": false,
+    "activity": false,
+    "cleanup": false
+  },
+  "marketplace": {
+    "summary": "Cursor's terminal coding agent.",
+    "homepageURL": "https://cursor.com",
+    "install": {
+      "kind": "brew",
+      "formula": "cursor"
+    }
+  }
+}

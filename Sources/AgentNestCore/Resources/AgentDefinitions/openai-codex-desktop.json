@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "id": "openai.codex-desktop",
+  "displayName": "Codex (Desktop)",
+  "homeDiscovery": {
+    "defaultPaths": [],
+    "environmentVariables": []
+  },
+  "fingerprints": {
+    "required": [],
+    "optional": [],
+    "negative": []
+  },
+  "skills": [],
+  "artifacts": [],
+  "capabilities": {
+    "space": false,
+    "skills": false,
+    "activity": false,
+    "cleanup": false
+  },
+  "marketplace": {
+    "summary": "OpenAI's Codex IDE.",
+    "homepageURL": "https://codex.com"
+  }
+}

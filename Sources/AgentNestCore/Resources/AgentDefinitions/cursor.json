@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "cursor.cursor",
-  "displayName": "Cursor",
+  "displayName": "Cursor (Desktop)",
   "homeDiscovery": {
     "defaultPaths": [
       "~/.cursor"

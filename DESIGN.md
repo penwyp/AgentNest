@@ -325,11 +325,12 @@ Agent 页以「档案卡」呈现每个 Agent Home（自适应网格 `agent.card
 
 ### 5.10 Agent 市场（Marketplace）
 
-Agent 页身份区右侧主操作「Agent 市场」（accent 大按钮 + sparkles，`install` 授权特性不足时禁用并给出说明）打开市场面板（sheet，最小 880×640）：
+Agent 页身份区右侧主操作「Agent 市场」（accent 大按钮 + sparkles，**浏览始终可用**；安装动作受 `install` 授权门禁——授权不足时面板顶部显示提示条、安装按钮禁用）打开市场面板（sheet，最小 880×640）：
 
-- **面板结构**（`AgentMarketSheet`）：`NavigationStack` + 标题「Agent 市场」+ 取消关闭；滚动区为自适应网格（min 380 / max 460，920 内双列）的目录产品卡；安装完成时顶部出现 recessed 提示条（「已安装的 Agent 会在下次扫描后纳入环境。」+「重新扫描」按钮 → 关闭面板并触发真实扫描）。
-- **产品卡**（`AgentMarketCard`，`DSCard`）：官方品牌图标 32 pt + 名称（`type.section`）+ 简介（`type.caption` secondary，来自目录 `marketplace.summary`）+ 右上状态——已安装 → 绿色「已安装」徽章；未安装且无安装方式 → 「暂无安装方式」caption；未安装 → accent「安装」按钮（`install` 特性不足或已有安装进行中时禁用）；安装中 → 「取消」+ recessed 输出区（spinner + 阶段文案 + 输出尾部 3 行，`type.data` 等宽可选中）；失败 → 「重试」+ 错误行。卡内下方为安装方式徽章（brew / cask）与主页链接。
-- **目录数据**：`AgentDefinition.marketplace`（可选字段：`summary`、`homepageURL`、`install { kind: brew|cask, formula }`），catalog 校验白名单同步；市场列出全部目录产品（含未参与扫描的产品），按名称排序。
+- **面板结构**（`AgentMarketSheet`）：`NavigationStack` + 标题「Agent 市场」+ 取消关闭；滚动区为自适应网格（min 380 / max 460，920 内双列）的目录产品卡；授权不含 `install` 时顶部 recessed 提示条「当前授权不包含安装能力，可浏览目录。」；安装完成时顶部出现 recessed 提示条（「已安装的 Agent 会在下次扫描后纳入环境。」+「重新扫描」按钮 → 关闭面板并触发真实扫描）。
+- **产品卡**（`AgentMarketCard`，`DSCard`）：官方品牌图标 32 pt + 名称（`type.section`）+ 简介（`type.caption` secondary，来自目录 `marketplace.summary`）+ 右上状态——已安装 → 绿色「已安装」徽章（`AppModel.installedMarketProductIDs` 持久化，重启后仍生效，覆盖无扫描规则的市场条目）；未安装且无安装方式 → 「暂无安装方式」caption；未安装 → accent「安装」按钮（`install` 特性不足或已有安装进行中时禁用）；安装中 → 「取消」+ recessed 输出区（spinner + 阶段文案 + 输出尾部 3 行，`type.data` 等宽可选中）；失败 → 「重试」+ 错误行。卡内下方为安装方式徽章（brew / cask）与主页链接。
+- **目录数据**：`AgentDefinition.marketplace`（可选字段：`summary`、`homepageURL`、`install { kind: brew|cask, formula }`），catalog 校验白名单同步；市场列出全部目录产品（含未参与扫描的产品），按名称排序。当前目录 14 个产品：Claude Code (CLI)/(Desktop)、Codex (CLI)/(Desktop)、Cursor (CLI)/(Desktop)、Trae、Grok、Pi、Gemini CLI、OpenCode、Aider、ChatGPT (Desktop)、WorkBuddy；其中 Grok / Pi / Codex (Desktop) 无可验证安装方式 → 「暂无安装方式」+ 主页链接（brew 的 `grok` 公式是 Logstash 库，不可误用）。
+- **授权刷新**：应用启动且持有有效授权时强制刷新一次授权（`refreshLicenseNow(force: true)`），服务端特性表更新后无需等待 `refreshAfter` 周期即生效；离线时保持缓存授权不降级。
 - **安装执行**（`InstallAgentRunner`，Core/Application）：真实调用 Homebrew（`brew install [--cask] <formula>`），输出逐行流式发布（0.25 s 节流、尾部 6 行）、支持取消（terminate）、结构化失败（brewNotFound / exited(code)）；同步阻塞式、必须在后台线程调用（`Task.detached(.utility)` 隔离）；事件经主线程发布到 `AppModel.marketInstallations`。不伪造任何状态。
 - **授权**：`LicenseFeature.install`；服务端付费策略默认特征表同步包含 `install`。
 

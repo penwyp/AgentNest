@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "id": "anthropic.claude-desktop",
+  "displayName": "Claude Code (Desktop)",
+  "homeDiscovery": {
+    "defaultPaths": [
+      "~/Library/Application Support/Claude"
+    ],
+    "environmentVariables": []
+  },
+  "fingerprints": {
+    "required": [],
+    "optional": [],
+    "negative": []
+  },
+  "skills": [],
+  "artifacts": [],
+  "capabilities": {
+    "space": true,
+    "skills": false,
+    "activity": false,
+    "cleanup": false
+  },
+  "marketplace": {
+    "summary": "Anthropic's Claude desktop app for macOS.",
+    "homepageURL": "https://claude.com/download",
+    "install": {
+      "kind": "cask",
+      "formula": "claude"
+    }
+  }
+}

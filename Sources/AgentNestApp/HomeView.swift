@@ -22,6 +22,16 @@ enum HomeProductStyle {
         "cursor.cursor": "cursorarrow.click",
         "bytedance.trae": "chevron.left.forwardslash.chevron.right",
         "workbuddy": "hammer",
+        // 市场新增产品（无官方图标资源时回退 SF Symbol + 散列色相）。
+        "anthropic.claude-desktop": "quote.bubble",
+        "openai.codex-desktop": "sparkles",
+        "cursor.cursor-cli": "cursorarrow.click",
+        "xai.grok": "bolt.fill",
+        "inflection.pi": "function",
+        "google.gemini-cli": "sparkle",
+        "opencode.opencode": "command",
+        "aider.aider": "wand.and.stars",
+        "openai.chatgpt-desktop": "bubble.left.and.bubble.right",
     ]
 
     private static var brandImageCache: [String: NSImage] = [:]
@@ -34,6 +44,10 @@ enum HomeProductStyle {
         "cursor.cursor": "cursor",
         "bytedance.trae": "trae",
         "workbuddy": "workbuddy",
+        // 同品牌 CLI/Desktop 变体复用官方图标。
+        "anthropic.claude-desktop": "claude-code",
+        "openai.codex-desktop": "codex",
+        "cursor.cursor-cli": "cursor",
     ]
 
     /// AgentNestCore 资源包（裸可执行文件与 .app 两种布局都兼容）。
