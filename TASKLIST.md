@@ -76,7 +76,7 @@
 - [x] 客户端固定公钥验签并校验 schema/产品/设备/功能/时间/版本，本地启动不等待网络。
 - [x] Receipt 同目录原子替换、0600、排除备份；License/refresh credential 进入 Keychain。
 - [x] 激活、刷新、停用、后台单飞、离线窗口、服务故障/授权无效状态分离、jitter 指数退避、网络恢复与显式重试已实现。
-- [x] 试用只开放扫描与概要；写 Skill、补齐、清理、追踪、历史和导出由功能集统一门控。
+- [x] 试用开放扫描、概要、写 Skill 与补齐；清理、追踪、历史和导出由功能集统一门控。
 - [x] 支付 webhook HMAC 验签、幂等落盘；购买/续费/退款/拒付/撤销收敛到授权状态。
 - [x] E2E 覆盖试用持久、激活、Receipt 过期/防重放/篡改/跨设备、设备超限/停用释放、服务断开时本地验签及管理端撤销。
 - [!] 接入正式 Keygen Cloud、支付平台、HSM/签名密钥轮换与支持后台（需要账号、区域、Policy 和 Secret）。
@@ -124,3 +124,5 @@
 | 2026-08-04 | `make check` | 通过 | 格式/资源 lint + release `.app`/CLI/服务端 + 79 项 Swift 检查 + Go race + 扩展 E2E |
 | 2026-08-04 | `make build-universal` | 通过 | App、CLI 与 Sparkle.framework 均验证为 arm64+x86_64，App rpath 已校验 |
 | 2026-08-05 | `make check` | 通过 | 新增 Codex 会话 family/缓存根清理、日期与大小过滤、批量预览、官方删除复验、逐项结果与受影响 Home 重扫；release、Swift/Go race、i18n 和 E2E 全部通过 |
+| 2026-08-15 | `make check` | 通过 | Skill 管理页重构：覆盖矩阵（横向滚动+最小列宽+状态徽标）、补齐向导（选源→目标 ALL/指定 Agent+Home→强制覆盖 replace、旧版移入废纸篓）、无效安装可删除+诊断展示、删除整个逻辑 Skill、补齐/删除结果横幅；新增 45 个本地化 key，i18n、release、Swift/Go 测试、E2E 全部通过 |
+| 2026-08-15 | `make check` | 通过 | 体验版开放 Skill 功能（服务端 trial policy 加入 skill.write/patch）；冲突解决弹窗（同 Home 多版本选保留+移除其它）；操作命名"补齐"→"同步"；名称悬停预览描述（截断保护）；i18n、release、Swift/Go 测试、E2E 全部通过 |
