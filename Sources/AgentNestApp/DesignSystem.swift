@@ -600,8 +600,12 @@ struct DSPrimaryActionButtonStyle: ButtonStyle {
 
     private var isDark: Bool { colorScheme == .dark }
 
+    private var isWindowActive: Bool {
+        controlActiveState != .inactive
+    }
+
     private var isActiveHovering: Bool {
-        isHovering && controlActiveState == .active
+        isHovering && isWindowActive
     }
 
     private var baseTint: Color {
@@ -609,7 +613,7 @@ struct DSPrimaryActionButtonStyle: ButtonStyle {
     }
 
     private var hoverOverlay: Color {
-        isDark ? Color.white.opacity(0.10) : DS.Semantic.accentPrimary.opacity(0.15)
+        isDark ? Color.white.opacity(0.14) : DS.Semantic.accentPrimary.opacity(0.18)
     }
 
     private var pressOverlay: Color {
@@ -618,9 +622,9 @@ struct DSPrimaryActionButtonStyle: ButtonStyle {
 
     private var borderColor: Color {
         if isDark {
-            return DS.Chroma.blueLuminous.opacity(isActiveHovering ? 0.90 : 0.52)
+            return DS.Chroma.blueLuminous.opacity(isActiveHovering ? 0.95 : 0.52)
         }
-        return DS.Semantic.accentPrimary.opacity(isActiveHovering ? 0.75 : 0.42)
+        return DS.Semantic.accentPrimary.opacity(isActiveHovering ? 0.85 : 0.42)
     }
 
     private var shadowColor: Color {
@@ -629,12 +633,12 @@ struct DSPrimaryActionButtonStyle: ButtonStyle {
 
     private var glowColor: Color {
         isDark
-            ? DS.Chroma.blueLuminous.opacity(isActiveHovering ? 0.36 : 0)
-            : DS.Semantic.accentPrimary.opacity(isActiveHovering ? 0.32 : 0)
+            ? DS.Chroma.blueLuminous.opacity(isActiveHovering ? 0.50 : 0)
+            : DS.Semantic.accentPrimary.opacity(isActiveHovering ? 0.45 : 0)
     }
 
     func makeBody(configuration: Configuration) -> some View {
-        let isPressed = configuration.isPressed && controlActiveState == .active
+        let isPressed = configuration.isPressed && isWindowActive
         configuration.label
             .foregroundStyle(isDark ? Color.white : DS.Chroma.blueDeep)
             .labelStyle(DSPrimaryLabelStyle())
@@ -660,9 +664,9 @@ struct DSPrimaryActionButtonStyle: ButtonStyle {
                 RoundedRectangle(cornerRadius: DS.Radius.controlRegular, style: .continuous)
                     .strokeBorder(borderColor, lineWidth: 1)
             )
-            .shadow(color: glowColor, radius: isActiveHovering ? 12 : 0, y: 0)
+            .shadow(color: glowColor, radius: isActiveHovering ? 14 : 0, y: 0)
             .shadow(color: shadowColor, radius: 6, y: 2)
-            .scaleEffect(isPressed && isEnabled ? 0.98 : (isActiveHovering ? 1.02 : 1))
+            .scaleEffect(isPressed && isEnabled ? 0.98 : (isActiveHovering ? 1.025 : 1))
             .opacity(isEnabled ? 1 : DS.Opacity.disabledControl)
             .contentShape(RoundedRectangle(cornerRadius: DS.Radius.controlRegular, style: .continuous))
             .onHover { hovering in
@@ -671,7 +675,7 @@ struct DSPrimaryActionButtonStyle: ButtonStyle {
                 }
             }
             .onChange(of: controlActiveState) { _, state in
-                if state != .active { isHovering = false }
+                if state == .inactive { isHovering = false }
             }
             .animation(reduceMotion ? nil : .easeOut(duration: DS.Motion.press), value: isPressed)
     }
