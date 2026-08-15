@@ -27,8 +27,8 @@ AgentNest 的界面应当像一块安静的 macOS 原生仪器面板：
 | 约束 | 规则 |
 | --- | --- |
 | 材质 | **不透明表面**。禁止 `ultraThinMaterial`/`thickMaterial`/`regularMaterial` 叠加，禁止 `NSVisualEffectView` |
-| 阴影 | 最多 **1 层**浅投影（卡片），blur ≤ 4 pt，y 偏移 ≤ 2 pt；禁止双层/多色阴影 |
-| 渐变 | 仅允许顶部高光描边（0.6 pt）与图表面积填充；禁止大面积装饰渐变 |
+| 阴影 | 最多 **1 层**浅投影：卡片 blur ≤ 4 pt / y ≤ 2 pt，页面主 CTA（§7.4）blur ≤ 6 pt / y ≤ 2 pt；禁止双层/多色阴影 |
+| 渐变 | 仅允许顶部高光描边（0.6 pt）与图表面积填充；禁止大面积装饰渐变。登记的例外（各 1 处、静态、单层）：激活门户 `DSHeroWash`（§5.7）与页面主 CTA `dsPrimary` 填充渐变（§7.4） |
 | 动效 | 只在 hover / press / state 切换时发生，时长 ≤ 0.40 s；**禁止循环、脉冲、持续动画**。唯一例外：扫描进行态的进度指示（`DSIndeterminateScanBar`：2 pt 扫描条 30 fps 节流、扫描结束即移除、Reduce Motion 静态化；底部栏每秒计时），与 §5.7 `DSHeroWash` 同级登记 |
 | 滚动 | 列表 / 表单使用原生 `List` / `Form` / `ScrollView`，不自定义滚动容器 |
 | 图表 | 使用单一 `Path` 或少量 `Shape` 绘制；禁止每帧重建大量视图层级 |
@@ -80,6 +80,8 @@ AgentNest 的界面应当像一块安静的 macOS 原生仪器面板：
 | Token | sRGB | 用途 |
 | --- | --- | --- |
 | `color.blue.500` | `#4D759E` `(0.30, 0.46, 0.62)` | **主强调**：导航选中、主按钮、主数值 |
+| `color.blue.luminous` | `#6694BD` `(0.40, 0.58, 0.74)` | 页面主 CTA 渐变亮端（§7.4） |
+| `color.blue.deep` | `#3D618C` `(0.24, 0.38, 0.55)` | 页面主 CTA 渐变深端 / 深色模式 CTA 文字（§7.4） |
 | `color.cyan.500` | `#4799A6` `(0.28, 0.60, 0.65)` | 方向 A（下载/读取类语义） |
 | `color.amber.500` | `#BF782E` `(0.75, 0.47, 0.18)` | 方向 B / 警示（疑似、陈旧） |
 | `color.graphite.500` | `#85919E` `(0.52, 0.57, 0.62)` | 中性对比（其它进程、缺失） |
@@ -423,6 +425,22 @@ hover 在指针离开或窗口失活时清除；pressed 不叠加 hover；focus 
 
 `type.micro` Medium，`radius.small`（Capsule）；未填充态用 `color.opacity.fill.subtle` 底色 + 同色 0.24 描边；填充态（`filled`）用实色底 + 白字。用于状态短词：已确认（positive）、疑似（caution）、Agent（positive filled）、macOS 与其它进程（secondary）。
 
+### 7.4 Primary Action（页面主 CTA，DSPrimaryActionButtonStyle + DSPrimaryLabelStyle）
+
+首页「扫描」与 Agent 页「Agent 市场」等一级 CTA 的专属「辉光质感」材料——与常规 flat accent 按钮在材质与配色上明确区分，是页面最高对比元素：
+
+| Token | 值 |
+| --- | --- |
+| primary.action.height | 44 pt |
+| primary.action.inset.horizontal | 18 pt |
+| primary.action.title | 13 pt Semibold，负字距 −0.1 |
+
+- **材料（随外观切换，单层渐变，§2 登记例外）**：深色外观 = 白色玻璃渐变（白 0.97 → 0.86）+ color.blue.deep 文字 + accent 图标，深色画布上的最高对比 CTA；浅色外观 = 发光蓝渐变（color.blue.luminous → color.blue.deep）+ 白色文字/图标。
+- **边缘与深度**：轮廓白 0.34（深）/ 0.26（浅），stroke.hairline；顶部玻璃高光 1 pt（深 0.85 / 浅 0.40，内缩 6 pt）；**单层投影**黑 0.26、blur 6、y 2（§2 阴影条款的 CTA 特例）。
+- **状态配方**：hover 叠加白 0.07、press 叠加黑 0.10 + 缩放 0.985；disabled 整体 × opacity.disabled.control；动效 motion.hover / motion.press，尊重 Reduce Motion；hover 在窗口失活时清除。
+- 无键帽提示与快捷键展示；无材质、无多层阴影、无循环动效。
+
+
 ---
 
 ## 8. 图表语言
@@ -559,7 +577,8 @@ hover 在指针离开或窗口失活时清除；pressed 不叠加 hover；focus 
 | Card | `DSCard` | Activation 卡片 |
 | Card 按钮 | `DSCardButtonStyle` | 首页管理入口卡 |
 | Recessed | `DSRecessed` | 进度容器（HomeView） |
-| Action Button | `DSActionButtonStyle`（`.dsAction(_:size:)`） | 扫描、激活、清理、设置 |
+| Action Button | `DSActionButtonStyle`（`.dsAction(_:size:)`） | 扫描（停止态）、激活、清理、设置 |
+| Primary Action | `DSPrimaryActionButtonStyle` + `DSPrimaryLabelStyle`（`.dsPrimary`） | 首页「扫描」、Agent 页「Agent 市场」一级 CTA（辉光质感渐变材料） |
 | Icon Button | `DSIconButtonStyle`（`.dsIcon`） | 预留（工具按钮） |
 | Badge | `DSBadge` | Agent 列表、进程行 |
 | 页面布局 / 图标尺寸 | `DS.Layout.*`、`DS.IconSize.*` | 首页、导航、状态行、激活门户 |

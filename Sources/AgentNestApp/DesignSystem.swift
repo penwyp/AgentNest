@@ -85,6 +85,9 @@ enum DS {
         static let agentStorageBarHeight: CGFloat = 4
         /// Agent 页搜索栏宽度。
         static let agentSearchWidth: CGFloat = 320
+        /// 页面主 CTA（dsPrimary）高度与水平内边距。
+        static let primaryActionHeight: CGFloat = 44
+        static let primaryActionHorizontalInset: CGFloat = 18
     }
 
     enum IconSize {
@@ -118,6 +121,8 @@ enum DS {
 
     enum Chroma {
         static let blue = Color(red: 0.30, green: 0.46, blue: 0.62)          // #4D759E 主强调
+        static let blueLuminous = Color(red: 0.40, green: 0.58, blue: 0.74)    // #6694BD 主 CTA 渐变亮端
+        static let blueDeep = Color(red: 0.24, green: 0.38, blue: 0.55)        // #3D618C 主 CTA 渐变深端
         static let cyan = Color(red: 0.28, green: 0.60, blue: 0.65)          // #4799A6 方向 A
         static let amber = Color(red: 0.75, green: 0.47, blue: 0.18)         // #BF782E 方向 B / 警示
         static let graphite = Color(red: 0.52, green: 0.57, blue: 0.62)      // #85919E 中性对比
@@ -556,6 +561,103 @@ extension ButtonStyle where Self == DSActionButtonStyle {
     static func dsAction(_ variant: DSActionButtonStyle.Variant = .neutral, size: DSActionButtonStyle.Size = .regular) -> DSActionButtonStyle {
         DSActionButtonStyle(variant: variant, size: size)
     }
+}
+
+/// 页面主操作标签样式（对应 DESIGN.md §7.4 primary.action）：
+/// 深色外观 = 图标 accent 蓝 + 标题深蓝（白色玻璃按钮上的配色）；浅色外观 = 图标/标题白色。
+struct DSPrimaryLabelStyle: LabelStyle {
+    @Environment(\.colorScheme) private var colorScheme
+
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(spacing: DS.Space.x200) {
+            configuration.icon
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(colorScheme == .dark ? DS.Semantic.accentPrimary : Color.white.opacity(0.95))
+            configuration.title
+                .font(.system(size: 13, weight: .semibold))
+                .tracking(-0.1)
+        }
+    }
+}
+
+/// 页面主操作按钮样式（对应 DESIGN.md §7.4 primary.action）——与常规 action 按钮明确区分的「辉光质感」材料：
+/// 深色外观：白色玻璃渐变（白 0.97 → 0.86）+ 深蓝文字 + accent 图标，是页面最高对比元素；
+/// 浅色外观：发光蓝渐变（blueLuminous → blueDeep）+ 白色文字；
+/// 44 pt 高度、顶部玻璃高光、单层深投影（黑 0.26，blur 6，y 2）——渐变填充为 DESIGN.md §2 登记的
+/// 第二个渐变例外（仅限 dsPrimary，与 DSHeroWash 同级）；hover/press 以白色/黑色覆盖层表达，无循环动效。
+struct DSPrimaryActionButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.controlActiveState) private var controlActiveState
+    @Environment(\.colorScheme) private var colorScheme
+    @State private var isHovering = false
+
+    private var isDark: Bool { colorScheme == .dark }
+
+    private var fill: LinearGradient {
+        if isDark {
+            return LinearGradient(
+                colors: [Color.white.opacity(0.97), Color.white.opacity(0.86)],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+        }
+        return LinearGradient(
+            colors: [DS.Chroma.blueLuminous, DS.Chroma.blueDeep],
+            startPoint: .top,
+            endPoint: .bottom
+        )
+    }
+
+    func makeBody(configuration: Configuration) -> some View {
+        let isPressed = configuration.isPressed && controlActiveState == .active
+        let isActiveHovering = isHovering && controlActiveState == .active
+        configuration.label
+            .foregroundStyle(isDark ? DS.Chroma.blueDeep : Color.white)
+            .labelStyle(DSPrimaryLabelStyle())
+            .padding(.horizontal, DS.Layout.primaryActionHorizontalInset)
+            .frame(minHeight: DS.Layout.primaryActionHeight)
+            .background(
+                RoundedRectangle(cornerRadius: DS.Radius.controlRegular, style: .continuous)
+                    .fill(fill)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: DS.Radius.controlRegular, style: .continuous)
+                    .fill(Color.white.opacity(isActiveHovering ? 0.07 : 0))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: DS.Radius.controlRegular, style: .continuous)
+                    .fill(Color.black.opacity(isPressed ? 0.10 : 0))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: DS.Radius.controlRegular, style: .continuous)
+                    .strokeBorder(Color.white.opacity(isDark ? 0.34 : 0.26), lineWidth: DS.Stroke.hairline)
+            )
+            .overlay(alignment: .top) {
+                RoundedRectangle(cornerRadius: DS.Radius.controlRegular - 0.5, style: .continuous)
+                    .strokeBorder(Color.white.opacity(isDark ? 0.85 : 0.40), lineWidth: 1)
+                    .padding(.horizontal, 6)
+                    .padding(.top, 1.5)
+                    .allowsHitTesting(false)
+            }
+            .shadow(color: Color.black.opacity(0.26), radius: 6, y: 2)
+            .scaleEffect(isPressed && isEnabled ? 0.985 : 1)
+            .opacity(isEnabled ? 1 : DS.Opacity.disabledControl)
+            .contentShape(RoundedRectangle(cornerRadius: DS.Radius.controlRegular, style: .continuous))
+            .onHover { hovering in
+                withAnimation(reduceMotion ? nil : .easeOut(duration: DS.Motion.hover)) {
+                    isHovering = hovering
+                }
+            }
+            .onChange(of: controlActiveState) { _, state in
+                if state != .active { isHovering = false }
+            }
+            .animation(reduceMotion ? nil : .easeOut(duration: DS.Motion.press), value: isPressed)
+    }
+}
+
+extension ButtonStyle where Self == DSPrimaryActionButtonStyle {
+    static var dsPrimary: DSPrimaryActionButtonStyle { DSPrimaryActionButtonStyle() }
 }
 
 /// 图标控制按钮（对应 DESIGN.md icon.control.frame.regular）
