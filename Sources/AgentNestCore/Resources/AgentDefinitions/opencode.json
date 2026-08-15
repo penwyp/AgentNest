@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "id": "opencode.opencode",
+  "displayName": "OpenCode",
+  "homeDiscovery": {
+    "defaultPaths": [
+      "~/.config/opencode"
+    ],
+    "environmentVariables": []
+  },
+  "fingerprints": {
+    "required": [],
+    "optional": [],
+    "negative": []
+  },
+  "skills": [],
+  "artifacts": [],
+  "capabilities": {
+    "space": true,
+    "skills": false,
+    "activity": false,
+    "cleanup": false
+  },
+  "marketplace": {
+    "summary": "The open source AI coding agent.",
+    "homepageURL": "https://opencode.ai",
+    "install": {
+      "kind": "brew",
+      "formula": "opencode"
+    }
+  }
+}

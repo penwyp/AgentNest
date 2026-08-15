@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "id": "aider.aider",
+  "displayName": "Aider",
+  "homeDiscovery": {
+    "defaultPaths": [],
+    "environmentVariables": []
+  },
+  "fingerprints": {
+    "required": [],
+    "optional": [],
+    "negative": []
+  },
+  "skills": [],
+  "artifacts": [],
+  "capabilities": {
+    "space": false,
+    "skills": false,
+    "activity": false,
+    "cleanup": false
+  },
+  "marketplace": {
+    "summary": "AI pair programming in your terminal.",
+    "homepageURL": "https://aider.chat",
+    "install": {
+      "kind": "brew",
+      "formula": "aider"
+    }
+  }
+}

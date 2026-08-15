@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "id": "inflection.pi",
+  "displayName": "Pi",
+  "homeDiscovery": {
+    "defaultPaths": [],
+    "environmentVariables": []
+  },
+  "fingerprints": {
+    "required": [],
+    "optional": [],
+    "negative": []
+  },
+  "skills": [],
+  "artifacts": [],
+  "capabilities": {
+    "space": false,
+    "skills": false,
+    "activity": false,
+    "cleanup": false
+  },
+  "marketplace": {
+    "summary": "Inflection's Pi agent.",
+    "homepageURL": "https://pi.com"
+  }
+}

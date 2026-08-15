@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "id": "openai.chatgpt-desktop",
+  "displayName": "ChatGPT (Desktop)",
+  "homeDiscovery": {
+    "defaultPaths": [],
+    "environmentVariables": []
+  },
+  "fingerprints": {
+    "required": [],
+    "optional": [],
+    "negative": []
+  },
+  "skills": [],
+  "artifacts": [],
+  "capabilities": {
+    "space": false,
+    "skills": false,
+    "activity": false,
+    "cleanup": false
+  },
+  "marketplace": {
+    "summary": "OpenAI's official ChatGPT desktop app.",
+    "homepageURL": "https://chatgpt.com",
+    "install": {
+      "kind": "cask",
+      "formula": "chatgpt"
+    }
+  }
+}

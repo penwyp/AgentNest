@@ -33,7 +33,8 @@ struct AgentNestCoreTestRunner {
 
     private static func testDefinitionCatalog() throws {
         let catalog = try AgentDefinitionCatalog.bundled()
-        try expect(catalog.definitions.count == 5, "bundled definition count")
+        // 5 个完整定义 + 9 个市场条目（CLI/Desktop 变体与扩展目录）。
+        try expect(catalog.definitions.count == 14, "bundled definition count")
         let codex = try unwrap(catalog.definitions.first { $0.id == "openai.codex" }, "Codex definition")
         try expect(
             codex.capabilities.cleanup &&
@@ -43,7 +44,11 @@ struct AgentNestCoreTestRunner {
         )
         try expect(
             Set(catalog.definitions.filter(\.participatesInScanning).map(\.id)) ==
-                ["anthropic.claude-code", "bytedance.trae", "cursor.cursor", "openai.codex"],
+                [
+                    "anthropic.claude-code", "anthropic.claude-desktop",
+                    "bytedance.trae", "cursor.cursor",
+                    "google.gemini-cli", "opencode.opencode", "openai.codex",
+                ],
             "all supported agents participate in scanning"
         )
         try expect(catalog.definitions.filter { !$0.participatesInScanning }.allSatisfy {

@@ -672,8 +672,6 @@ private struct AgentListView: View {
                 Label(model.localized("Agent 市场"), systemImage: "sparkles")
             }
             .buttonStyle(.dsAction(.accent, size: .large))
-            .disabled(!model.allows(.install))
-            .help(model.allows(.install) ? "" : model.localized("当前授权不包含 Agent 市场。"))
         }
         .padding(.horizontal, DS.Layout.pageHorizontalInset)
         .padding(.vertical, DS.Space.x300)
@@ -1025,6 +1023,9 @@ private struct AgentMarketSheet: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: DS.Space.x300) {
+                    if !model.allows(.install) {
+                        licenseBanner
+                    }
                     if hasCompletedInstall {
                         completedBanner
                     }
@@ -1052,6 +1053,15 @@ private struct AgentMarketSheet: View {
             }
         }
         .frame(minWidth: 880, minHeight: 640)
+    }
+
+    /// 授权提示：市场可浏览，安装动作需含 install 特性的授权。
+    private var licenseBanner: some View {
+        DSRecessed {
+            Label(model.localized("当前授权不包含安装能力，可浏览目录。"), systemImage: "lock.shield")
+                .font(DS.Typeface.body)
+                .foregroundStyle(.secondary)
+        }
     }
 
     /// 安装完成提示：引导重新扫描将新 Agent 纳入环境。
@@ -1085,6 +1095,7 @@ private struct AgentMarketCard: View {
 
     private var installed: Bool {
         if state?.phase == .completed { return true }
+        if model.installedMarketProductIDs.contains(definition.id) { return true }
         return model.snapshot?.products.contains { $0.id == definition.id && !$0.homes.isEmpty } ?? false
     }
 

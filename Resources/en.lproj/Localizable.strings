@@ -503,3 +503,4 @@
 "正在安装 %@" = "Installing %@";
 "未找到 Homebrew，无法安装。" = "Homebrew not found. Cannot install.";
 "安装退出码 %d" = "Install exited with code %d";
+"当前授权不包含安装能力，可浏览目录。" = "Your license does not include installation. You can browse the catalog.";

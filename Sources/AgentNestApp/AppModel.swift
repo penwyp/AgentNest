@@ -89,6 +89,10 @@ final class AppModel {
     /// Agent 市场：面板可见性 + 每个产品的安装状态（真实流式状态，随事件更新）。
     var isMarketPresented = false
     private(set) var marketInstallations: [String: MarketInstallState] = [:]
+    /// 已通过市场成功安装的产品 ID（持久化：重启后仍显示「已安装」，覆盖无扫描规则的市场条目）。
+    private(set) var installedMarketProductIDs: Set<String> = Set(
+        UserDefaults.standard.stringArray(forKey: "installedMarketProductIDs") ?? []
+    )
     var historyEnabled = UserDefaults.standard.bool(forKey: "historyEnabled")
     var historyRetentionDays: Int
     var hideSensitivePaths = UserDefaults.standard.bool(forKey: "hideSensitivePaths")
@@ -529,10 +533,19 @@ final class AppModel {
             _ = await Task.detached(priority: .utility) {
                 try? self.installRunner.install(productID: productID, method: method) { event in
                     Task { @MainActor [weak self] in
-                        self?.marketInstallations[productID] = MarketInstallState(
+                        guard let self else { return }
+                        self.marketInstallations[productID] = MarketInstallState(
                             phase: event.phase,
                             outputTail: event.outputTail
                         )
+                        // 安装成功即持久化：市场条目（含无扫描规则的）重启后仍显示「已安装」。
+                        if event.phase == .completed {
+                            self.installedMarketProductIDs.insert(productID)
+                            UserDefaults.standard.set(
+                                Array(self.installedMarketProductIDs),
+                                forKey: "installedMarketProductIDs"
+                            )
+                        }
                     }
                 }
             }.value
@@ -833,8 +846,9 @@ final class AppModel {
         guard let licenseManager else { return }
         let state = await licenseManager.loadLocalState()
         updateLicenseState(state)
-        if hasCoreAccess { await refreshSkillIndex() }
-        if case .needsRefresh = state {
+        if hasCoreAccess {
+            await refreshSkillIndex()
+            // 启动时强制刷新一次授权：服务端特性表（如 install）更新后无需等待 refreshAfter 周期。
             await refreshLicenseNow(force: true)
         }
         reconcileLicensedTasks()
