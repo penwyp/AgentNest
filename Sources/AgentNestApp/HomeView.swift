@@ -48,6 +48,12 @@ enum HomeProductStyle {
         "anthropic.claude-desktop": "claude-code",
         "openai.codex-desktop": "codex",
         "cursor.cursor-cli": "cursor",
+        // 来自 lobe-icons / thesvg 的补充品牌图标。
+        "google.gemini-cli": "gemini-cli",
+        "xai.grok": "grok",
+        "opencode.opencode": "opencode",
+        "inflection.pi": "pi",
+        "openai.chatgpt-desktop": "chatgpt-desktop",
     ]
 
     /// AgentNestCore 资源包（裸可执行文件与 .app 两种布局都兼容）。
@@ -121,9 +127,9 @@ enum HomeProductStyle {
         }
     }
 
-    /// 以原色渲染的品牌（应用图标样式，如 WorkBuddy），其余品牌用模板渲染。
+    /// 以原色渲染的品牌（应用图标样式，如 WorkBuddy / Gemini CLI），其余品牌用模板渲染。
     static func rendersOriginalColor(for productID: String) -> Bool {
-        productID == "workbuddy"
+        productID == "workbuddy" || productID == "google.gemini-cli"
     }
 
     static func symbol(for productID: String) -> String {

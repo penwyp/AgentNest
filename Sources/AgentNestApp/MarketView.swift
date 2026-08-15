@@ -27,9 +27,11 @@ private enum MarketSection: String, CaseIterable, Identifiable {
 struct MarketView: View {
     @Bindable var model: AppModel
     @State private var section: MarketSection = .agents
+    @State private var visibleSection: MarketSection = .agents
     @State private var searchText = ""
     @State private var copiedItemID: String?
     @State private var hoveredSection: MarketSection?
+    @State private var sectionSwitchTask: Task<Void, Never>?
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -58,23 +60,28 @@ struct MarketView: View {
 
     @ViewBuilder
     private var marketContent: some View {
-        switch section {
-        case .agents:
-            AgentMarketCatalogView(model: model, searchText: searchText)
-        case .skills:
-            SkillsMarketCatalogView(
-                model: model,
-                searchText: searchText,
-                copiedItemID: copiedItemID,
-                copy: copy
-            )
-        case .mcp:
-            MCPServerMarketCatalogView(
-                model: model,
-                searchText: searchText,
-                copiedItemID: copiedItemID,
-                copy: copy
-            )
+        if section == visibleSection {
+            switch section {
+            case .agents:
+                AgentMarketCatalogView(model: model, searchText: searchText)
+            case .skills:
+                SkillsMarketCatalogView(
+                    model: model,
+                    searchText: searchText,
+                    copiedItemID: copiedItemID,
+                    copy: copy
+                )
+            case .mcp:
+                MCPServerMarketCatalogView(
+                    model: model,
+                    searchText: searchText,
+                    copiedItemID: copiedItemID,
+                    copy: copy
+                )
+            }
+        } else {
+            MarketCatalogSkeleton(section: section)
+                .transition(.opacity)
         }
     }
 
@@ -108,10 +115,7 @@ struct MarketView: View {
             ForEach(MarketSection.allCases) { item in
                 let isSelected = section == item
                 Button {
-                    withAnimation(reduceMotion ? nil : .easeOut(duration: DS.Motion.press)) {
-                        section = item
-                        searchText = ""
-                    }
+                    selectMarketSection(item)
                 } label: {
                     marketSectionLabel(item, isSelected: isSelected)
                 }
@@ -234,6 +238,22 @@ struct MarketView: View {
         case .agents: model.marketDefinitions.count
         case .skills: model.marketplaceSkillItems.count
         case .mcp: model.marketplaceMCPServers.count
+        }
+    }
+
+    /// 切换市场时：Tab 立即高亮并先展示目标市场骨架，短促过渡后替换为真实卡片。
+    private func selectMarketSection(_ item: MarketSection) {
+        guard item != section else { return }
+        withAnimation(reduceMotion ? nil : .easeOut(duration: DS.Motion.press)) {
+            section = item
+            searchText = ""
+        }
+        sectionSwitchTask?.cancel()
+        let target = item
+        sectionSwitchTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(140))
+            guard !Task.isCancelled, section == target else { return }
+            visibleSection = target
         }
     }
 
@@ -774,6 +794,86 @@ private struct MCPServerMarketCard: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
+    }
+}
+
+// MARK: - 市场切换骨架屏
+
+private struct MarketCatalogSkeleton: View {
+    let section: MarketSection
+
+    private var columnMinimum: CGFloat {
+        switch section {
+        case .agents: 320
+        case .skills: 300
+        case .mcp: 420
+        }
+    }
+
+    var body: some View {
+        LazyVGrid(
+            columns: [GridItem(.adaptive(minimum: columnMinimum, maximum: .infinity), spacing: DS.Space.x300)],
+            alignment: .leading,
+            spacing: DS.Space.x300
+        ) {
+            ForEach(0..<6, id: \.self) { _ in
+                MarketSkeletonCard()
+            }
+        }
+        .accessibilityHidden(true)
+        .allowsHitTesting(false)
+    }
+}
+
+private struct MarketSkeletonCard: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: DS.Space.x300) {
+            HStack(alignment: .center, spacing: DS.Space.x300) {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(Color.primary.opacity(DS.Opacity.fillSkeleton))
+                    .frame(width: 38, height: 38)
+                VStack(alignment: .leading, spacing: DS.Space.x100) {
+                    RoundedRectangle(cornerRadius: 3, style: .continuous)
+                        .fill(Color.primary.opacity(0.09))
+                        .frame(width: 86, height: 9)
+                    RoundedRectangle(cornerRadius: 3, style: .continuous)
+                        .fill(Color.primary.opacity(0.07))
+                        .frame(width: 126, height: 13)
+                }
+                Spacer(minLength: DS.Space.x200)
+                Capsule(style: .continuous)
+                    .fill(Color.primary.opacity(DS.Opacity.fillSkeleton))
+                    .frame(width: 52, height: 18)
+            }
+            RoundedRectangle(cornerRadius: 3, style: .continuous)
+                .fill(Color.primary.opacity(0.05))
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(height: 10)
+            RoundedRectangle(cornerRadius: 3, style: .continuous)
+                .fill(Color.primary.opacity(0.04))
+                .frame(maxWidth: 230, alignment: .leading)
+                .frame(height: 9)
+            HStack(spacing: DS.Space.x200) {
+                Capsule(style: .continuous)
+                    .fill(Color.primary.opacity(DS.Opacity.fillFaint))
+                    .frame(width: 64, height: 18)
+                Spacer(minLength: DS.Space.x200)
+                RoundedRectangle(cornerRadius: 3, style: .continuous)
+                    .fill(Color.primary.opacity(0.06))
+                    .frame(width: 58, height: 10)
+            }
+        }
+        .padding(DS.Space.x400)
+        .frame(maxWidth: .infinity, minHeight: 150, alignment: .topLeading)
+        .background(
+            RoundedRectangle(cornerRadius: DS.Radius.panel, style: .continuous)
+                .fill(Color(nsColor: DS.Neutral.raised))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: DS.Radius.panel, style: .continuous)
+                .strokeBorder(Color.primary.opacity(DS.Opacity.borderStandard), lineWidth: DS.Stroke.surface)
+        )
+        .shadow(color: Color.black.opacity(0.06), radius: 4, y: 1)
     }
 }
 
