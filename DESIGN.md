@@ -437,7 +437,7 @@ hover 在指针离开或窗口失活时清除；pressed 不叠加 hover；focus 
 
 - **材料（随外观切换，ultraThinMaterial 唯一材质层 + 单层均匀 tint，§2 登记例外）**：浅色外观 = 白雾玻璃（白 0.32）+ color.blue.deep 文字 + accent 图标 + accent 描边；深色外观 = 蓝雾玻璃（blue.deep 0.38）+ 白色文字 + 亮蓝图标 + blue.luminous 描边；无顶部高光、无内圈线、无纵向渐变。
 - **边缘与深度**：外轮廓 1 pt 描边，浅色 accent.primary 0.42 / 深色 blue.luminous 0.52；**单层投影**浅色黑 0.12 / 深色黑 0.26，blur 6、y 2（§2 阴影条款的 CTA 特例）。
-- **状态配方**：hover 微放大至 1.025，浅色叠加 accent.primary 0.18、描边升至 0.85、accent 外发光 0.16（blur 9）；深色叠加白 0.14、描边升至 0.95、blue.luminous 外发光 0.22（blur 9）；press 浅色叠加 accent.primary 0.24 / 深色叠加黑 0.16 + 缩放 0.98；disabled 整体 × opacity.disabled.control；动效 motion.hover / motion.press，尊重 Reduce Motion；hover 在窗口失活时清除。
+- **状态配方**：hover 微放大至 1.025，浅色叠加 accent.primary 0.18、描边升至 0.85、accent 外发光 0.07（blur 7）；深色叠加白 0.14、描边升至 0.95、blue.luminous 外发光 0.10（blur 7）；press 浅色叠加 accent.primary 0.24 / 深色叠加黑 0.16 + 缩放 0.98；disabled 整体 × opacity.disabled.control；动效 motion.hover / motion.press，尊重 Reduce Motion；hover 在窗口失活时清除。
 - 无键帽提示与快捷键展示；无循环动效。
 
 
