@@ -587,11 +587,10 @@ struct DSPrimaryLabelStyle: LabelStyle {
     }
 }
 
-/// 页面主操作按钮样式（对应 DESIGN.md §7.4 primary.action）——与常规 action 按钮明确区分的「辉光质感」材料：
-/// 深色外观：白色玻璃渐变（白 0.97 → 0.86）+ 深蓝文字 + accent 图标，是页面最高对比元素；
-/// 浅色外观：发光蓝渐变（blueLuminous → blueDeep）+ 白色文字；
-/// 44 pt 高度、顶部玻璃高光、单层深投影（黑 0.26，blur 6，y 2）——渐变填充为 DESIGN.md §2 登记的
-/// 第二个渐变例外（仅限 dsPrimary，与 DSHeroWash 同级）；hover/press 以白色/黑色覆盖层表达，无循环动效。
+/// 页面主操作按钮样式（对应 DESIGN.md §7.4 primary.action）：
+/// ultraThinMaterial 打底 + 单层均匀玻璃 tint，形成通透但平整的玻璃质感；
+/// 深色外观 = 白色雾面玻璃 + 深蓝文字/accent 图标；浅色外观 = 蓝色雾面玻璃 + 白色文字/图标。
+/// 只保留一条外轮廓 hairline，不做顶部高光/内部第二圈线；hover 均匀提亮并增强轮廓与投影。
 struct DSPrimaryActionButtonStyle: ButtonStyle {
     @Environment(\.isEnabled) private var isEnabled
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -601,54 +600,58 @@ struct DSPrimaryActionButtonStyle: ButtonStyle {
 
     private var isDark: Bool { colorScheme == .dark }
 
-    private var fill: LinearGradient {
+    private var glassTint: Color {
+        isDark ? Color.white.opacity(0.78) : DS.Semantic.accentPrimary.opacity(0.72)
+    }
+
+    private var borderColor: Color {
         if isDark {
-            return LinearGradient(
-                colors: [Color.white.opacity(0.97), Color.white.opacity(0.86)],
-                startPoint: .top,
-                endPoint: .bottom
-            )
+            return Color.white.opacity(isActiveHovering ? 0.58 : 0.38)
         }
-        return LinearGradient(
-            colors: [DS.Chroma.blueLuminous, DS.Chroma.blueDeep],
-            startPoint: .top,
-            endPoint: .bottom
-        )
+        return Color.white.opacity(isActiveHovering ? 0.46 : 0.26)
+    }
+
+    private var hoverOverlay: Color {
+        isDark ? Color.white.opacity(0.16) : Color.white.opacity(0.14)
+    }
+
+    private var isActiveHovering: Bool {
+        isHovering && controlActiveState == .active
     }
 
     func makeBody(configuration: Configuration) -> some View {
         let isPressed = configuration.isPressed && controlActiveState == .active
-        let isActiveHovering = isHovering && controlActiveState == .active
         configuration.label
             .foregroundStyle(isDark ? DS.Chroma.blueDeep : Color.white)
             .labelStyle(DSPrimaryLabelStyle())
             .padding(.horizontal, DS.Layout.primaryActionHorizontalInset)
             .frame(minHeight: DS.Layout.primaryActionHeight)
-            .background(
-                RoundedRectangle(cornerRadius: DS.Radius.controlRegular, style: .continuous)
-                    .fill(fill)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: DS.Radius.controlRegular, style: .continuous)
-                    .fill(Color.white.opacity(isActiveHovering ? 0.07 : 0))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: DS.Radius.controlRegular, style: .continuous)
-                    .fill(Color.black.opacity(isPressed ? 0.10 : 0))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: DS.Radius.controlRegular, style: .continuous)
-                    .strokeBorder(Color.white.opacity(isDark ? 0.34 : 0.26), lineWidth: DS.Stroke.hairline)
-            )
-            .overlay(alignment: .top) {
-                RoundedRectangle(cornerRadius: DS.Radius.controlRegular - 0.5, style: .continuous)
-                    .strokeBorder(Color.white.opacity(isDark ? 0.85 : 0.40), lineWidth: 1)
-                    .padding(.horizontal, 6)
-                    .padding(.top, 1.5)
-                    .allowsHitTesting(false)
+            .background {
+                ZStack {
+                    RoundedRectangle(cornerRadius: DS.Radius.controlRegular, style: .continuous)
+                        .fill(.ultraThinMaterial)
+                    RoundedRectangle(cornerRadius: DS.Radius.controlRegular, style: .continuous)
+                        .fill(glassTint)
+                }
             }
-            .shadow(color: Color.black.opacity(0.26), radius: 6, y: 2)
-            .scaleEffect(isPressed && isEnabled ? 0.985 : 1)
+            .overlay(
+                RoundedRectangle(cornerRadius: DS.Radius.controlRegular, style: .continuous)
+                    .fill(isActiveHovering && isEnabled ? hoverOverlay : Color.clear)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: DS.Radius.controlRegular, style: .continuous)
+                    .fill(Color.black.opacity(isPressed ? 0.12 : 0))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: DS.Radius.controlRegular, style: .continuous)
+                    .strokeBorder(borderColor, lineWidth: DS.Stroke.hairline)
+            )
+            .shadow(
+                color: Color.black.opacity(isActiveHovering ? 0.30 : 0.22),
+                radius: 6,
+                y: isActiveHovering ? 3 : 2
+            )
+            .scaleEffect(isPressed && isEnabled ? 0.98 : 1)
             .opacity(isEnabled ? 1 : DS.Opacity.disabledControl)
             .contentShape(RoundedRectangle(cornerRadius: DS.Radius.controlRegular, style: .continuous))
             .onHover { hovering in
