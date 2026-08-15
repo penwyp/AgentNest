@@ -1075,6 +1075,7 @@ private struct AgentListView: View {
             .frame(maxWidth: DS.Layout.pageMaxWidth)
             .frame(maxWidth: .infinity)
         }
+        .scrollIndicators(.visible)
     }
 
     @MainActor
@@ -1326,6 +1327,7 @@ private struct AgentCardGridSkeleton: View {
             .frame(maxWidth: DS.Layout.pageMaxWidth)
             .frame(maxWidth: .infinity)
         }
+        .scrollIndicators(.visible)
         .accessibilityHidden(true)
         .allowsHitTesting(false)
     }
