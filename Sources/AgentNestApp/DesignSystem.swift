@@ -143,17 +143,17 @@ enum DS {
 
     /// 中性色：随系统外观切换（动态），对应 color.neutral.*
     enum Neutral {
-        /// 基底画布
+        /// 基底画布（浅色外观 = 极淡蓝灰，避免纯白/中性灰带来的冷硬感）。
         static let canvas = NSColor(name: nil) { appearance in
             appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
                 ? NSColor(calibratedRed: 0x09 / 255, green: 0x0B / 255, blue: 0x0D / 255, alpha: 1)
-                : NSColor(calibratedRed: 0xEC / 255, green: 0xF0 / 255, blue: 0xF2 / 255, alpha: 1)
+                : NSColor(calibratedRed: 0xED / 255, green: 0xF3 / 255, blue: 0xF8 / 255, alpha: 1)
         }
-        /// 抬升表面
+        /// 抬升表面（浅色外观 = 比画布更亮的淡蓝白，保持层级又统一色温）。
         static let raised = NSColor(name: nil) { appearance in
             appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
                 ? NSColor(calibratedRed: 0x0F / 255, green: 0x13 / 255, blue: 0x15 / 255, alpha: 1)
-                : NSColor(calibratedRed: 0xF6 / 255, green: 0xF8 / 255, blue: 0xF9 / 255, alpha: 1)
+                : NSColor(calibratedRed: 0xF5 / 255, green: 0xF8 / 255, blue: 0xFB / 255, alpha: 1)
         }
         /// 沉入表面（比画布略深，模拟 recessed）
         static let recessed = NSColor(name: nil) { appearance in
