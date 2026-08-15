@@ -310,18 +310,32 @@ Reduce Motion 将全部时长解析为 `0 s`，保留最终视觉状态。
 
 ### 5.9 Agent 页（档案卡）
 
-Agent 页以「档案卡」呈现每个 Agent Home（自适应网格 `agent.card.column.min-width` = 380 / `max-width` = 460，920 页宽下双列），替代平铺列表行；Home 级明细与操作集中在此页，首页只保留产品级聚合。
+Agent 页以「档案卡」呈现每个 Agent Home（自适应网格 `agent.card.column.min-width` = 380 / `max-width` = 460，920 页宽下双列），替代平铺列表行；Home 级明细与操作集中在详情页，首页只保留产品级聚合。**每张档案卡都是可点击表面**（dsCard 按钮，点击进入该 Home 的详情页；卡内「确认/忽略」等内层按钮优先响应）。身份区下方钉有**搜索栏**（`agent.search.width` = 320）：放大镜 + 输入框 + 清空按钮，实时过滤名称/路径/产品名（不区分大小写），无匹配时显示「没有匹配的 Agent」空态。
 
 | Token | 值 |
 | --- | --- |
 | `agent.card.column.min-width` | `380 pt` |
 | `agent.card.column.max-width` | `460 pt` |
 | `agent.card.storage-bar.height` | `4 pt` |
+| `agent.search.width` | `320 pt` |
 
 - **卡片结构**（`AgentHomeCard`，`DSCard` 表面）：头部（官方品牌图标 32 pt + Home 名 `type.section` + 路径 `type.caption` secondary、中间截断、隐私脱敏 + 右上「已确认/疑似」`DSBadge`）→ 事实行（来源 · 物理占用 · 条目数 · 证据数，`type.caption` secondary 等宽数字；hover 显示原始证据清单）→ 类别空间构成条（4 pt 堆叠条 + 前三类别图例，含「未归属」剩余）→ 条件操作行（疑似 → 确认/忽略；用户确认 → 撤销；已确认无操作行，顶部 hairline 分隔）。
 - **类别 → 系列色固定映射**（§8.1 系列色的组件级延伸）：会话 `series.01`、日志 `series.02`、缓存 `series.03`、配置 `series.04`、运行时 `series.05`、Skill `series.06`、浏览器 `series.07`、数据库 `series.08`、未归属剩余 `text.secondary` 0.55。
 - **派生计算**：构成数据由 `computeAgentCardDerived` 在后台（`Task.detached(.utility)`）一次遍历存储账本、按 `homeIDs` 聚合类别物理占用；`AgentListView` 按 `snapshot.generation` 缓存、主线程发布、generation 校验丢弃迟到结果；未就绪时构成条以空轨道占位、图例行以空格占位（固定尺寸防跳动）。
 - **骨架屏**：`AgentCardGridSkeleton` 镜像档案卡网格（4 张骨架卡：图标块 + 名称/路径条 + 事实条 + 构成轨道），数据未就绪时占位；空态保持原生 `ContentUnavailableView`。
+- **派生数据**：`AgentCategorySlice` 聚合类别字节与条目数（条目数 = 账本条目计数，与空间页一致）；类别 → 系列色映射统一由 `AgentCategoryPalette` 提供（档案卡与详情页共用）。
+
+### 5.9.1 Agent 详情页（`AgentDetailView`）
+
+点击档案卡进入（`AppModel.selectedAgentHomeID` 导航；返回/重进 Agent 页清空），headerless 单页结构：
+
+- **身份区**：标题 = Home 名，信息行 = 「产品名 · 路径（脱敏）· 来源 · 信心」；右侧操作 = 返回 + 疑似「确认/忽略」、用户确认「撤销本机确认」。
+- **概览读数带**：物理占用 / 逻辑占用 / 条目数 / 证据数（`type.reading` 36 Light 等宽，hairline 分隔）。
+- **容量分析**：完整类别堆叠条（4 pt）+ 全部类别明细行（6 pt 色点 + 类别名 + 条目数 + 字节，降序，含「未归属」剩余）；无数据时「暂无容量明细。」。
+- **对话**：会话列表（`CleanupUnit`，`homeIdentity` + `category == sessions`，按最后活动倒序）——会话名（`cleanupUnitTitle`）+ 最后活动相对时间 + 大小 + 「清理」按钮（destructive compact，`cleanup` 特性门禁，走 `CleanupReviewSheet` 复核后 `executeCleanup`）；清理结果与操作消息就地显示；空态「此 Home 没有对话记录。」。
+- **Skills**：此 Home 的安装列表（`SkillInstallation.homeID` 过滤）——名称 + 冲突/无效徽章 + 大小 + 路径（脱敏）；右上「在 Skill 页管理」页脚链接；空态「此 Home 未发现 Skill。」。
+- **证据**：原始证据清单（seal + caption），空态提示。
+- 容量构成由 `computeAgentCardDerived` 后台派生（generation + homeID 签名缓存）；对话与 Skills 复用 `AppModel.cleanupUnits` / `skillIndex` 过滤，不重复计算；全静态排版、动效仅 hover/press。
 
 ### 5.10 Agent 市场（Marketplace）
 
@@ -558,6 +572,9 @@ hover 在指针离开或窗口失活时清除；pressed 不叠加 hover；focus 
 | 原生列表画布 | `.dsInstrumentList()` | Skill / 空间 / 活动 / 设置 / 历史 |
 | Agent 档案卡 | `AgentHomeCard`（ContentView.swift） | Agent 页卡片（品牌图标 / 事实行 / 构成条 / 操作行） |
 | Agent 骨架卡 | `AgentCardGridSkeleton` / `AgentCardSkeleton`（ContentView.swift） | Agent 页数据占位 |
+| Agent 详情页 | `AgentDetailView`（ContentView.swift） | 概览读数 / 容量分析 / 对话清理 / Skills / 证据 |
+| Agent 搜索栏 | `AgentListView.searchField`（ContentView.swift） | 名称/路径/产品名实时过滤 |
+| 类别色板 | `AgentCategoryPalette`（ContentView.swift） | 档案卡与详情页共用类别 → 系列色 |
 | 类别构成派生 | `computeAgentCardDerived`（ContentView.swift） | Agent 档案卡空间构成（后台派生） |
 | 不确定扫描条 | `DSIndeterminateScanBar`（DesignSystem.swift） | 扫描态底部栏（§2 唯一例外） |
 | Agent 市场面板 | `AgentMarketSheet` / `AgentMarketCard`（ContentView.swift） | Agent 市场 sheet 与产品卡 |

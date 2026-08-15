@@ -21,7 +21,12 @@ struct ContentView: View {
                 Group {
                     switch model.selection ?? .home {
                     case .home: HomeView(model: model)
-                    case .agents: AgentListView(model: model)
+                    case .agents:
+                        if let id = model.selectedAgentHomeID, let home = model.agentHome(withID: id) {
+                            AgentDetailView(model: model, home: home)
+                        } else {
+                            AgentListView(model: model)
+                        }
                     case .skills: SkillView(model: model)
                     case .storage: StorageView(model: model)
                     case .activity: ActivityView(model: model)
@@ -107,6 +112,8 @@ private struct SidebarRow: View {
             withAnimation(reduceMotion ? nil : .easeInOut(duration: DS.Motion.state)) {
                 model.selection = item
             }
+            // 重新进入 Agent 页时回到列表（退出详情）。
+            if item == .agents { model.selectedAgentHomeID = nil }
         } label: {
             HStack(spacing: DS.Space.x250) {
                 Image(systemName: item.systemImage)
@@ -656,8 +663,22 @@ private struct AgentListView: View {
     @Bindable var model: AppModel
     /// 类别空间构成派生数据（后台计算，按 generation 缓存）。
     @State private var derived: AgentCardDerived?
+    /// 搜索关键词（名称/路径/产品名，不区分大小写）。
+    @State private var searchText = ""
 
     private var deriveKey: UUID? { model.snapshot?.generation }
+
+    private var filteredHomes: [AgentHome] {
+        guard let snapshot = model.snapshot else { return [] }
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return snapshot.homes }
+        return snapshot.homes.filter { home in
+            home.displayName.localizedCaseInsensitiveContains(query) ||
+                home.path.localizedCaseInsensitiveContains(query) ||
+                (snapshot.products.first { $0.id == home.productID }?.displayName
+                    .localizedCaseInsensitiveContains(query) ?? false)
+        }
+    }
 
     /// 页面身份区：标题 + 已确认/疑似统计；右侧主操作 = 打开 Agent 市场。
     private var agentIdentity: some View {
@@ -690,15 +711,24 @@ private struct AgentListView: View {
             if let snapshot = model.snapshot {
                 if snapshot.homes.isEmpty {
                     ContentUnavailableView("尚无 Agent 结果", systemImage: "cpu", description: Text("先在首页扫描。"))
+                } else if filteredHomes.isEmpty {
+                    ContentUnavailableView(
+                        model.localized("没有匹配的 Agent"),
+                        systemImage: "magnifyingglass",
+                        description: Text(model.localized("换个关键词试试。"))
+                    )
                 } else {
-                    agentCardGrid(snapshot: snapshot)
+                    agentCardGrid(homes: filteredHomes)
                 }
             } else {
                 AgentCardGridSkeleton()
             }
         }
         .safeAreaInset(edge: .top, spacing: 0) {
-            agentIdentity
+            VStack(alignment: .leading, spacing: 0) {
+                agentIdentity
+                searchField
+            }
         }
         .task(id: deriveKey) { await recomputeDerived() }
         .sheet(isPresented: Binding(
@@ -709,14 +739,51 @@ private struct AgentListView: View {
         }
     }
 
-    private func agentCardGrid(snapshot: DeviceSnapshot) -> some View {
+    /// 搜索栏：钉在身份区下方，放大镜 + 输入框 + 清空按钮。
+    private var searchField: some View {
+        HStack(spacing: DS.Space.x200) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.secondary)
+                .accessibilityHidden(true)
+            TextField(model.localized("搜索 Agent"), text: $searchText)
+                .textFieldStyle(.plain)
+                .font(DS.Typeface.body)
+            if !searchText.isEmpty {
+                Button {
+                    searchText = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(model.localized("清空搜索"))
+            }
+        }
+        .padding(.horizontal, DS.Space.x250)
+        .frame(width: DS.Layout.agentSearchWidth, height: 30)
+        .background(
+            RoundedRectangle(cornerRadius: DS.Radius.controlCompact, style: .continuous)
+                .fill(Color(nsColor: .controlBackgroundColor).opacity(0.62))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: DS.Radius.controlCompact, style: .continuous)
+                .strokeBorder(Color.primary.opacity(DS.Opacity.borderQuiet), lineWidth: DS.Stroke.hairline)
+        )
+        .padding(.horizontal, DS.Layout.pageHorizontalInset)
+        .padding(.bottom, DS.Space.x300)
+        .background(Color(nsColor: DS.Neutral.canvas))
+    }
+
+    private func agentCardGrid(homes: [AgentHome]) -> some View {
         ScrollView {
             LazyVGrid(
                 columns: [GridItem(.adaptive(minimum: DS.Layout.agentCardColumnMinWidth, maximum: DS.Layout.agentCardColumnMaxWidth), spacing: DS.Space.x300)],
                 alignment: .leading,
                 spacing: DS.Space.x300
             ) {
-                ForEach(snapshot.homes) { home in
+                ForEach(homes) { home in
                     AgentHomeCard(
                         model: model,
                         home: home,
@@ -743,10 +810,28 @@ private struct AgentListView: View {
     }
 }
 
+/// 类别 → chart series 固定映射（档案卡与详情页共用，见 DESIGN.md §5.9）。
+private enum AgentCategoryPalette {
+    static func color(for category: ArtifactCategory) -> Color {
+        switch category {
+        case .sessions: return DS.Chart.series01
+        case .logs: return DS.Chart.series02
+        case .cache: return DS.Chart.series03
+        case .configuration: return DS.Chart.series04
+        case .runtime: return DS.Chart.series05
+        case .skill: return DS.Chart.series06
+        case .browser: return DS.Chart.series07
+        case .database: return DS.Chart.series08
+        case .unattributed: return Color.secondary.opacity(0.55)
+        }
+    }
+}
+
 /// 单类别占用切片（按 Home 聚合、按字节降序）。
 private struct AgentCategorySlice: Sendable {
     let category: ArtifactCategory
     let bytes: UInt64
+    let itemCount: Int
 }
 
 /// 档案卡派生数据：Home → 类别占用切片（降序、仅 > 0）。
@@ -754,19 +839,22 @@ private struct AgentCardDerived: Sendable {
     let slicesByHome: [PhysicalResourceIdentity: [AgentCategorySlice]]
 }
 
-/// 纯数据派生（无 UI 依赖，后台执行）：一次遍历账本，按 homeIDs 聚合每个 Home 的类别物理占用。
+/// 纯数据派生（无 UI 依赖，后台执行）：一次遍历账本，按 homeIDs 聚合每个 Home 的类别物理占用与条目数。
 private func computeAgentCardDerived(snapshot: DeviceSnapshot) -> AgentCardDerived {
-    var accum: [PhysicalResourceIdentity: [ArtifactCategory: UInt64]] = [:]
+    var accum: [PhysicalResourceIdentity: [ArtifactCategory: (bytes: UInt64, items: Int)]] = [:]
     for artifact in snapshot.storageLedger.artifacts {
         for homeID in artifact.homeIDs {
-            accum[homeID, default: [:]][artifact.category, default: 0] &+= artifact.storage.physicalBytes
+            var slot = accum[homeID, default: [:]][artifact.category] ?? (bytes: 0, items: 0)
+            slot.bytes &+= artifact.storage.physicalBytes
+            slot.items += 1
+            accum[homeID, default: [:]][artifact.category] = slot
         }
     }
     var slicesByHome: [PhysicalResourceIdentity: [AgentCategorySlice]] = [:]
     for (homeID, byCategory) in accum {
         slicesByHome[homeID] = byCategory
-            .filter { $0.value > 0 }
-            .map { AgentCategorySlice(category: $0.key, bytes: $0.value) }
+            .filter { $0.value.bytes > 0 }
+            .map { AgentCategorySlice(category: $0.key, bytes: $0.value.bytes, itemCount: $0.value.items) }
             .sorted { $0.bytes > $1.bytes }
     }
     return AgentCardDerived(slicesByHome: slicesByHome)
@@ -785,17 +873,23 @@ private struct AgentHomeCard: View {
     private var needsActions: Bool { home.confidence == .possible || home.source == .userConfirmed }
 
     var body: some View {
-        DSCard(padding: DS.Space.x400) {
-            VStack(alignment: .leading, spacing: DS.Space.x300) {
-                header
-                factsRow
-                storageBreakdown
-                if needsActions {
-                    actionRow
+        // 整卡可点击进入详情；卡内「确认/忽略」等内层按钮优先响应。
+        Button {
+            model.selectedAgentHomeID = home.id
+        } label: {
+            DSCard(padding: DS.Space.x400) {
+                VStack(alignment: .leading, spacing: DS.Space.x300) {
+                    header
+                    factsRow
+                    storageBreakdown
+                    if needsActions {
+                        actionRow
+                    }
                 }
             }
         }
-        .accessibilityElement(children: .contain)
+        .buttonStyle(.dsCard)
+        .accessibilityHint(model.localized("打开%@详情", home.displayName))
     }
 
     private var header: some View {
@@ -908,17 +1002,7 @@ private struct AgentHomeCard: View {
 
     /// 类别 → chart series 固定映射（见 DESIGN.md §5.9）。
     private static func color(for category: ArtifactCategory) -> Color {
-        switch category {
-        case .sessions: return DS.Chart.series01
-        case .logs: return DS.Chart.series02
-        case .cache: return DS.Chart.series03
-        case .configuration: return DS.Chart.series04
-        case .runtime: return DS.Chart.series05
-        case .skill: return DS.Chart.series06
-        case .browser: return DS.Chart.series07
-        case .database: return DS.Chart.series08
-        case .unattributed: return Color.secondary.opacity(0.55)
-        }
+        AgentCategoryPalette.color(for: category)
     }
 
     /// 条件操作行：疑似 → 确认/忽略；用户确认 → 撤销；已确认 → 无此行。
@@ -1204,6 +1288,428 @@ private struct AgentMarketCard: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+    }
+}
+
+
+// MARK: - Agent 详情页
+
+/// Agent 详情页：概览读数 + 容量分析 + 对话管理 + Skills + 证据。
+/// 由 Agent 档案卡点击进入；左上「返回」清空 selectedAgentHomeID 回到列表。
+private struct AgentDetailView: View {
+    @Bindable var model: AppModel
+    let home: AgentHome
+    @State private var derived: AgentCardDerived?
+    @State private var pendingCleanupUnits: [CleanupUnit] = []
+    @State private var showingCleanupReview = false
+
+    private var deriveKey: String? {
+        guard let generation = model.snapshot?.generation else { return nil }
+        return "\(generation.uuidString)-home-\(home.id.device)-\(home.id.inode)-\(home.id.kind.rawValue)"
+    }
+
+    private var slices: [AgentCategorySlice] {
+        derived?.slicesByHome[home.id] ?? []
+    }
+
+    private var attributedBytes: UInt64 { slices.reduce(UInt64(0)) { $0 &+ $1.bytes } }
+    private var remainderBytes: UInt64 {
+        home.storage.physicalBytes > attributedBytes ? home.storage.physicalBytes - attributedBytes : 0
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: DS.Space.x400) {
+                overviewStrip
+                capacitySection
+                conversationsSection
+                skillsSection
+                evidenceSection
+            }
+            .padding(.horizontal, DS.Layout.pageHorizontalInset)
+            .padding(.vertical, DS.Layout.pageVerticalInset)
+            .frame(maxWidth: DS.Layout.pageMaxWidth)
+            .frame(maxWidth: .infinity)
+        }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            detailIdentity
+        }
+        .task(id: deriveKey) { await recomputeDerived() }
+        .sheet(isPresented: $showingCleanupReview) {
+            CleanupReviewSheet(model: model, units: pendingCleanupUnits) {
+                model.executeCleanup(pendingCleanupUnits)
+                showingCleanupReview = false
+            }
+        }
+    }
+
+    // MARK: 身份区
+
+    private var detailIdentity: some View {
+        DSPageIdentity(
+            title: home.displayName,
+            glyph: "cpu",
+            detail: detailLine
+        ) {
+            Button {
+                model.selectedAgentHomeID = nil
+            } label: {
+                Label(model.localized("返回"), systemImage: "chevron.left")
+            }
+            .buttonStyle(.dsAction(size: .regular))
+            if home.confidence == .possible {
+                Button(model.localized("确认为 %@", home.displayName)) { model.confirmCandidate(home) }
+                    .buttonStyle(.dsAction(.accent, size: .regular))
+                Button("忽略此位置", role: .destructive) { model.ignoreCandidate(home) }
+                    .buttonStyle(.dsAction(.destructive, size: .regular))
+            } else if home.source == .userConfirmed {
+                Button("撤销本机确认") { model.revokeCandidateConfirmation(home) }
+                    .buttonStyle(.dsAction(size: .regular))
+            }
+        }
+        .padding(.horizontal, DS.Layout.pageHorizontalInset)
+        .padding(.vertical, DS.Space.x300)
+        .background(Color(nsColor: DS.Neutral.canvas))
+    }
+
+    private var detailLine: String? {
+        guard let product = model.snapshot?.products.first(where: { $0.id == home.productID }) else {
+            return nil
+        }
+        let confidence = model.localized(home.confidence == .confirmed ? "已确认" : "疑似")
+        return model.localized("%@ · %@", product.displayName, model.displayPath(home.path))
+            + " · " + model.discoverySourceTitle(home.source) + " · " + confidence
+    }
+
+    // MARK: 概览读数
+
+    private var overviewStrip: some View {
+        HStack(alignment: .center, spacing: DS.Layout.homeReadingSpacing) {
+            detailReading(model.localized("物理占用"), model.formatBytes(home.storage.physicalBytes))
+            readingDivider
+            detailReading(model.localized("逻辑占用"), model.formatBytes(home.storage.logicalBytes))
+            readingDivider
+            detailReading(model.localized("条目数"), model.localized("%d 项", home.storage.itemCount))
+            readingDivider
+            detailReading(model.localized("证据数"), "\(home.evidence.count)")
+        }
+    }
+
+    private func detailReading(_ label: String, _ value: String) -> some View {
+        VStack(alignment: .leading, spacing: DS.Space.x100) {
+            Text(label)
+                .font(DS.Typeface.label)
+                .foregroundStyle(.secondary)
+            Text(value)
+                .font(DS.Typeface.reading)
+                .monospacedDigit()
+                .foregroundStyle(Color.primary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    private var readingDivider: some View {
+        Rectangle()
+            .fill(Color.primary.opacity(DS.Opacity.borderQuiet))
+            .frame(width: DS.Stroke.hairline, height: 44)
+            .accessibilityHidden(true)
+    }
+
+    // MARK: 容量分析
+
+    private struct CapacityRow: Identifiable {
+        let id: String
+        let title: String
+        let bytes: UInt64
+        let items: Int
+        let color: Color
+    }
+
+    private var capacityRows: [CapacityRow] {
+        var rows = slices.map {
+            CapacityRow(
+                id: $0.category.rawValue,
+                title: model.artifactCategoryTitle($0.category),
+                bytes: $0.bytes,
+                items: $0.itemCount,
+                color: AgentCategoryPalette.color(for: $0.category)
+            )
+        }
+        if remainderBytes > 0 {
+            rows.append(CapacityRow(
+                id: "unattributed",
+                title: model.localized("未归属"),
+                bytes: remainderBytes,
+                items: 0,
+                color: Color.secondary.opacity(0.55)
+            ))
+        }
+        return rows
+    }
+
+    private var capacitySection: some View {
+        VStack(alignment: .leading, spacing: DS.Space.x300) {
+            Text(model.localized("容量分析"))
+                .font(DS.Typeface.title)
+            DSCard(padding: DS.Space.x400) {
+                VStack(alignment: .leading, spacing: DS.Space.x300) {
+                    capacityBar
+                    if slices.isEmpty {
+                        Text(model.localized("暂无容量明细。"))
+                            .font(DS.Typeface.caption)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ForEach(capacityRows) { row in
+                            capacityRow(row)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private var capacityBar: some View {
+        GeometryReader { proxy in
+            let width = proxy.size.width
+            let total = Double(home.storage.physicalBytes)
+            HStack(spacing: 1) {
+                ForEach(slices, id: \.category) { slice in
+                    segment(
+                        color: AgentCategoryPalette.color(for: slice.category),
+                        fraction: total > 0 ? Double(slice.bytes) / total : 0,
+                        totalWidth: width
+                    )
+                }
+                if remainderBytes > 0 {
+                    segment(
+                        color: Color.secondary.opacity(0.55),
+                        fraction: total > 0 ? Double(remainderBytes) / total : 0,
+                        totalWidth: width
+                    )
+                }
+                Spacer(minLength: 0)
+            }
+        }
+        .frame(height: DS.Layout.agentStorageBarHeight)
+        .background(
+            RoundedRectangle(cornerRadius: 1.5, style: .continuous)
+                .fill(Color.primary.opacity(DS.Opacity.fillQuiet))
+        )
+        .accessibilityHidden(true)
+    }
+
+    private func segment(color: Color, fraction: Double, totalWidth: CGFloat) -> some View {
+        RoundedRectangle(cornerRadius: 1, style: .continuous)
+            .fill(color)
+            .frame(
+                width: fraction > 0 ? max(2, totalWidth * fraction) : 0,
+                height: DS.Layout.agentStorageBarHeight
+            )
+    }
+
+    private func capacityRow(_ row: CapacityRow) -> some View {
+        HStack(spacing: DS.Space.x250) {
+            Circle()
+                .fill(row.color)
+                .frame(width: 6, height: 6)
+                .accessibilityHidden(true)
+            Text(row.title)
+                .font(DS.Typeface.body)
+            Spacer(minLength: DS.Space.x300)
+            if row.items > 0 {
+                Text(model.localized("%d 项", row.items))
+                    .font(DS.Typeface.caption)
+                    .foregroundStyle(.tertiary)
+                    .monospacedDigit()
+            }
+            Text(model.formatBytes(row.bytes))
+                .font(DS.Typeface.body.weight(.semibold))
+                .monospacedDigit()
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    // MARK: 对话
+
+    private var sessionUnits: [CleanupUnit] {
+        model.cleanupUnits
+            .filter { $0.homeIdentity == home.id && $0.category == ArtifactCategory.sessions.rawValue }
+            .sorted { ($0.lastActivity.date ?? .distantPast) > ($1.lastActivity.date ?? .distantPast) }
+    }
+
+    private var conversationsSection: some View {
+        VStack(alignment: .leading, spacing: DS.Space.x300) {
+            Text(model.localized("对话"))
+                .font(DS.Typeface.title)
+            DSCard(padding: DS.Space.x300) {
+                VStack(alignment: .leading, spacing: DS.Space.x250) {
+                    if sessionUnits.isEmpty {
+                        Text(model.localized("此 Home 没有对话记录。"))
+                            .font(DS.Typeface.caption)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ForEach(sessionUnits) { unit in
+                            conversationRow(unit)
+                        }
+                    }
+                }
+            }
+            if let message = model.cleanupOperationMessage {
+                Text(message)
+                    .font(DS.Typeface.caption)
+                    .foregroundStyle(.secondary)
+            }
+            ForEach(model.cleanupResults) { result in
+                HStack(spacing: DS.Space.x200) {
+                    Image(systemName: result.status == .succeeded ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(result.status == .succeeded ? DS.Semantic.statusPositive : DS.Semantic.statusCaution)
+                        .accessibilityHidden(true)
+                    Text(result.name)
+                        .font(DS.Typeface.caption)
+                    Text(model.cleanupResultCodeTitle(result.code))
+                        .font(DS.Typeface.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .accessibilityElement(children: .combine)
+            }
+        }
+    }
+
+    private func conversationRow(_ unit: CleanupUnit) -> some View {
+        HStack(spacing: DS.Space.x250) {
+            Image(systemName: "bubble.left.and.bubble.right")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(DS.Chart.series01)
+                .frame(width: 18)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: DS.Space.x050) {
+                Text(model.cleanupUnitTitle(unit))
+                    .font(DS.Typeface.body.weight(.semibold))
+                    .lineLimit(1)
+                if let date = unit.lastActivity.date {
+                    Text(model.localized("最后活动：%@", date.formatted(.relative(presentation: .named).locale(model.appLocale))))
+                        .font(DS.Typeface.caption)
+                        .foregroundStyle(.tertiary)
+                }
+            }
+            Spacer(minLength: DS.Space.x300)
+            Text(model.formatBytes(unit.storage.physicalBytes))
+                .font(DS.Typeface.body.weight(.semibold))
+                .monospacedDigit()
+            Button(model.localized("清理")) {
+                pendingCleanupUnits = [unit]
+                showingCleanupReview = true
+            }
+            .buttonStyle(.dsAction(.destructive, size: .compact))
+            .disabled(!model.allows(.cleanup))
+        }
+        .padding(.vertical, DS.Space.x100)
+        .accessibilityElement(children: .contain)
+    }
+
+    // MARK: Skills
+
+    private var homeSkills: [SkillInstallation] {
+        model.skillIndex?.logicalSkills
+            .flatMap(\.variants)
+            .flatMap(\.installations)
+            .filter { $0.homeID == home.id } ?? []
+    }
+
+    private var skillsSection: some View {
+        VStack(alignment: .leading, spacing: DS.Space.x300) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(model.localized("Skill"))
+                    .font(DS.Typeface.title)
+                Spacer(minLength: DS.Space.x300)
+                Button(model.localized("在 Skill 页管理")) {
+                    model.selection = .skills
+                }
+                .buttonStyle(.dsFooterLink())
+            }
+            DSCard(padding: DS.Space.x300) {
+                VStack(alignment: .leading, spacing: DS.Space.x250) {
+                    if homeSkills.isEmpty {
+                        Text(model.localized("此 Home 未发现 Skill。"))
+                            .font(DS.Typeface.caption)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ForEach(homeSkills) { installation in
+                            skillRow(installation)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func skillRow(_ installation: SkillInstallation) -> some View {
+        VStack(alignment: .leading, spacing: DS.Space.x050) {
+            HStack(spacing: DS.Space.x200) {
+                Text(installation.name)
+                    .font(DS.Typeface.body.weight(.semibold))
+                    .lineLimit(1)
+                if installation.state != .valid {
+                    DSBadge(
+                        text: model.localized(installation.state == .conflict ? "冲突" : "无效"),
+                        color: DS.Semantic.statusCaution
+                    )
+                }
+                Spacer(minLength: DS.Space.x200)
+                Text(model.formatBytes(installation.totalBytes))
+                    .font(DS.Typeface.caption)
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+            }
+            Text(model.displayPath(installation.path))
+                .font(DS.Typeface.caption)
+                .foregroundStyle(.tertiary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .privacySensitive()
+        }
+        .padding(.vertical, DS.Space.x050)
+        .accessibilityElement(children: .combine)
+    }
+
+    // MARK: 证据
+
+    private var evidenceSection: some View {
+        VStack(alignment: .leading, spacing: DS.Space.x300) {
+            Text(model.localized("证据"))
+                .font(DS.Typeface.title)
+            DSCard(padding: DS.Space.x300) {
+                VStack(alignment: .leading, spacing: DS.Space.x150) {
+                    if home.evidence.isEmpty {
+                        Text(model.localized("此 Home 没有证据记录。"))
+                            .font(DS.Typeface.caption)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ForEach(Array(home.evidence.enumerated()), id: \.offset) { _, item in
+                            Label(item, systemImage: "seal")
+                                .font(DS.Typeface.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: 派生
+
+    @MainActor
+    private func recomputeDerived() async {
+        guard let snapshot = model.snapshot else { return }
+        let generation = snapshot.generation
+        let value = await Task.detached(priority: .utility) {
+            computeAgentCardDerived(snapshot: snapshot)
+        }.value
+        guard model.snapshot?.generation == generation else { return }
+        derived = value
     }
 }
 
