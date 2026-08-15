@@ -199,6 +199,8 @@
 "当前 Agent 未声明 Skill 来源" = "The current Agent does not declare a Skill source";
 "当前打开文件" = "Currently open files";
 "打开%@详情" = "Open %@ details";
+"管理此位置" = "Manage this location";
+"详情" = "Details";
 "扫描状态：%@" = "Scan status: %@";
 "挂载卷" = "Mounted volumes";
 "描述" = "Description";

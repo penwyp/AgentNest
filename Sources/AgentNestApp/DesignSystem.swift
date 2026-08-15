@@ -89,7 +89,7 @@ enum DS {
         static let agentCardColumnMinWidth: CGFloat = 380
         static let agentCardColumnMaxWidth: CGFloat = 460
         /// Agent 档案卡类别空间构成条高度。
-        static let agentStorageBarHeight: CGFloat = 4
+        static let agentStorageBarHeight: CGFloat = 6
         /// Agent 页搜索栏高度（宽度跟随页面内容列，避免固定窄栏造成左重右轻）。
         static let agentSearchHeight: CGFloat = 30
         /// 页面主 CTA（dsPrimary）高度与水平内边距。
