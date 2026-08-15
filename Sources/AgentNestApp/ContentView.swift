@@ -227,10 +227,11 @@ private struct HomeView: View {
                 .disabled(model.isStoppingScan)
             } else {
                 Button(action: model.startScan) {
-                    Label("扫描", systemImage: "magnifyingglass")
+                    Label(model.localized("扫描"), systemImage: "magnifyingglass")
+                        .labelStyle(DSPrimaryLabelStyle())
                         .frame(minWidth: DS.Layout.homeActionMinWidth)
                 }
-                .buttonStyle(.dsAction(.accent, size: .large))
+                .buttonStyle(.dsPrimary)
                 .keyboardShortcut(.defaultAction)
             }
         }
@@ -691,8 +692,9 @@ private struct AgentListView: View {
                 model.isMarketPresented = true
             } label: {
                 Label(model.localized("Agent 市场"), systemImage: "sparkles")
+                    .labelStyle(DSPrimaryLabelStyle())
             }
-            .buttonStyle(.dsAction(.accent, size: .large))
+            .buttonStyle(.dsPrimary)
         }
         .padding(.horizontal, DS.Layout.pageHorizontalInset)
         .padding(.vertical, DS.Space.x300)
