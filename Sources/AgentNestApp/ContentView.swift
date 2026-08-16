@@ -361,7 +361,7 @@ private struct HomeOverview: View {
     var body: some View {
         VStack(alignment: .leading, spacing: DS.Space.x450) {
             HomeReadingsStrip(model: model, snapshot: snapshot, storageDerived: storageDerived)
-            HomeEnvironmentMap(model: model)
+            HomeEnvironmentMap(model: model, storageDerived: storageDerived)
             HomeManagementTiles(model: model, snapshot: snapshot, storageDerived: storageDerived)
             HomeTrustFooter(model: model)
         }
@@ -378,6 +378,7 @@ private struct HomeStorageSlice: Sendable {
 private struct HomeStorageDerived: Sendable {
     let slices: [HomeStorageSlice]
     let largestCategory: ArtifactCategory?
+    let totalBytesByProduct: [String: UInt64]
 }
 
 private func computeHomeStorageDerived(snapshot: DeviceSnapshot) -> HomeStorageDerived {
@@ -387,7 +388,25 @@ private func computeHomeStorageDerived(snapshot: DeviceSnapshot) -> HomeStorageD
         .sorted { $0.bytes > $1.bytes }
         .prefix(5)
         .map { $0 }
-    return HomeStorageDerived(slices: slices, largestCategory: slices.first?.category)
+
+    var productByHomeID: [PhysicalResourceIdentity: String] = [:]
+    for home in snapshot.homes {
+        productByHomeID[home.id] = home.productID
+    }
+    var seenArtifactsByProduct: [String: Set<PhysicalResourceIdentity>] = [:]
+    var totalBytesByProduct: [String: UInt64] = [:]
+    for artifact in snapshot.storageLedger.artifacts {
+        let productIDs = Set(artifact.homeIDs.compactMap { productByHomeID[$0] })
+        for productID in productIDs
+        where seenArtifactsByProduct[productID, default: []].insert(artifact.id).inserted {
+            totalBytesByProduct[productID, default: 0] &+= artifact.storage.physicalBytes
+        }
+    }
+    return HomeStorageDerived(
+        slices: slices,
+        largestCategory: slices.first?.category,
+        totalBytesByProduct: totalBytesByProduct
+    )
 }
 
 /// 读数带：四个等宽仪表卡，左侧文字信息、右侧图表，横向构图。
@@ -667,6 +686,7 @@ private struct HomeSkillMeter: View {
 /// 合计占用；单个产品即一张小卡、不撑满整行；Home 级明细在 Agent 页，两页职责区分。
 private struct HomeEnvironmentMap: View {
     let model: AppModel
+    let storageDerived: HomeStorageDerived?
 
     private var products: [AgentProduct] {
         model.agentProducts.filter { product in
@@ -693,7 +713,11 @@ private struct HomeEnvironmentMap: View {
                 spacing: DS.Space.x300
             ) {
                 ForEach(products) { product in
-                    HomeProductCard(model: model, product: product)
+                    HomeProductCard(
+                        model: model,
+                        product: product,
+                        totalBytes: storageDerived?.totalBytesByProduct[product.id] ?? 0
+                    )
                 }
             }
         }
@@ -705,26 +729,12 @@ private struct HomeEnvironmentMap: View {
 private struct HomeProductCard: View {
     let model: AppModel
     let product: AgentProduct
+    let totalBytes: UInt64
     @State private var isHovering = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var homes: [AgentHome] {
         product.homes.sorted { $0.path.localizedStandardCompare($1.path) == .orderedAscending }
-    }
-
-    private var totalBytes: UInt64 {
-        guard let snapshot = model.snapshot else {
-            return homes.reduce(UInt64(0)) { $0 &+ $1.storage.physicalBytes }
-        }
-        let homeIDs = Set(product.homes.map(\.id))
-        var seen: Set<PhysicalResourceIdentity> = []
-        var total: UInt64 = 0
-        for artifact in snapshot.storageLedger.artifacts
-        where homeIDs.isDisjoint(with: artifact.homeIDs) == false {
-            guard seen.insert(artifact.id).inserted else { continue }
-            total &+= artifact.storage.physicalBytes
-        }
-        return total
     }
 
     private var possibleCount: Int {
