@@ -40,6 +40,10 @@ struct ContentView: View {
             }
         }
         .navigationSplitViewStyle(.balanced)
+        .task {
+            // 打开程序后后台轻量扫描已安装 Agent 版本；不阻塞窗口与首次完整扫描。
+            model.startBackgroundInstalledVersionScanIfNeeded()
+        }
     }
 
     /// 设计系统侧边栏：canvas 底、分组导航、选中态使用 accent 色（surface.selection 配方）。
@@ -125,6 +129,9 @@ private struct SidebarRow: View {
                 Text(model.localized(item.rawValue))
                     .font(DS.Typeface.body)
                     .foregroundStyle(isSelected ? DS.Semantic.accentPrimary : Color.primary)
+                if item == .market, model.marketUpdateCount > 0 {
+                    updateBadge
+                }
                 Spacer(minLength: 0)
             }
             .padding(.horizontal, DS.Space.x250)
@@ -154,6 +161,17 @@ private struct SidebarRow: View {
         .onChange(of: model.selection) { _, newValue in
             if newValue != item { locallySelected = false }
         }
+    }
+
+    private var updateBadge: some View {
+        let count = model.marketUpdateCount
+        return Text(count > 99 ? "99+" : "\(count)")
+            .font(.system(size: 9, weight: .bold, design: .rounded))
+            .foregroundStyle(.white)
+            .monospacedDigit()
+            .frame(minWidth: 16, minHeight: 16)
+            .background(Circle().fill(DS.Semantic.statusCritical))
+            .accessibilityLabel(model.localized("%d 个 Agent 可更新", count))
     }
 
     private var rowFill: Color {
@@ -1148,6 +1166,9 @@ private struct AgentHomeCard: View {
     }
 
     private var productName: String { product?.displayName ?? home.productID }
+    private var displayedVersion: String? {
+        model.installedVersion(for: home.productID)
+    }
     private var totalBytes: UInt64 { home.storage.physicalBytes }
     private var attributedBytes: UInt64 { slices.reduce(UInt64(0)) { $0 &+ $1.bytes } }
     private var remainderBytes: UInt64 { totalBytes > attributedBytes ? totalBytes - attributedBytes : 0 }
@@ -1289,8 +1310,27 @@ private struct AgentHomeCard: View {
                     .lineLimit(1)
             }
             Spacer(minLength: DS.Space.x200)
-            confidenceBadge
+            HStack(alignment: .center, spacing: DS.Space.x150) {
+                if let version = displayedVersion {
+                    versionBadge(version)
+                }
+                confidenceBadge
+            }
         }
+    }
+
+    private func versionBadge(_ version: String) -> some View {
+        Text("v\(version)")
+            .font(DS.Typeface.micro.weight(.semibold))
+            .foregroundStyle(DS.Semantic.accentPrimary)
+            .padding(.horizontal, DS.Space.x200)
+            .padding(.vertical, DS.Space.x100 + 1)
+            .background(Capsule(style: .continuous).fill(DS.Semantic.accentPrimary.opacity(0.10)))
+            .overlay(
+                Capsule(style: .continuous)
+                    .strokeBorder(DS.Semantic.accentPrimary.opacity(0.26), lineWidth: DS.Stroke.hairline)
+            )
+            .accessibilityLabel(model.localized("已安装版本 %@", version))
     }
 
     private var iconTile: some View {
@@ -1894,8 +1934,12 @@ private struct AgentDetailView: View {
             return nil
         }
         let confidence = model.localized(home.confidence == .confirmed ? "已确认" : "疑似")
-        return model.localized("%@ · %@", product.displayName, model.displayPath(home.path))
+        var line = model.localized("%@ · %@", product.displayName, model.displayPath(home.path))
             + " · " + model.discoverySourceTitle(home.source) + " · " + confidence
+        if let version = model.installedVersion(for: home.productID) {
+            line += " · v\(version)"
+        }
+        return line
     }
 
     // MARK: 概览读数

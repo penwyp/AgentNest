@@ -90,6 +90,11 @@ enum DS {
         static let agentCardColumnMaxWidth: CGFloat = 460
         /// 市场页内容列最大宽度（三类市场共用）。
         static let marketPageMaxWidth: CGFloat = 1_160
+        /// Agent 市场卡统一总高度；内容区高度 = 总高度 - MarketHoverCard 上下 padding。
+        /// 页眉在顶部、来源与版本页脚吸底；高度按「两行简介 + 版本行 + 单行安装进度」的最大内容计算，
+        /// 正常卡片中间只保留最小间距，不再出现大面积空置。
+        static let marketAgentCardHeight: CGFloat = 148
+        static let marketAgentCardContentHeight: CGFloat = 116
         /// 市场页搜索栏宽度（与分段控件同行的右侧搜索区）。
         static let marketSearchWidth: CGFloat = 300
         /// Agent 档案卡类别空间构成条高度。
@@ -1042,6 +1047,46 @@ struct DSIndeterminateScanBar: View {
         .accessibilityHidden(true)
     }
 }
+/// 市场版本拉取中的三点 loading：仅在网络请求在飞时存在，请求结束即移除；
+/// Reduce Motion 下静态显示省略号，不做循环动画。
+struct DSLoadingDots: View {
+    var tint: Color = DS.Semantic.accentPrimary
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        if reduceMotion {
+            Text("...")
+                .font(DS.Typeface.data.weight(.semibold))
+                .foregroundStyle(tint)
+                .accessibilityHidden(true)
+        } else {
+            TimelineView(.periodic(from: .now, by: 0.22)) { context in
+                let tick = Int(context.date.timeIntervalSinceReferenceDate / 0.22) % 4
+                HStack(alignment: .center, spacing: 3) {
+                    ForEach(0..<3, id: \.self) { index in
+                        Circle()
+                            .fill(tint)
+                            .frame(width: 4, height: 4)
+                            .opacity(dotOpacity(index: index, tick: tick))
+                    }
+                }
+                .frame(height: 8)
+            }
+            .accessibilityHidden(true)
+        }
+    }
+
+    private func dotOpacity(index: Int, tick: Int) -> Double {
+        let phase = (index - tick + 4) % 4
+        switch phase {
+        case 0: return 1.0
+        case 1: return 0.45
+        case 3: return 0.25
+        default: return 0.12
+        }
+    }
+}
+
 // MARK: - 激活门户组件
 
 /// 门户页脚链接：caption 字号、secondary 色，hover 转 primary 并加下划线。

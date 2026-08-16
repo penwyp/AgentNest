@@ -26,7 +26,9 @@
     "homepageURL": "https://opencode.ai",
     "install": {
       "kind": "brew",
-      "formula": "opencode"
+      "formula": "opencode",
+      "scriptURL": "https://opencode.ai/install",
+      "requiresNode": true
     }
   }
 }

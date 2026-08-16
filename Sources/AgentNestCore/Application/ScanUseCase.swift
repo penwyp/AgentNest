@@ -207,18 +207,31 @@ public struct ScanUseCase: Sendable {
         }
         let metadata = try FileMetadata.read(candidate.url).node
         var evidence: [String] = []
+        var version: String?
+        var versionEvidence: [String] = []
         var requiredValid = !definition.fingerprints.required.isEmpty
         for rule in definition.fingerprints.required {
-            let target = candidate.url.appending(path: rule.relativePath)
-            let valid = validateFingerprint(rule, at: target)
-            requiredValid = requiredValid && valid
-            if valid { evidence.append("required:\(rule.kind.rawValue):\(rule.relativePath)") }
+            let reading = readFingerprint(rule, at: candidate.url.appending(path: rule.relativePath))
+            requiredValid = requiredValid && reading.isValid
+            if reading.isValid {
+                evidence.append("required:\(rule.kind.rawValue):\(rule.relativePath)")
+                if version == nil, let value = reading.version {
+                    version = value
+                    versionEvidence.append("version:\(rule.kind.rawValue):\(rule.relativePath)")
+                }
+            }
         }
-        for rule in definition.fingerprints.optional where validateFingerprint(rule, at: candidate.url.appending(path: rule.relativePath)) {
+        for rule in definition.fingerprints.optional {
+            let reading = readFingerprint(rule, at: candidate.url.appending(path: rule.relativePath))
+            guard reading.isValid else { continue }
             evidence.append("optional:\(rule.kind.rawValue):\(rule.relativePath)")
+            if version == nil, let value = reading.version {
+                version = value
+                versionEvidence.append("version:\(rule.kind.rawValue):\(rule.relativePath)")
+            }
         }
         let negativeHit = definition.fingerprints.negative.contains { rule in
-            validateFingerprint(rule, at: candidate.url.appending(path: rule.relativePath))
+            readFingerprint(rule, at: candidate.url.appending(path: rule.relativePath)).isValid
         }
         let confidence: AgentHomeConfidence
         let isUserConfirmed = userConfirmedHomes[candidate.url.path] == definition.id
@@ -241,24 +254,64 @@ public struct ScanUseCase: Sendable {
             source: isUserConfirmed ? .userConfirmed : candidate.source,
             confidence: confidence,
             evidence: evidence,
-            storage: StorageMeasurement(logicalBytes: 0, physicalBytes: 0, itemCount: 0)
+            storage: StorageMeasurement(logicalBytes: 0, physicalBytes: 0, itemCount: 0),
+            version: version,
+            versionEvidence: versionEvidence.isEmpty ? nil : versionEvidence
         )
     }
 
-    private func validateFingerprint(_ rule: FingerprintRule, at url: URL) -> Bool {
+    private struct FingerprintReading {
+        let isValid: Bool
+        let version: String?
+
+        init(isValid: Bool, version: String? = nil) {
+            self.isValid = isValid
+            self.version = version
+        }
+    }
+
+    private func readFingerprint(_ rule: FingerprintRule, at url: URL) -> FingerprintReading {
         var isDirectory: ObjCBool = false
-        guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) else { return false }
+        guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) else {
+            return FingerprintReading(isValid: false)
+        }
         switch rule.kind {
         case .file:
-            return !isDirectory.boolValue
+            return FingerprintReading(isValid: !isDirectory.boolValue)
         case .directory:
-            return isDirectory.boolValue
+            return FingerprintReading(isValid: isDirectory.boolValue)
         case .jsonFile:
             guard !isDirectory.boolValue,
                   let data = try? Data(contentsOf: url, options: [.mappedIfSafe]),
                   data.count <= 1_048_576,
-                  let object = try? JSONSerialization.jsonObject(with: data) else { return false }
-            return object is [String: Any]
+                  let object = try? JSONSerialization.jsonObject(with: data),
+                  object is [String: Any] else {
+                return FingerprintReading(isValid: false)
+            }
+            return FingerprintReading(
+                isValid: true,
+                version: versionValue(in: object, keyPath: rule.versionKeyPath)
+            )
+        }
+    }
+
+    private func versionValue(in object: Any, keyPath: String?) -> String? {
+        guard let keyPath, !keyPath.isEmpty else { return nil }
+        var current = object
+        for component in keyPath.split(separator: ".", omittingEmptySubsequences: false) {
+            guard let dictionary = current as? [String: Any],
+                  let next = dictionary[String(component)] else { return nil }
+            current = next
+        }
+        switch current {
+        case let string as String:
+            let normalized = AgentVersion.normalizedVersion(string)
+            return normalized.isEmpty || normalized.count > 128 ? nil : normalized
+        case let number as NSNumber:
+            let value = AgentVersion.normalizedVersion(number.stringValue)
+            return value.isEmpty || value.count > 128 ? nil : value
+        default:
+            return nil
         }
     }
 
@@ -440,13 +493,49 @@ public struct ScanUseCase: Sendable {
                 source: home.source,
                 confidence: confidence,
                 evidence: home.evidence + unstableEvidence.map { "unstable:\($0)" },
-                storage: stableMeasurement
+                storage: stableMeasurement,
+                version: home.version,
+                versionEvidence: home.versionEvidence
             )
         }
     }
 
     private func isIgnored(_ url: URL, ignoredLocations: [URL]) -> Bool {
         ignoredLocations.contains { CanonicalPath.isEqualOrDescendant(url.path, of: $0.path) }
+    }
+
+    /// 轻量版本扫描：只验证候选 Home 与版本指纹，不递归索引、不测量空间。
+    /// 用于 App 启动后的后台版本探测；与完整扫描互不阻塞。
+    public func discoverInstalledVersions(request: ScanRequest) async -> [InstalledAgentVersion] {
+        let ignoredLocations = request.ignoredLocations.map { $0.resolvingSymlinksInPath().standardizedFileURL }
+        var userConfirmedHomes: [String: String] = [:]
+        for (path, productID) in request.userConfirmedHomes {
+            userConfirmedHomes[URL(fileURLWithPath: path).resolvingSymlinksInPath().standardizedFileURL.path] = productID
+        }
+
+        var versions: [InstalledAgentVersion] = []
+        let scanningDefinitions = catalog.definitions.filter(\.participatesInScanning)
+        for definition in scanningDefinitions {
+            for candidate in candidateHomes(
+                definition: definition,
+                request: request,
+                userConfirmedHomes: userConfirmedHomes,
+                ignoredLocations: ignoredLocations
+            ) {
+                guard !Task.isCancelled else { return versions }
+                guard let home = try? validate(
+                    candidate: candidate,
+                    definition: definition,
+                    userConfirmedHomes: userConfirmedHomes
+                ), home.confidence == .confirmed, let version = home.version else { continue }
+                versions.append(InstalledAgentVersion(
+                    productID: definition.id,
+                    version: version,
+                    evidence: home.versionEvidence ?? ["version:\(definition.id)"]
+                ))
+            }
+        }
+        return versions
     }
 }
 

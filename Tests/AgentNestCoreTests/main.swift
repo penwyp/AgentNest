@@ -1,4 +1,4 @@
-import AgentNestCore
+@testable import AgentNestCore
 import CryptoKit
 import CoreGraphics
 import Darwin
@@ -10,7 +10,13 @@ struct AgentNestCoreTestRunner {
     static func main() async {
         do {
             try testDefinitionCatalog()
+            try testMarketVersionRefreshPolicy()
+            try testHomebrewVersionParsing()
+            try testExecutableVersionProbeParsing()
             try await testScan()
+            try await testInstalledVersionExtraction()
+            try testInstalledAppBundleVersionProbe()
+            try await testMarketplaceVersionService()
             try await testSkills()
             try await testCleanupPolicy()
             try testStorageOwnershipScope()
@@ -55,6 +61,45 @@ struct AgentNestCoreTestRunner {
             !$0.capabilities.space && !$0.capabilities.skills && !$0.capabilities.activity && !$0.capabilities.cleanup
         }, "empty definitions expose no capabilities")
 
+        func install(for id: String) -> AgentInstallMethod? {
+            catalog.definitions.first { $0.id == id }?.marketplace?.install
+        }
+        try expect(
+            install(for: "openai.codex") == AgentInstallMethod(kind: .cask, formula: "codex") &&
+                install(for: "anthropic.claude-code") == AgentInstallMethod(
+                    kind: .cask,
+                    formula: "claude-code",
+                    scriptURL: "https://claude.ai/install.sh",
+                    requiresNode: true
+                ) &&
+                install(for: "cursor.cursor-cli") == AgentInstallMethod(kind: .cask, formula: "cursor-cli") &&
+                install(for: "aider.aider") == AgentInstallMethod(
+                    kind: .brew,
+                    formula: "aider",
+                    scriptURL: "https://aider.chat/install.sh"
+                ) &&
+                install(for: "inflection.pi") == AgentInstallMethod(
+                    kind: .npm,
+                    formula: "@earendil-works/pi-coding-agent",
+                    requiresNode: true
+                ),
+            "market install methods match the real Homebrew formula/cask tokens"
+        )
+        try expect(
+            catalog.definitions.first { $0.id == "inflection.pi" }?.marketplace?.homepageURL == "https://pi.dev",
+            "Pi marketplace homepage points to pi.dev"
+        )
+        try expect(
+            catalog.definitions.first { $0.id == "workbuddy" }?.marketplace?.homepageURL == "https://www.workbuddy.ai/" &&
+                install(for: "workbuddy") == AgentInstallMethod(
+                    kind: .website,
+                    formula: "WorkBuddy",
+                    websiteUpdateURL: "https://www.workbuddy.ai/v2/update?platform={platform}",
+                    installedAppName: "WorkBuddy AI"
+                ),
+            "WorkBuddy uses its official website for download and latest version detection"
+        )
+
         let unknown = Data("""
         {"schemaVersion":1,"id":"test","displayName":"Test","unexpected":true,
         "homeDiscovery":{"defaultPaths":[],"environmentVariables":[]},
@@ -90,11 +135,133 @@ struct AgentNestCoreTestRunner {
         try expectThrows("default Home glob can only match one directory level") {
             _ = try AgentDefinitionCatalog.load(data: unsafePattern)
         }
+        let unsafeVersionPath = Data("""
+        {"schemaVersion":1,"id":"test","displayName":"Test",
+        "homeDiscovery":{"defaultPaths":["~/.test"],"environmentVariables":[]},
+        "fingerprints":{"required":[{"kind":"jsonFile","relativePath":"version.json","versionKeyPath":"../bad"}],"optional":[],"negative":[]},
+        "skills":[],"artifacts":[],"capabilities":{"space":false,"skills":false,"activity":false,"cleanup":false}}
+        """.utf8)
+        try expectThrows("unsafe version key path is rejected") {
+            _ = try AgentDefinitionCatalog.load(data: unsafeVersionPath)
+        }
+        let wrongVersionKind = Data("""
+        {"schemaVersion":1,"id":"test","displayName":"Test",
+        "homeDiscovery":{"defaultPaths":["~/.test"],"environmentVariables":[]},
+        "fingerprints":{"required":[{"kind":"file","relativePath":"version","versionKeyPath":"version"}],"optional":[],"negative":[]},
+        "skills":[],"artifacts":[],"capabilities":{"space":false,"skills":false,"activity":false,"cleanup":false}}
+        """.utf8)
+        try expectThrows("version key path is only valid on jsonFile fingerprints") {
+            _ = try AgentDefinitionCatalog.load(data: wrongVersionKind)
+        }
+        let unsafeScriptURL = Data("""
+        {"schemaVersion":1,"id":"test","displayName":"Test",
+        "homeDiscovery":{"defaultPaths":["~/.test"],"environmentVariables":[]},
+        "fingerprints":{"required":[],"optional":[],"negative":[]},
+        "skills":[],"artifacts":[],
+        "capabilities":{"space":false,"skills":false,"activity":false,"cleanup":false},
+        "marketplace":{"summary":"Test","homepageURL":"https://example.com",
+        "install":{"kind":"brew","formula":"test","scriptURL":"http://insecure.example/install.sh"}}}
+        """.utf8)
+        try expectThrows("install scripts must use HTTPS") {
+            _ = try AgentDefinitionCatalog.load(data: unsafeScriptURL)
+        }
+        try expect(
+            AgentVersion.isUpdate(latest: "2.0.0", installed: "1.9.9") &&
+                !AgentVersion.isUpdate(latest: "1.0.0", installed: "1.0.0") &&
+                !AgentVersion.isUpdate(latest: "latest", installed: "1.0.0") &&
+                AgentVersion.isUpdate(latest: "v2.0", installed: "1.10.0") &&
+                AgentVersion.isUpdate(latest: "2.0.0, 2.0.1", installed: "1.9.9") &&
+                !AgentVersion.isUpdate(latest: "5.3.13.35912340", installed: "5.3.13") &&
+                AgentVersion.isUpdate(latest: "5.3.14.35912340", installed: "5.3.13"),
+            "agent version comparison handles semver, unknown versions, v prefixes, and comma suffixes"
+        )
+        try expect(
+            AgentVersion.isSameRelease("5.3.13", "5.3.13.35912340") &&
+                !AgentVersion.isSameRelease("5.2.6", "5.3.13.35912340"),
+            "website install completion accepts app bundle short versions within the same release"
+        )
         try expect(
             CanonicalPath.isEqualOrDescendant("/tmp/fixture", of: "/") &&
                 CanonicalPath.isDescendant("/foo/child", of: "/foo") &&
                 !CanonicalPath.isEqualOrDescendant("/foobar", of: "/foo"),
             "canonical path containment handles filesystem root and component boundaries"
+        )
+    }
+
+    private static func testMarketVersionRefreshPolicy() throws {
+        let now = Date(timeIntervalSince1970: 1_000_000)
+        let policy = MarketVersionRefreshPolicy(cacheTTL: 30 * 60, retryAfter: 2 * 60)
+
+        let stale = policy.staleProductIDs(
+            allProductIDs: ["a", "b", "c"],
+            fetchedAtByProduct: [
+                "a": now.addingTimeInterval(-31 * 60),
+                "b": now.addingTimeInterval(-5 * 60),
+            ],
+            now: now
+        )
+        try expect(stale == ["a", "c"], "only missing or TTL-expired products are refreshed")
+
+        try expect(
+            policy.shouldRefresh(force: false, staleProductIDs: stale, lastAttemptAt: now.addingTimeInterval(-60), now: now) == false,
+            "failed refreshes respect the retry backoff"
+        )
+        try expect(
+            policy.shouldRefresh(force: false, staleProductIDs: stale, lastAttemptAt: now.addingTimeInterval(-121), now: now),
+            "stale products refresh after the retry backoff"
+        )
+        try expect(
+            policy.shouldRefresh(force: false, staleProductIDs: [], lastAttemptAt: nil, now: now) == false,
+            "fresh caches do not trigger requests"
+        )
+        try expect(
+            policy.shouldRefresh(force: true, staleProductIDs: [], lastAttemptAt: now.addingTimeInterval(-1), now: now),
+            "explicit force refresh bypasses cache and backoff"
+        )
+    }
+
+    private static func testHomebrewVersionParsing() throws {
+        let output = """
+        codex 0.51.0,1
+        cursor 2.1.0
+        automake 1.16.5
+        """
+        let versions = try unwrap(
+            HomebrewAgentVersionProbe.parseVersions(output, productsByFormula: [
+                "codex": "openai.codex",
+                "cursor": "cursor.cursor",
+            ]),
+            "homebrew version parser"
+        )
+        try expect(
+            versions == [
+                "openai.codex": "0.51.0",
+                "cursor.cursor": "2.1.0",
+            ],
+            "brew list output maps formula versions to product IDs and ignores unrelated formulas"
+        )
+    }
+
+    private static func testExecutableVersionProbeParsing() throws {
+        try expect(
+            ExecutableAgentVersionProbe.parseVersionOutput("codex-cli 0.146.0\n") == "0.146.0",
+            "codex-cli version output is parsed"
+        )
+        try expect(
+            ExecutableAgentVersionProbe.parseVersionOutput("2.1.152 (Claude Code)") == "2.1.152",
+            "claude version output is parsed"
+        )
+        try expect(
+            ExecutableAgentVersionProbe.parseVersionOutput("aider 0.86.2") == "0.86.2",
+            "aider version output is parsed"
+        )
+        try expect(
+            ExecutableAgentVersionProbe.parseVersionOutput("1.2.3, 1.2.4") == "1.2.3",
+            "executable version output keeps only the first comma-separated token"
+        )
+        try expect(
+            ExecutableAgentVersionProbe.parseVersionOutput("no version here") == nil,
+            "non-version output is not fabricated"
         )
     }
 
@@ -141,6 +308,21 @@ struct AgentNestCoreTestRunner {
         try expect(snapshot.products.first?.installations.isEmpty == true && snapshot.products.first?.profiles.isEmpty == true, "installation and profile are not fabricated without evidence")
         let defaultResult = try unwrap(confirmed.first { $0.path == defaultHome.path }, "default home")
         try expect(defaultResult.storage.itemCount == 3, "hard links count once in physical ledger; got \(defaultResult.storage.itemCount)")
+        try expect(
+            defaultResult.version == "fixture" &&
+                defaultResult.versionEvidence?.contains("version:jsonFile:version.json") == true,
+            "scan extracts the Agent version declared by the jsonFile version key path"
+        )
+        let discoveredVersions = await ScanUseCase(catalog: try AgentDefinitionCatalog.bundled())
+            .discoverInstalledVersions(request: ScanRequest(
+                homeDirectory: root,
+                customLocations: [alias],
+                environment: ["CODEX_HOME": deepHome.path]
+            ))
+        try expect(
+            discoveredVersions.contains { $0.productID == "openai.codex" && $0.version == "fixture" },
+            "lightweight installed-version scan reads versions without indexing storage"
+        )
         try expect(Set(snapshot.storageLedger.artifacts.map(\.id)).count == snapshot.storageLedger.artifacts.count, "storage ledger contains each physical resource once")
         try expect(
             snapshot.totalStorage.physicalBytes == snapshot.storageLedger.artifacts.reduce(0) { $0 &+ $1.storage.physicalBytes },
@@ -327,6 +509,166 @@ struct AgentNestCoreTestRunner {
             permissionSnapshot.isPartial && permissionSnapshot.coverage.unreadableLocationCount >= 1,
             "an unreadable subtree preserves the scan while making affected coverage partial"
         )
+    }
+
+    private static func testInstalledVersionExtraction() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "AgentNestVersionTests-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let home = root.appending(path: ".codex")
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        try Data("""
+        {"build":{"version":"1.2.3"},"channel":"stable"}
+        """.utf8).write(to: home.appending(path: "version.json"))
+
+        let definition = try AgentDefinitionCatalog.load(data: Data("""
+        {"schemaVersion":1,"id":"test.versioned-agent","displayName":"Versioned Agent",
+        "homeDiscovery":{"defaultPaths":["~/.codex"],"environmentVariables":[]},
+        "fingerprints":{"required":[{"kind":"jsonFile","relativePath":"version.json","versionKeyPath":"build.version"}],"optional":[],"negative":[]},
+        "skills":[],"artifacts":[],"capabilities":{"space":false,"skills":false,"activity":false,"cleanup":false}}
+        """.utf8))
+        let catalog = try AgentDefinitionCatalog(definitions: [definition])
+        let snapshot = try await ScanUseCase(catalog: catalog).execute(request: ScanRequest(homeDirectory: root))
+        let scannedHome = try unwrap(snapshot.homes.first, "versioned agent home")
+        try expect(
+            scannedHome.version == "1.2.3" &&
+                scannedHome.versionEvidence?.contains("version:jsonFile:version.json") == true,
+            "nested versionKeyPath values are extracted with evidence during a full scan"
+        )
+
+        try Data("{\"build\":{\"version\":999}}".utf8).write(to: home.appending(path: "version.json"))
+        let numericSnapshot = try await ScanUseCase(catalog: catalog).execute(request: ScanRequest(homeDirectory: root))
+        try expect(numericSnapshot.homes.first?.version == "999", "numeric JSON versions are normalized to strings")
+
+        try Data("{\"build\":{\"version\":\"1.2.3, 1.2.4\"}}".utf8).write(to: home.appending(path: "version.json"))
+        let commaSnapshot = try await ScanUseCase(catalog: catalog).execute(request: ScanRequest(homeDirectory: root))
+        try expect(commaSnapshot.homes.first?.version == "1.2.3", "scanned versions keep only the part before the first comma")
+
+        try Data("{\"build\":{\"channel\":\"stable\"}}".utf8).write(to: home.appending(path: "version.json"))
+        let missingVersionSnapshot = try await ScanUseCase(catalog: catalog).execute(request: ScanRequest(homeDirectory: root))
+        try expect(
+            missingVersionSnapshot.homes.first?.confidence == .confirmed &&
+                missingVersionSnapshot.homes.first?.version == nil,
+            "a valid fingerprint without a version field still confirms the Home without fabricating a version"
+        )
+
+        let legacyHomeJSON = Data("""
+        {"id":{"device":1,"inode":2,"kind":"directory"},
+        "productID":"openai.codex","displayName":"Codex","path":"/tmp/.codex",
+        "source":"defaultPath","confidence":"confirmed","evidence":[],
+        "storage":{"logicalBytes":0,"physicalBytes":0,"itemCount":0}}
+        """.utf8)
+        let legacyHome = try JSONDecoder().decode(AgentHome.self, from: legacyHomeJSON)
+        try expect(
+            legacyHome.version == nil && legacyHome.versionEvidence == nil,
+            "snapshots saved before version support still decode successfully"
+        )
+    }
+
+    private static func testInstalledAppBundleVersionProbe() throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "AgentNestAppBundleProbe-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let contents = root.appending(path: "Fixture.app/Contents")
+        try FileManager.default.createDirectory(at: contents, withIntermediateDirectories: true)
+        let info = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+        <plist version="1.0"><dict><key>CFBundleShortVersionString</key><string>1.2.3</string></dict></plist>
+        """
+        try Data(info.utf8).write(to: contents.appending(path: "Info.plist"))
+        try expect(
+            InstalledAppBundleVersionProbe.installedVersion(
+                appName: "Fixture",
+                additionalApplicationDirectories: [root]
+            ) == "1.2.3",
+            "installed app bundle version is read from CFBundleShortVersionString"
+        )
+    }
+
+    private static func testMarketplaceVersionService() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [URLProtocolStub.self]
+        let session = URLSession(configuration: configuration)
+        let service = MarketplaceVersionService(
+            baseURL: URL(string: "https://unit.test/api")!,
+            npmRegistryURL: URL(string: "https://unit.test")!,
+            appStoreLookupURL: URL(string: "https://unit.test/lookup")!,
+            session: session
+        )
+
+        URLProtocolStub.register(
+            path: "/api/formula/codex.json",
+            data: Data("{\"versions\":{\"stable\":\"0.51.0\"}}".utf8)
+        )
+        let formulaVersion = try await service.latestVersion(for: AgentInstallMethod(kind: .brew, formula: "codex"))
+        try expect(formulaVersion == "0.51.0", "formula latest version is read from versions.stable")
+
+        URLProtocolStub.register(
+            path: "/api/cask/cursor.json",
+            data: Data("{\"version\":\"2.1.0,250207\"}".utf8)
+        )
+        let caskVersion = try await service.latestVersion(for: AgentInstallMethod(kind: .cask, formula: "cursor"))
+        try expect(caskVersion == "2.1.0", "cask version keeps only the part before the first comma")
+
+        URLProtocolStub.register(
+            path: "/@earendil-works/pi-coding-agent",
+            data: Data("{\"dist-tags\":{\"latest\":\"0.84.2\"}}".utf8)
+        )
+        let npmVersion = try await service.latestVersion(
+            for: AgentInstallMethod(kind: .npm, formula: "@earendil-works/pi-coding-agent")
+        )
+        try expect(npmVersion == "0.84.2", "npm latest version is read from dist-tags.latest")
+
+        URLProtocolStub.register(
+            path: "/v2/update",
+            data: Data("{\"version\":\"5.3.13.35912340\",\"productVersion\":\"5.3.13.35912340\"}".utf8)
+        )
+        let websiteVersion = try await service.latestVersion(
+            websiteUpdateURL: "https://www.workbuddy.ai/v2/update?platform=workbuddy-darwin-arm64"
+        )
+        try expect(websiteVersion == "5.3.13.35912340", "official website update JSON returns the latest version")
+        let websiteMethodVersion = try await service.latestVersion(
+            for: AgentInstallMethod(
+                kind: .website,
+                formula: "WorkBuddy",
+                websiteUpdateURL: "https://unit.test/v2/update?platform={platform}"
+            )
+        )
+        try expect(websiteMethodVersion == "5.3.13.35912340", "website install method resolves the current platform and version")
+
+        URLProtocolStub.register(
+            path: "/lookup",
+            data: Data("{\"results\":[{\"version\":\"1.9.4\"}]}".utf8)
+        )
+        let appStoreVersion = try await service.latestVersion(appStoreID: "6761374913")
+        try expect(appStoreVersion == "1.9.4", "App Store latest version is read from the lookup result")
+
+        URLProtocolStub.register(
+            path: "/api/formula/missing-version.json",
+            data: Data("{\"name\":\"missing-version\"}".utf8),
+            status: 200
+        )
+        try await expectThrows("missing version field is a structured service error") {
+            _ = try await service.latestVersion(for: AgentInstallMethod(kind: .brew, formula: "missing-version"))
+        }
+
+        URLProtocolStub.register(
+            path: "/api/formula/not-found.json",
+            data: Data("not found".utf8),
+            status: 404
+        )
+        try await expectThrows("non-200 responses fail closed") {
+            _ = try await service.latestVersion(for: AgentInstallMethod(kind: .brew, formula: "not-found"))
+        }
+
+        URLProtocolStub.register(
+            path: "/api/cask/empty-version.json",
+            data: Data("{\"version\":\"   \"}".utf8)
+        )
+        try await expectThrows("blank versions are rejected") {
+            _ = try await service.latestVersion(for: AgentInstallMethod(kind: .cask, formula: "empty-version"))
+        }
+
+        URLProtocolStub.reset()
     }
 
     private static func testReceipts() async throws {
@@ -1472,6 +1814,73 @@ private struct StormEvidenceProvider: SystemActivityEvidenceProvider, Sendable {
             droppedCount: 0
         )
     }
+}
+
+private final class URLProtocolStubRegistry: @unchecked Sendable {
+    struct Handler {
+        let data: Data
+        let status: Int
+    }
+
+    private let lock = NSLock()
+    private var handlers: [String: Handler] = [:]
+
+    func register(path: String, data: Data, status: Int) {
+        lock.lock()
+        handlers[path] = Handler(data: data, status: status)
+        lock.unlock()
+    }
+
+    func reset() {
+        lock.lock()
+        handlers.removeAll()
+        lock.unlock()
+    }
+
+    func handler(for path: String) -> Handler? {
+        lock.lock()
+        defer { lock.unlock() }
+        if let direct = handlers[path] { return direct }
+        guard let decoded = path.removingPercentEncoding else { return nil }
+        return handlers[decoded]
+    }
+}
+
+private final class URLProtocolStub: URLProtocol {
+    private static let registry = URLProtocolStubRegistry()
+
+    static func register(path: String, data: Data, status: Int = 200) {
+        registry.register(path: path, data: data, status: status)
+    }
+
+    static func reset() {
+        registry.reset()
+    }
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        guard let url = request.url else {
+            client?.urlProtocol(self, didFailWithError: URLError(.badURL))
+            return
+        }
+        guard let handler = Self.registry.handler(for: url.path),
+              let response = HTTPURLResponse(
+                  url: url,
+                  statusCode: handler.status,
+                  httpVersion: nil,
+                  headerFields: ["Content-Type": "application/json"]
+              ) else {
+            client?.urlProtocol(self, didFailWithError: URLError(.fileDoesNotExist))
+            return
+        }
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: handler.data)
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    override func stopLoading() {}
 }
 
 private final class TestClock: @unchecked Sendable {

@@ -29,7 +29,7 @@ AgentNest 的界面应当像一块安静的 macOS 原生仪器面板：
 | 材质 | **不透明表面**。禁止 `ultraThinMaterial`/`thickMaterial`/`regularMaterial` 叠加，禁止 `NSVisualEffectView`；唯一例外：页面主 CTA `dsPrimary` 的单层 `ultraThinMaterial`（§7.4） |
 | 阴影 | 最多 **1 层**浅投影：卡片 blur ≤ 4 pt / y ≤ 2 pt，页面主 CTA（§7.4）blur ≤ 6 pt / y ≤ 2 pt；禁止双层/多色阴影 |
 | 渐变 | 仅允许顶部高光描边（0.6 pt）与图表面积填充；禁止大面积装饰渐变。登记的例外（各 1 处、静态、单层）：激活门户 `DSHeroWash`（§5.7）与页面主 CTA `dsPrimary` 玻璃 tint（§7.4） |
-| 动效 | 只在 hover / press / state 切换时发生，时长 ≤ 0.40 s；**禁止循环、脉冲、持续动画**。唯一例外：扫描进行态的进度指示（`DSIndeterminateScanBar`：2 pt 扫描条 30 fps 节流、扫描结束即移除、Reduce Motion 静态化；底部栏每秒计时），与 §5.7 `DSHeroWash` 同级登记 |
+| 动效 | 只在 hover / press / state 切换时发生，时长 ≤ 0.40 s；**禁止循环、脉冲、持续动画**。登记例外：① 扫描进行态的进度指示（`DSIndeterminateScanBar`：2 pt 扫描条 30 fps 节流、扫描结束即移除、Reduce Motion 静态化；底部栏每秒计时）；② 市场版本请求在飞时的三点 loading（`DSLoadingDots`：0.22 s 节流、请求结束即移除、Reduce Motion 静态省略号）。二者与 §5.7 `DSHeroWash` 同级登记 |
 | 滚动 | 列表 / 表单使用原生 `List` / `Form` / `ScrollView`，不自定义滚动容器 |
 | 图表 | 使用单一 `Path` 或少量 `Shape` 绘制；禁止每帧重建大量视图层级 |
 | 目标 | 空闲 CPU 平均 < 1%；滚动与导航 60 fps；扫描/监控运行中 UI 保持可交互 |
@@ -595,7 +595,8 @@ hover 在指针离开或窗口失活时清除；pressed 不叠加 hover；focus 
 | Agent 搜索栏 | `AgentListView.searchField`（ContentView.swift） | 名称/路径/产品名实时过滤 |
 | 类别色板 | `AgentCategoryPalette`（ContentView.swift） | 档案卡与详情页共用类别 → 系列色 |
 | 类别构成派生 | `computeAgentCardDerived`（ContentView.swift） | Agent 档案卡空间构成（后台派生） |
-| 不确定扫描条 | `DSIndeterminateScanBar`（DesignSystem.swift） | 扫描态底部栏（§2 唯一例外） |
+| 不确定扫描条 | `DSIndeterminateScanBar`（DesignSystem.swift） | 扫描态底部栏（§2 例外①） |
+| 版本加载点 | `DSLoadingDots`（DesignSystem.swift） | 市场最新版本请求在飞（§2 例外②） |
 | Agent 市场面板 | `AgentMarketSheet` / `AgentMarketCard`（ContentView.swift） | Agent 市场 sheet 与产品卡 |
 | Agent 安装执行器 | `InstallAgentRunner`（Core） | 市场真实 Homebrew 安装（流式/取消/失败） |
 | 目录市场字段 | `AgentDefinition.marketplace`（Core） | 市场简介 / 主页 / 安装方式 |

@@ -24,7 +24,8 @@
     "homepageURL": "https://chatgpt.com",
     "install": {
       "kind": "cask",
-      "formula": "chatgpt"
+      "formula": "chatgpt",
+      "installedAppName": "ChatGPT"
     }
   }
 }

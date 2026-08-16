@@ -50,7 +50,8 @@
     "homepageURL": "https://www.cursor.com",
     "install": {
       "kind": "cask",
-      "formula": "cursor"
+      "formula": "cursor",
+      "installedAppName": "Cursor"
     }
   }
 }

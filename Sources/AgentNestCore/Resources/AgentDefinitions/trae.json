@@ -41,7 +41,8 @@
     "homepageURL": "https://www.trae.ai",
     "install": {
       "kind": "cask",
-      "formula": "trae"
+      "formula": "trae",
+      "installedAppName": "Trae"
     }
   }
 }

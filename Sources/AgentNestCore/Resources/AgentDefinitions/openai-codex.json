@@ -16,10 +16,17 @@
     "required": [
       {
         "kind": "jsonFile",
-        "relativePath": "version.json"
+        "relativePath": "version.json",
+        "versionKeyPath": "version"
       }
     ],
-    "optional": [],
+    "optional": [
+      {
+        "kind": "jsonFile",
+        "relativePath": "models_cache.json",
+        "versionKeyPath": "client_version"
+      }
+    ],
     "negative": []
   },
   "skills": [
@@ -88,7 +95,7 @@
     "summary": "OpenAI's terminal coding agent.",
     "homepageURL": "https://openai.com/codex",
     "install": {
-      "kind": "brew",
+      "kind": "cask",
       "formula": "codex"
     }
   }
