@@ -18,11 +18,17 @@
     ],
     "negative": []
   },
-  "skills": [],
+  "skills": [
+    {
+      "relativePath": "skills",
+      "format": "directory-skill-md",
+      "writable": true
+    }
+  ],
   "artifacts": [],
   "capabilities": {
     "space": true,
-    "skills": false,
+    "skills": true,
     "activity": false,
     "cleanup": false
   },

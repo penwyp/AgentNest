@@ -1906,20 +1906,71 @@ private struct AgentCardSkeleton: View {
 
 
 
+private struct AgentDetailStatCard: View {
+    let title: String
+    let value: String
+    let glyph: String
+    let tint: Color
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: DS.Space.x100) {
+            HStack(spacing: DS.Space.x100) {
+                Image(systemName: glyph)
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(tint)
+                Text(title)
+                    .font(DS.Typeface.label)
+                    .foregroundStyle(.secondary)
+            }
+            Text(value)
+                .font(DS.Typeface.metricValue)
+                .monospacedDigit()
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+        }
+        .frame(maxWidth: .infinity, minHeight: 68, alignment: .leading)
+        .padding(DS.Space.x300)
+        .background(Color(nsColor: DS.Neutral.raised), in: RoundedRectangle(cornerRadius: DS.Radius.panel, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: DS.Radius.panel, style: .continuous)
+                .strokeBorder(Color.primary.opacity(DS.Opacity.borderQuiet), lineWidth: DS.Stroke.hairline)
+        }
+    }
+}
+
 /// Agent 产品详情页：一层只回答「本机生效的是哪个可执行文件」，
 /// Home 配置列表是产品内部可选项；点击 Home 才进入该 Home 的存储/Skill/会话详情。
 private struct AgentProductDetailView: View {
     @Bindable var model: AppModel
     let productID: String
+    @State private var insight: AgentInsightSnapshot?
 
     private var product: AgentProduct? { model.agentProduct(withID: productID) }
     private var homes: [AgentHome] { model.agentHomes(for: productID) }
     private var installation: AgentInstallation? { model.effectiveInstallation(for: productID) }
 
+    private var homeIDs: Set<PhysicalResourceIdentity> { Set(homes.map(\.id)) }
+    private var skillInstallations: [SkillInstallation] {
+        model.skillIndex?.logicalSkills
+            .flatMap(\.variants)
+            .flatMap(\.installations)
+            .filter { homeIDs.contains($0.homeID) } ?? []
+    }
+    private var insightKey: String? {
+        guard let generation = model.snapshot?.generation else { return nil }
+        let homeSignature = homes.map { $0.path }.joined(separator: "|")
+        return "\(generation.uuidString)-\(productID)-\(homeSignature)"
+    }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: DS.Space.x400) {
+                heroStats
                 installationSection
+                usageSection
+                configurationSection
+                mcpSection
+                skillsSection
                 homeConfigurationSection
             }
             .padding(.horizontal, DS.Layout.pageHorizontalInset)
@@ -1930,6 +1981,17 @@ private struct AgentProductDetailView: View {
         .safeAreaInset(edge: .top, spacing: 0) {
             detailHeader
         }
+        .task(id: insightKey) { await recomputeInsight() }
+    }
+
+    @MainActor
+    private func recomputeInsight() async {
+        guard let product else { insight = nil; return }
+        let value = await Task.detached(priority: .utility) {
+            AgentInsightUseCase().execute(product: product)
+        }.value
+        guard self.product?.id == productID else { return }
+        insight = value
     }
 
     private var detailHeader: some View {
@@ -2012,6 +2074,298 @@ private struct AgentProductDetailView: View {
                 }
             }
         }
+    }
+
+    // MARK: 概览读数
+
+    private var heroStats: some View {
+        LazyVGrid(
+            columns: [GridItem(.adaptive(minimum: 150, maximum: 240), spacing: DS.Space.x300)],
+            alignment: .leading,
+            spacing: DS.Space.x300
+        ) {
+            AgentDetailStatCard(
+                title: model.localized("版本"),
+                value: model.installedVersion(for: productID).map { "v\($0)" } ?? "—",
+                glyph: "number",
+                tint: DS.Semantic.accentPrimary
+            )
+            AgentDetailStatCard(
+                title: model.localized("Home 配置"),
+                value: "\(homes.count)",
+                glyph: "folder",
+                tint: DS.Chart.series02
+            )
+            AgentDetailStatCard(
+                title: model.localized("Skill"),
+                value: "\(skillInstallations.count)",
+                glyph: "hammer",
+                tint: DS.Chart.series06
+            )
+            AgentDetailStatCard(
+                title: model.localized("MCP"),
+                value: "\(insight?.mcpInstallations.count ?? 0)",
+                glyph: "point.3.connected.trianglepath.dotted",
+                tint: DS.Chart.series05
+            )
+            AgentDetailStatCard(
+                title: model.localized("Token"),
+                value: tokenText(insight?.usage?.inputTokens),
+                glyph: "text.word.spacing",
+                tint: DS.Chart.series04
+            )
+        }
+    }
+
+    // MARK: 用量与套餐
+
+    @ViewBuilder
+    private var usageSection: some View {
+        if let usage = insight?.usage {
+            VStack(alignment: .leading, spacing: DS.Space.x300) {
+                Text(model.localized("用量与套餐"))
+                    .font(DS.Typeface.title)
+                DSCard(padding: DS.Space.x400) {
+                    VStack(alignment: .leading, spacing: DS.Space.x300) {
+                        LazyVGrid(
+                            columns: [GridItem(.adaptive(minimum: 150, maximum: 260), spacing: DS.Space.x300)],
+                            alignment: .leading,
+                            spacing: DS.Space.x300
+                        ) {
+                            usageMetric("输入 Token", usage.inputTokens)
+                            usageMetric("输出 Token", usage.outputTokens)
+                            usageMetric("缓存读取", usage.cacheReadInputTokens)
+                            usageMetric("缓存写入", usage.cacheCreationInputTokens)
+                            usageMetric("费用", usage.costUSD, isCost: true)
+                            usageMetric("代码增行", usage.linesAdded)
+                            usageMetric("代码删行", usage.linesRemoved)
+                            usageMetric("使用时长", usage.durationSeconds, isDuration: true)
+                        }
+                        if usage.modelUsage.isEmpty == false {
+                            Divider()
+                            Text(model.localized("模型用量"))
+                                .font(DS.Typeface.label)
+                                .foregroundStyle(.secondary)
+                            ForEach(usage.modelUsage.prefix(5)) { item in
+                                modelUsageRow(item)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func usageMetric(_ title: String, _ value: UInt64, isCost: Bool = false, isDuration: Bool = false) -> some View {
+        usageMetricView(title: title, text: isCost ? costText(Double(value)) : isDuration ? durationText(value) : tokenText(value))
+    }
+
+    private func usageMetric(_ title: String, _ value: Double, isCost: Bool = false, isDuration: Bool = false) -> some View {
+        usageMetricView(title: title, text: isCost ? costText(value) : isDuration ? durationText(UInt64(value)) : tokenText(UInt64(value)))
+    }
+
+    private func usageMetricView(title: String, text: String) -> some View {
+        VStack(alignment: .leading, spacing: DS.Space.x100) {
+            Text(title)
+                .font(DS.Typeface.label)
+                .foregroundStyle(.secondary)
+            Text(text)
+                .font(DS.Typeface.metricValue)
+                .monospacedDigit()
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(DS.Space.x250)
+        .background(Color.primary.opacity(DS.Opacity.fillFaint), in: RoundedRectangle(cornerRadius: DS.Radius.controlCompact, style: .continuous))
+    }
+
+    private func modelUsageRow(_ item: AgentModelUsage) -> some View {
+        VStack(alignment: .leading, spacing: DS.Space.x100) {
+            HStack {
+                Text(item.model)
+                    .font(DS.Typeface.body.weight(.semibold))
+                    .lineLimit(1)
+                Spacer()
+                Text(costText(item.costUSD))
+                    .font(DS.Typeface.caption.weight(.semibold))
+                    .monospacedDigit()
+                    .foregroundStyle(DS.Semantic.accentPrimary)
+            }
+            Text(model.localized("输入 %@ · 输出 %@ · 缓存读取 %@", tokenText(item.inputTokens), tokenText(item.outputTokens), tokenText(item.cacheReadInputTokens)))
+                .font(DS.Typeface.caption)
+                .foregroundStyle(.secondary)
+                .monospacedDigit()
+        }
+        .padding(.vertical, DS.Space.x100)
+    }
+
+    // MARK: 基础配置
+
+    private var configurationSection: some View {
+        VStack(alignment: .leading, spacing: DS.Space.x300) {
+            Text(model.localized("基础配置"))
+                .font(DS.Typeface.title)
+            if let entries = insight?.configurationEntries, entries.isEmpty == false {
+                DSCard(padding: DS.Space.x300) {
+                    VStack(alignment: .leading, spacing: 0) {
+                        ForEach(entries.prefix(12)) { entry in
+                            HStack(alignment: .firstTextBaseline, spacing: DS.Space.x250) {
+                                Text(entry.key)
+                                    .font(DS.Typeface.caption.weight(.semibold))
+                                    .foregroundStyle(.secondary)
+                                    .frame(width: 160, alignment: .leading)
+                                Text(entry.value)
+                                    .font(DS.Typeface.caption)
+                                    .foregroundStyle(.primary)
+                                    .lineLimit(2)
+                                    .truncationMode(.middle)
+                                    .help(entry.source)
+                                Spacer(minLength: 0)
+                            }
+                            .padding(.vertical, DS.Space.x100)
+                            if entry.id != entries.prefix(12).last?.id {
+                                Divider()
+                            }
+                        }
+                    }
+                }
+            } else {
+                DSCard(padding: DS.Space.x400) {
+                    Text(model.localized("未发现可安全展示的配置文件。"))
+                        .font(DS.Typeface.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+
+    // MARK: MCP
+
+    private var mcpSection: some View {
+        VStack(alignment: .leading, spacing: DS.Space.x300) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(model.localized("MCP 安装项"))
+                    .font(DS.Typeface.title)
+                Spacer()
+                Text(model.localized("%d 个", insight?.mcpInstallations.count ?? 0))
+                    .font(DS.Typeface.caption)
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+            }
+            if let mcp = insight?.mcpInstallations, mcp.isEmpty == false {
+                DSCard(padding: DS.Space.x300) {
+                    VStack(alignment: .leading, spacing: DS.Space.x100) {
+                        ForEach(mcp) { item in
+                            HStack(spacing: DS.Space.x250) {
+                                Image(systemName: "point.3.connected.trianglepath.dotted")
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .foregroundStyle(DS.Chart.series05)
+                                    .frame(width: 18)
+                                VStack(alignment: .leading, spacing: DS.Space.x050) {
+                                    Text(item.name)
+                                        .font(DS.Typeface.body.weight(.semibold))
+                                    if let command = item.command {
+                                        Text(model.displayPath(command))
+                                            .font(DS.Typeface.caption)
+                                            .foregroundStyle(.tertiary)
+                                            .lineLimit(1)
+                                            .truncationMode(.middle)
+                                            .privacySensitive()
+                                    }
+                                }
+                                Spacer()
+                                DSBadge(
+                                    text: model.localized(item.enabled ? "已启用" : "已停用"),
+                                    color: item.enabled ? DS.Semantic.statusPositive : DS.Semantic.statusCaution
+                                )
+                            }
+                            .padding(.vertical, DS.Space.x100)
+                        }
+                    }
+                }
+            } else {
+                DSCard(padding: DS.Space.x400) {
+                    Text(model.localized("未发现 MCP 安装项。"))
+                        .font(DS.Typeface.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+
+    // MARK: Skills
+
+    private var skillsSection: some View {
+        VStack(alignment: .leading, spacing: DS.Space.x300) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(model.localized("Skills 加载列表"))
+                    .font(DS.Typeface.title)
+                Spacer()
+                Text(model.localized("%d 个", skillInstallations.count))
+                    .font(DS.Typeface.caption)
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+            }
+            if skillInstallations.isEmpty {
+                DSCard(padding: DS.Space.x400) {
+                    Text(model.localized("此 Agent 没有已加载的 Skill。"))
+                        .font(DS.Typeface.caption)
+                        .foregroundStyle(.secondary)
+                }
+            } else {
+                DSCard(padding: DS.Space.x300) {
+                    VStack(alignment: .leading, spacing: DS.Space.x100) {
+                        ForEach(skillInstallations) { installation in
+                            HStack(spacing: DS.Space.x250) {
+                                Image(systemName: "hammer.fill")
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .foregroundStyle(DS.Chart.series06)
+                                    .frame(width: 18)
+                                VStack(alignment: .leading, spacing: DS.Space.x050) {
+                                    Text(installation.name)
+                                        .font(DS.Typeface.body.weight(.semibold))
+                                    Text(model.displayPath(installation.path))
+                                        .font(DS.Typeface.caption)
+                                        .foregroundStyle(.tertiary)
+                                        .lineLimit(1)
+                                        .truncationMode(.middle)
+                                        .privacySensitive()
+                                }
+                                Spacer()
+                                Text(model.localized("%d 个文件", installation.fileCount))
+                                    .font(DS.Typeface.caption)
+                                    .foregroundStyle(.secondary)
+                                    .monospacedDigit()
+                                DSBadge(
+                                    text: model.localized(installation.state == .valid ? "有效" : (installation.state == .conflict ? "冲突" : "无效")),
+                                    color: installation.state == .valid ? DS.Semantic.statusPositive : DS.Semantic.statusCaution
+                                )
+                            }
+                            .padding(.vertical, DS.Space.x100)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: 格式化
+
+    private func tokenText(_ value: UInt64?) -> String {
+        guard let value else { return "—" }
+        if value >= 1_000_000_000 { return String(format: "%.1fB", Double(value) / 1_000_000_000) }
+        if value >= 1_000_000 { return String(format: "%.1fM", Double(value) / 1_000_000) }
+        if value >= 1_000 { return String(format: "%.1fK", Double(value) / 1_000) }
+        return "\(value)"
+    }
+
+    private func costText(_ value: Double) -> String {
+        String(format: "$%.2f", value)
+    }
+
+    private func durationText(_ seconds: UInt64) -> String {
+        if seconds >= 3600 { return String(format: "%.1f h", Double(seconds) / 3600) }
+        if seconds >= 60 { return String(format: "%.1f min", Double(seconds) / 60) }
+        return "\(seconds) s"
     }
 
     // MARK: Home 配置
