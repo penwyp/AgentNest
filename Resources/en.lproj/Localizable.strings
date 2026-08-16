@@ -654,3 +654,16 @@
 "不同版本来自不同 Home 且内容不一致；选择权威版本后，其余 Home 的旧版本将被替换并移入系统废纸篓。" = "Versions come from different Homes with inconsistent content. After choosing the authoritative version, old versions in other Homes are replaced and moved to Trash.";
 "以所选版本同步到 %d 个 Home" = "Sync %d Homes with the selected version";
 "此版本在 %d 个 Home 有副本" = "This version has copies in %d Homes";
+"%d 个生效 · %d 个 Agent 产品 · %d 个 Home" = "%d active · %d agent products · %d homes";
+"已发现 %d 个生效 Agent" = "%d active agents found";
+"已发现 Agent Home，未检测到生效可执行文件" = "Agent homes found; no effective executable detected";
+"生效：%@" = "Effective: %@";
+"未检测到生效可执行文件" = "No effective executable detected";
+"未检测到生效可执行文件。只有 Home 目录不足以证明 Agent 当前生效；请检查安装或 PATH。" = "No effective executable detected. A home directory alone does not prove the agent is active; check the installation or PATH.";
+"生效" = "Active";
+"生效安装" = "Effective Installation";
+"Home 配置" = "Home Configurations";
+"%d 个" = "%d";
+"未发现此 Agent 的 Home。该产品可能不落盘配置，或 Home 不在当前扫描范围内。" = "No homes found for this agent. The product may not persist configuration, or its homes are outside the current scan scope.";
+"暂无生效安装或 Home 证据。" = "No effective-installation or home evidence.";
+"未生效" = "Inactive";

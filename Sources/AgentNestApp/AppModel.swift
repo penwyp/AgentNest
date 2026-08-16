@@ -88,8 +88,13 @@ final class AppModel {
     private(set) var ignoredScanPaths: [String] = UserDefaults.standard.stringArray(forKey: "ignoredScanPaths") ?? []
     private(set) var userConfirmedHomes: [String: String] = UserDefaults.standard.dictionary(forKey: "userConfirmedHomes") as? [String: String] ?? [:]
     private(set) var uninstallReport: String?
-    /// Agent 详情页当前选中的 Home（nil = 列表页）。
+    /// Agent 详情页当前选中的 Agent 产品（nil = 列表页）。
+    var selectedAgentID: String?
+    /// Agent 产品详情内当前选中的 Home 配置（nil = 产品概览/Home 列表）。
     var selectedAgentHomeID: PhysicalResourceIdentity?
+    /// 本机按 PATH / .app 主可执行文件解析出的「生效安装」（产品 ID → 可执行文件证据）。
+    /// 完整扫描会把同一结果写入快照的 `AgentProduct.installations`；此属性同时覆盖旧快照恢复与后台刷新。
+    private(set) var effectiveInstallations: [String: AgentInstallation] = [:]
     /// 市场：Agent 安装状态（真实流式状态，随事件更新）。
     private(set) var marketInstallations: [String: MarketInstallState] = [:]
     /// 已通过市场成功安装的产品 ID（持久化：重启后仍显示「已安装」，覆盖无扫描规则的市场条目）。
@@ -154,7 +159,11 @@ final class AppModel {
         let loadedCatalog = try? AgentDefinitionCatalog.bundled()
         catalog = loadedCatalog
         marketplaceCatalog = try? MarketplaceCatalog.bundled()
-        let useCase = loadedCatalog.map { ScanUseCase(catalog: $0) }
+        let useCase = loadedCatalog.map { catalog in
+            ScanUseCase(catalog: catalog) { definitions in
+                Array(AgentInstallationProbe().effectiveInstallations(for: definitions).values)
+            }
+        }
         scanUseCase = useCase
         coordinator = useCase.map { ScanCoordinator(useCase: $0) }
         snapshot = try? snapshotStore.load()
@@ -189,8 +198,11 @@ final class AppModel {
     var menuStatus: String {
         guard hasCoreAccess else { return localized("需要试用或激活") }
         if isScanning { return localized("正在扫描") }
-        if let snapshot {
-            return localized("已发现 %d 个 Agent Home", snapshot.homes.filter { $0.confidence == .confirmed }.count)
+        if snapshot != nil, effectiveAgentCount > 0 {
+            return localized("已发现 %d 个生效 Agent", effectiveAgentCount)
+        }
+        if snapshot != nil {
+            return localized("已发现 Agent Home，未检测到生效可执行文件")
         }
         return localized("等待扫描")
     }
@@ -309,7 +321,7 @@ final class AppModel {
                 for productID in marketInstallations.keys {
                     marketInstallations[productID]?.needsRescanNotice = false
                 }
-                clearSelectedAgentHomeIfMissing()
+                clearSelectedAgentIfMissing()
                 refreshCleanupInventory()
                 await refreshSkillIndex()
                 // 完整扫描已把 Home 版本写入快照；这里仅补拉 Homebrew 等安装证据，不阻塞收尾。
@@ -541,15 +553,66 @@ final class AppModel {
 
     // MARK: Agent 详情导航
 
+    /// Agent 列表使用的产品集合：快照产品 + 后台刚解析到、但旧快照尚未写入的生效安装。
+    /// 这样旧快照恢复后也能立即显示只凭可执行文件存在、没有 Home 的 Agent。
+    var agentProducts: [AgentProduct] {
+        guard let snapshot else { return [] }
+        var products = snapshot.products
+        let existingIDs = Set(products.map(\.id))
+        if let catalog {
+            for (productID, installation) in effectiveInstallations.sorted(by: { $0.key < $1.key }) {
+                guard existingIDs.contains(productID) == false,
+                      let definition = catalog.definitions.first(where: { $0.id == productID }) else { continue }
+                products.append(AgentProduct(
+                    id: definition.id,
+                    displayName: definition.displayName,
+                    definitionVersion: definition.schemaVersion,
+                    supportState: definition.capabilities.space ? .supported : .detectable,
+                    capabilities: definition.capabilities,
+                    installations: [installation],
+                    homes: [],
+                    profiles: []
+                ))
+            }
+        }
+        return products.sorted { $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending }
+    }
+
+    func agentProduct(withID id: String) -> AgentProduct? {
+        agentProducts.first { $0.id == id }
+    }
+
     func agentHome(withID id: PhysicalResourceIdentity) -> AgentHome? {
         snapshot?.homes.first { $0.id == id }
     }
 
-    private func clearSelectedAgentHomeIfMissing() {
-        guard let selectedAgentHomeID, snapshot?.homes.contains(where: { $0.id == selectedAgentHomeID }) != true else {
-            return
+    func agentHomes(for productID: String) -> [AgentHome] {
+        agentProduct(withID: productID)?.homes
+            .sorted { $0.path.localizedStandardCompare($1.path) == .orderedAscending } ?? []
+    }
+
+    /// 当前真正生效的安装：后台解析结果优先；完整扫描结果作为快照内证据回退。
+    func effectiveInstallation(for productID: String) -> AgentInstallation? {
+        if let live = effectiveInstallations[productID] { return live }
+        return agentProduct(withID: productID)?.installations.first
+    }
+
+    var effectiveAgentCount: Int {
+        agentProducts.filter { product in
+            effectiveInstallation(for: product.id) != nil
+        }.count
+    }
+
+    private func clearSelectedAgentIfMissing() {
+        if let selectedAgentID,
+           agentProducts.contains(where: { $0.id == selectedAgentID }) != true {
+            self.selectedAgentID = nil
+            self.selectedAgentHomeID = nil
         }
-        self.selectedAgentHomeID = nil
+        if let selectedAgentHomeID,
+           snapshot?.homes.contains(where: { $0.id == selectedAgentHomeID }) != true {
+            self.selectedAgentHomeID = nil
+        }
     }
 
     // MARK: Agent 市场
@@ -665,8 +728,8 @@ final class AppModel {
     // MARK: 版本检测与市场最新版本
 
     /// 聚合「已安装版本」。优先级：
-    /// 1. 后台探测的 Homebrew/可执行文件版本（最接近实际安装，且不会被 Home 中的陈旧缓存覆盖）；
-    /// 2. 完整扫描写入 Home 的版本证据（例如 Codex `models_cache.json`）。
+    /// 1. 后台探测的生效可执行文件版本（CLI PATH / Desktop .app 主程序）；
+    /// 2. Homebrew / Home 指纹证据（仅作为生效可执行文件不可用时的补充）。
     func installedVersion(for productID: String) -> String? {
         if let authoritative = installedAgentVersions[productID] {
             let normalized = AgentVersion.normalizedVersion(authoritative)
@@ -737,17 +800,21 @@ final class AppModel {
                 )
             }
             guard let self, !Task.isCancelled else { return }
-            // Homebrew、桌面 App bundle 与可执行文件版本并行探测；
-            // 优先级：Homebrew > App bundle > 可执行文件 > Home 缓存。
+            let effectiveInstallations = await Task.detached(priority: .utility) {
+                AgentInstallationProbe().effectiveInstallations(for: definitions)
+            }.value
+            // Homebrew、桌面 App bundle 与可执行文件版本并行探测。
+            // 生效安装以可执行文件为准：CLI 的 PATH 可执行文件与 Desktop 的 .app 主程序优先；
+            // Homebrew 与 Home 缓存只作为没有生效可执行文件时的补充。
             async let brewVersions = HomebrewAgentVersionProbe().installedVersions(for: definitions)
             async let appBundleVersions = InstalledAppBundleVersionProbe().installedVersions(for: definitions)
             async let executableVersions = ExecutableAgentVersionProbe().installedVersions(for: definitions)
             let (brew, appBundle, executable) = await (brewVersions, appBundleVersions, executableVersions)
-            var merged = brew
+            var merged = executable
             for (productID, version) in appBundle where merged[productID] == nil {
                 merged[productID] = version
             }
-            for (productID, version) in executable where merged[productID] == nil {
+            for (productID, version) in brew where merged[productID] == nil {
                 merged[productID] = version
             }
             for (productID, version) in fileVersions where merged[productID] == nil {
@@ -755,6 +822,7 @@ final class AppModel {
             }
             guard !Task.isCancelled else { return }
             self.installedAgentVersions = merged
+            self.effectiveInstallations = effectiveInstallations
             self.installedVersionScanTask = nil
             // 已安装版本就绪后，再刷新一次过期的最新版本缓存，供侧边栏红点角标准确更新。
             self.refreshMarketVersionsIfNeeded()
@@ -963,7 +1031,7 @@ final class AppModel {
             }
             snapshot = baseline
             try? snapshotStore.save(baseline)
-            clearSelectedAgentHomeIfMissing()
+            clearSelectedAgentIfMissing()
             refreshCleanupInventory()
             await refreshSkillIndex()
         } catch is CancellationError {
