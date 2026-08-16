@@ -10,6 +10,7 @@ struct AgentNestCoreTestRunner {
     static func main() async {
         do {
             try testDefinitionCatalog()
+            try testAgentInsight()
             try testMarketVersionRefreshPolicy()
             try testHomebrewVersionParsing()
             try testExecutableVersionProbeParsing()
@@ -209,6 +210,56 @@ struct AgentNestCoreTestRunner {
                 CanonicalPath.isDescendant("/foo/child", of: "/foo") &&
                 !CanonicalPath.isEqualOrDescendant("/foobar", of: "/foo"),
             "canonical path containment handles filesystem root and component boundaries"
+        )
+    }
+
+    private static func testAgentInsight() throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "AgentNestInsight-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let home = root.appending(path: ".claude")
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        try Data("""
+        {"attribution":{"commit":"abc"},"env":{}}
+        """.utf8).write(to: home.appending(path: "settings.json"))
+        try Data("""
+        {"projects":{"/tmp/project":{
+          "mcpServers":{"context7":{"command":"npx","args":["-y","@upstash/context7-mcp"]}},
+          "lastTotalInputTokens":1200,"lastTotalOutputTokens":300,
+          "lastTotalCacheReadInputTokens":5000,"lastCost":0.42,
+          "lastModelUsage":{"claude-sonnet":{"inputTokens":1200,"outputTokens":300,"costUSD":0.42}}
+        }}}
+        """.utf8).write(to: root.appending(path: ".claude.json"))
+        let product = AgentProduct(
+            id: "anthropic.claude-code",
+            displayName: "Claude Code",
+            definitionVersion: 1,
+            supportState: .supported,
+            capabilities: Capabilities(space: true, skills: true, activity: false, cleanup: false),
+            installations: [],
+            homes: [AgentHome(
+                id: PhysicalResourceIdentity(device: 1, inode: 1, kind: .directory),
+                productID: "anthropic.claude-code",
+                displayName: "Claude Code",
+                path: home.path,
+                source: .defaultPath,
+                confidence: .confirmed,
+                evidence: [],
+                storage: StorageMeasurement()
+            )],
+            profiles: []
+        )
+        let insight = AgentInsightUseCase().execute(product: product, homeDirectory: root)
+        try expect(
+            insight.mcpInstallations.contains { $0.name == "context7" && $0.enabled },
+            "Claude Code project MCP servers are discovered"
+        )
+        try expect(
+            insight.configurationEntries.contains { $0.key == "attribution" },
+            "safe Claude Code settings are exposed as configuration entries"
+        )
+        try expect(
+            insight.usage?.inputTokens == 1200 && insight.usage?.costUSD == 0.42,
+            "Claude Code usage aggregates project token and cost records"
         )
     }
 
