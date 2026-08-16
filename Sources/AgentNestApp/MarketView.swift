@@ -459,9 +459,7 @@ private struct AgentMarketCard: View {
                         HStack(spacing: DS.Space.x200) {
                             if let method = definition.marketplace?.install {
                                 DSBadge(
-                                    text: method.kind == .brew
-                                        ? "brew"
-                                        : (method.kind == .cask ? "cask" : (method.kind == .npm ? "npm" : model.localized("官网"))),
+                                    text: installKindBadge(method),
                                     color: .secondary
                                 )
                             }
@@ -578,6 +576,16 @@ private struct AgentMarketCard: View {
         .buttonStyle(.plain)
         .help(model.localized("可更新至 %@", latestVersion ?? ""))
         .accessibilityLabel(model.localized("有可用的新版本 %@", latestVersion ?? ""))
+    }
+
+    private func installKindBadge(_ method: AgentInstallMethod) -> String {
+        if method.scriptURL != nil { return model.localized("官网脚本") }
+        switch method.kind {
+        case .brew: return "brew"
+        case .cask: return "cask"
+        case .npm: return "npm"
+        case .website: return model.localized("官网")
+        }
     }
 
     private var installedBadge: some View {

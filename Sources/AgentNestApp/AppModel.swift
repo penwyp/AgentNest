@@ -909,7 +909,13 @@ final class AppModel {
     ) async -> Set<String> {
         await withTaskGroup(of: (String, String?).self) { group in
             for definition in definitions {
-                if let websiteUpdateURL = definition.marketplace?.websiteUpdateURL {
+                if let method = definition.marketplace?.install,
+                   method.websiteUpdateURL != nil {
+                    group.addTask {
+                        let version = try? await service.latestVersion(for: method)
+                        return (definition.id, version)
+                    }
+                } else if let websiteUpdateURL = definition.marketplace?.websiteUpdateURL {
                     group.addTask {
                         let version = try? await service.latestVersion(websiteUpdateURL: websiteUpdateURL)
                         return (definition.id, version)
@@ -944,8 +950,9 @@ final class AppModel {
     // MARK: 版本缓存
 
     private func hydrateMarketVersionCache() {
-        // v1 缓存混用了 Homebrew formula 与官网脚本两个版本来源，不再复用到 v2。
+        // v1/v2 缓存混用了 Homebrew formula 与官网脚本两个版本来源，不再复用。
         UserDefaults.standard.removeObject(forKey: "marketVersionCache.v1")
+        UserDefaults.standard.removeObject(forKey: "marketVersionCache.v2")
         guard let data = UserDefaults.standard.data(forKey: Self.marketVersionCacheDefaultsKey),
               let entries = try? JSONDecoder().decode([String: MarketVersionCacheEntry].self, from: data) else {
             return
@@ -985,7 +992,7 @@ final class AppModel {
     }
 
     private static let installedVersionScanThrottle: TimeInterval = 5 * 60
-    private static let marketVersionCacheDefaultsKey = "marketVersionCache.v2"
+    private static let marketVersionCacheDefaultsKey = "marketVersionCache.v3"
 
     private func refreshCleanupInventory() {
         cleanupInventoryTask?.cancel()
