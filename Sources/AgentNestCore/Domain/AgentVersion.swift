@@ -10,9 +10,13 @@ public enum AgentVersionComparison: Equatable, Sendable {
 /// 语义化版本比较的精简实现，专门用于“已安装版本 vs 市场最新版本”。
 /// 支持常见的 `v` 前缀、数字点分段、`-` 预发布段；无法解析为数字核心时返回 `.unknown`。
 public enum AgentVersion {
-    /// 版本号只保留第一个逗号之前的内容；例如 `1.2.3, 1.2.4` → `1.2.3`。
+    /// 规范化展示版本：去掉首尾空白、常见的 `v` 前缀，并只保留第一个逗号之前的内容。
+    /// 例如 `v1.2.3, 1.2.4` → `1.2.3`。
     public static func normalizedVersion(_ raw: String) -> String {
-        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        var trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        while trimmed.hasPrefix("v") || trimmed.hasPrefix("V") {
+            trimmed.removeFirst()
+        }
         guard let comma = trimmed.firstIndex(of: ",") else { return trimmed }
         return trimmed[..<comma].trimmingCharacters(in: .whitespacesAndNewlines)
     }
