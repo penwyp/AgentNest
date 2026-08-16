@@ -306,6 +306,39 @@ struct AgentNestCoreTestRunner {
         )
         try expect(snapshot.products.count == 1 && snapshot.products.first?.id == "openai.codex", "homes are grouped beneath their product")
         try expect(snapshot.products.first?.installations.isEmpty == true && snapshot.products.first?.profiles.isEmpty == true, "installation and profile are not fabricated without evidence")
+
+        let effectiveCodex = AgentInstallation(
+            id: PhysicalResourceIdentity(device: 42, inode: 42, kind: .file),
+            productID: "openai.codex",
+            path: "/opt/homebrew/bin/codex",
+            version: nil,
+            evidence: ["effective-executable:/opt/homebrew/bin/codex"]
+        )
+        let withInstallation = try await ScanUseCase(
+            catalog: AgentDefinitionCatalog.bundled(),
+            installationProvider: { _ in [effectiveCodex] }
+        ).execute(request: ScanRequest(
+            homeDirectory: root,
+            customLocations: [alias],
+            environment: ["CODEX_HOME": deepHome.path]
+        ))
+        try expect(
+            withInstallation.products.first?.installations == [effectiveCodex],
+            "scan attaches the resolved effective executable to its product without fabricating profiles"
+        )
+
+        let executableOnlyRoot = root.appending(path: "executable-only")
+        try FileManager.default.createDirectory(at: executableOnlyRoot, withIntermediateDirectories: true)
+        let executableOnlySnapshot = try await ScanUseCase(
+            catalog: AgentDefinitionCatalog.bundled(),
+            installationProvider: { definitions in
+                definitions.contains { $0.id == "openai.codex" } ? [effectiveCodex] : []
+            }
+        ).execute(request: ScanRequest(homeDirectory: executableOnlyRoot))
+        try expect(
+            executableOnlySnapshot.products.contains { $0.id == "openai.codex" && $0.homes.isEmpty && $0.installations == [effectiveCodex] },
+            "an effective executable is an agent even when no home is currently discovered"
+        )
         let defaultResult = try unwrap(confirmed.first { $0.path == defaultHome.path }, "default home")
         try expect(defaultResult.storage.itemCount == 3, "hard links count once in physical ledger; got \(defaultResult.storage.itemCount)")
         try expect(
@@ -572,7 +605,7 @@ struct AgentNestCoreTestRunner {
         let info = """
         <?xml version="1.0" encoding="UTF-8"?>
         <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-        <plist version="1.0"><dict><key>CFBundleShortVersionString</key><string>1.2.3</string></dict></plist>
+        <plist version="1.0"><dict><key>CFBundleExecutable</key><string>Fixture</string><key>CFBundleShortVersionString</key><string>1.2.3</string></dict></plist>
         """
         try Data(info.utf8).write(to: contents.appending(path: "Info.plist"))
         try expect(
@@ -581,6 +614,35 @@ struct AgentNestCoreTestRunner {
                 additionalApplicationDirectories: [root]
             ) == "1.2.3",
             "installed app bundle version is read from CFBundleShortVersionString"
+        )
+
+        let executable = contents.appending(path: "MacOS/Fixture")
+        try FileManager.default.createDirectory(at: executable.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("fixture-executable".utf8).write(to: executable)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable.path)
+        let desktopDefinition = AgentDefinition(
+            schemaVersion: 1,
+            id: "test.desktop",
+            displayName: "Fixture Desktop",
+            homeDiscovery: HomeDiscovery(defaultPaths: [], environmentVariables: []),
+            fingerprints: Fingerprints(required: [], optional: [], negative: []),
+            skills: [],
+            artifacts: [],
+            capabilities: Capabilities(space: false, skills: false, activity: false, cleanup: false),
+            marketplace: AgentMarketplace(
+                summary: "fixture",
+                homepageURL: "https://example.com",
+                install: AgentInstallMethod(kind: .cask, formula: "fixture", installedAppName: "Fixture")
+            )
+        )
+        let resolved = InstalledAppBundleVersionProbe().resolvedInstallations(
+            for: [desktopDefinition],
+            additionalApplicationDirectories: [root]
+        )
+        try expect(
+            resolved["test.desktop"]?.path == executable.standardizedFileURL.path &&
+                resolved["test.desktop"]?.evidence.contains("effective-app-executable:\(executable.standardizedFileURL.path)") == true,
+            "desktop effective installation points at the bundle main executable"
         )
     }
 

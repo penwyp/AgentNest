@@ -44,7 +44,9 @@ struct AgentNestCLI {
             environment["CODEX_HOME"] = codexHome
         }
         let catalog = try AgentDefinitionCatalog.bundled()
-        let snapshot = try await ScanUseCase(catalog: catalog).execute(
+        let snapshot = try await ScanUseCase(catalog: catalog) { definitions in
+            Array(AgentInstallationProbe().effectiveInstallations(for: definitions).values)
+        }.execute(
             request: ScanRequest(
                 homeDirectory: root,
                 customLocations: customLocations,

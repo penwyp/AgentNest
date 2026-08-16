@@ -100,6 +100,26 @@ public struct ExecutableAgentVersionProbe: Sendable {
         return parseVersionOutput(output)
     }
 
+    /// 已解析的生效可执行文件（不执行 `--version`，只做 PATH 解析与文件身份采集）。
+    /// PATH 按进程环境顺序生效；PATH 未覆盖时再回退到常见脚本安装目录。
+    /// 用于扫描快照中填充 `AgentInstallation`；版本仍由 `installedVersions` 探测。
+    func resolvedInstallations(for definitions: [AgentDefinition]) -> [String: AgentInstallation] {
+        var installations: [String: AgentInstallation] = [:]
+        for definition in definitions {
+            guard let command = Self.commandsByProduct[definition.id],
+                  let executableURL = Self.resolveExecutable(named: command.executable),
+                  let node = try? FileMetadata.read(executableURL).node else { continue }
+            installations[definition.id] = AgentInstallation(
+                id: node.identity,
+                productID: definition.id,
+                path: node.path,
+                version: nil,
+                evidence: ["effective-executable:\(node.path)"]
+            )
+        }
+        return installations
+    }
+
     private static func resolveExecutable(named name: String) -> URL? {
         let home = FileManager.default.homeDirectoryForCurrentUser
         let scriptInstallLocations = [
@@ -110,16 +130,16 @@ public struct ExecutableAgentVersionProbe: Sendable {
         ]
         let pathValue = ProcessInfo.processInfo.environment["PATH"]
             ?? "/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-        var candidates = scriptInstallLocations
-        candidates.append(contentsOf: pathValue.split(separator: ":").map {
+        var candidates = pathValue.split(separator: ":").map {
             URL(fileURLWithPath: String($0), isDirectory: true).appending(path: name)
-        })
+        }
+        candidates.append(contentsOf: scriptInstallLocations)
         for url in candidates {
             var isDirectory: ObjCBool = false
             if FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory),
-               !isDirectory.boolValue,
+               isDirectory.boolValue == false,
                FileManager.default.isExecutableFile(atPath: url.path) {
-                return url.standardizedFileURL
+                return url.resolvingSymlinksInPath().standardizedFileURL
             }
         }
         return nil

@@ -22,8 +22,14 @@ struct ContentView: View {
                     switch model.selection ?? .home {
                     case .home: HomeView(model: model)
                     case .agents:
-                        if let id = model.selectedAgentHomeID, let home = model.agentHome(withID: id) {
-                            AgentDetailView(model: model, home: home)
+                        if let id = model.selectedAgentID, let product = model.agentProduct(withID: id) {
+                            if let homeID = model.selectedAgentHomeID,
+                               let home = model.agentHome(withID: homeID),
+                               home.productID == product.id {
+                                AgentHomeDetailView(model: model, home: home)
+                            } else {
+                                AgentProductDetailView(model: model, productID: product.id)
+                            }
                         } else {
                             AgentListView(model: model)
                         }
@@ -119,7 +125,10 @@ private struct SidebarRow: View {
                 model.selection = item
             }
             // 重新进入 Agent 页时回到列表（退出详情）。
-            if item == .agents { model.selectedAgentHomeID = nil }
+            if item == .agents {
+                model.selectedAgentID = nil
+                model.selectedAgentHomeID = nil
+            }
         } label: {
             HStack(spacing: DS.Space.x250) {
                 Image(systemName: item.systemImage)
@@ -352,7 +361,7 @@ private struct HomeOverview: View {
     var body: some View {
         VStack(alignment: .leading, spacing: DS.Space.x450) {
             HomeReadingsStrip(model: model, snapshot: snapshot, storageDerived: storageDerived)
-            HomeEnvironmentMap(model: model, snapshot: snapshot)
+            HomeEnvironmentMap(model: model)
             HomeManagementTiles(model: model, snapshot: snapshot, storageDerived: storageDerived)
             HomeTrustFooter(model: model)
         }
@@ -658,10 +667,11 @@ private struct HomeSkillMeter: View {
 /// 合计占用；单个产品即一张小卡、不撑满整行；Home 级明细在 Agent 页，两页职责区分。
 private struct HomeEnvironmentMap: View {
     let model: AppModel
-    let snapshot: DeviceSnapshot
 
     private var products: [AgentProduct] {
-        snapshot.products.filter { !$0.homes.isEmpty }
+        model.agentProducts.filter { product in
+            product.homes.isEmpty == false || model.effectiveInstallation(for: product.id) != nil
+        }
     }
 
     var body: some View {
@@ -703,11 +713,26 @@ private struct HomeProductCard: View {
     }
 
     private var totalBytes: UInt64 {
-        homes.reduce(UInt64(0)) { $0 &+ $1.storage.physicalBytes }
+        guard let snapshot = model.snapshot else {
+            return homes.reduce(UInt64(0)) { $0 &+ $1.storage.physicalBytes }
+        }
+        let homeIDs = Set(product.homes.map(\.id))
+        var seen: Set<PhysicalResourceIdentity> = []
+        var total: UInt64 = 0
+        for artifact in snapshot.storageLedger.artifacts
+        where homeIDs.isDisjoint(with: artifact.homeIDs) == false {
+            guard seen.insert(artifact.id).inserted else { continue }
+            total &+= artifact.storage.physicalBytes
+        }
+        return total
     }
 
     private var possibleCount: Int {
         homes.filter { $0.confidence == .possible }.count
+    }
+
+    private var installation: AgentInstallation? {
+        model.effectiveInstallation(for: product.id)
     }
 
     private var countLine: String {
@@ -717,8 +742,17 @@ private struct HomeProductCard: View {
         return model.localized("%d 个 Home · %d 个疑似", homes.count, possibleCount)
     }
 
+    private var installationLine: String {
+        guard let installation else { return model.localized("未检测到生效可执行文件") }
+        return model.localized("生效：%@", model.displayPath(installation.path))
+    }
+
     var body: some View {
-        Button { model.selection = .agents } label: {
+        Button {
+            model.selection = .agents
+            model.selectedAgentID = product.id
+            model.selectedAgentHomeID = nil
+        } label: {
             VStack(alignment: .leading, spacing: DS.Space.x100) {
                 HStack(spacing: DS.Space.x250) {
                     HomeBrandIcon(productID: product.id, size: 24)
@@ -750,6 +784,17 @@ private struct HomeProductCard: View {
                         .foregroundStyle(.secondary)
                         .monospacedDigit()
                         .lineLimit(1)
+                }
+                .padding(.leading, DS.Layout.homeProductCardContentInset)
+                HStack(spacing: DS.Space.x100) {
+                    Image(systemName: installation == nil ? "exclamationmark.triangle" : "terminal")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(installation == nil ? DS.Semantic.statusCaution : DS.Semantic.statusPositive)
+                    Text(installationLine)
+                        .font(DS.Typeface.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
                 }
                 .padding(.leading, DS.Layout.homeProductCardContentInset)
             }
@@ -949,27 +994,23 @@ private struct HomeEmptyState: View {
 
 private struct AgentListView: View {
     @Bindable var model: AppModel
-    /// 类别空间构成派生数据（后台计算，按 generation 缓存）。
     @State private var derived: AgentCardDerived?
-    /// 搜索关键词（名称/路径/产品名，不区分大小写）。
     @State private var searchText = ""
 
     private var deriveKey: UUID? { model.snapshot?.generation }
 
-    private var filteredHomes: [AgentHome] {
-        guard let snapshot = model.snapshot else { return [] }
+    private var filteredProducts: [AgentProduct] {
+        guard model.snapshot != nil else { return [] }
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !query.isEmpty else { return snapshot.homes }
-        return snapshot.homes.filter { home in
-            home.displayName.localizedCaseInsensitiveContains(query) ||
-                home.path.localizedCaseInsensitiveContains(query) ||
-                (snapshot.products.first { $0.id == home.productID }?.displayName
-                    .localizedCaseInsensitiveContains(query) ?? false)
+        guard query.isEmpty == false else { return model.agentProducts }
+        return model.agentProducts.filter { product in
+            let installationPath = model.effectiveInstallation(for: product.id)?.path ?? ""
+            let candidates = [product.displayName, product.id, installationPath]
+                + product.homes.map(\.path)
+            return candidates.contains { $0.localizedCaseInsensitiveContains(query) }
         }
     }
 
-    /// 页面身份区：标题 + 已确认/疑似统计；市场入口统一收敛到侧边栏「市场」。
-    /// 身份区只负责排版，页边距与背景统一由 agentHeader 提供。
     private var agentIdentity: some View {
         DSPageIdentity(
             title: model.localized("Agent"),
@@ -982,24 +1023,31 @@ private struct AgentListView: View {
 
     private var agentIdentityDetail: String? {
         guard let snapshot = model.snapshot else { return nil }
-        let confirmed = snapshot.homes.filter { $0.confidence == .confirmed }.count
-        let possible = snapshot.homes.filter { $0.confidence == .possible }.count
-        return model.localized("%d 个已确认 · %d 个疑似", confirmed, possible)
+        return model.localized(
+            "%d 个生效 · %d 个 Agent 产品 · %d 个 Home",
+            model.effectiveAgentCount,
+            model.agentProducts.count,
+            snapshot.homes.count
+        )
     }
 
     var body: some View {
         Group {
-            if let snapshot = model.snapshot {
-                if snapshot.homes.isEmpty {
-                    ContentUnavailableView("尚无 Agent 结果", systemImage: "cpu", description: Text("先在首页扫描。"))
-                } else if filteredHomes.isEmpty {
+            if model.snapshot != nil {
+                if model.agentProducts.isEmpty {
+                    ContentUnavailableView(
+                        model.localized("尚无 Agent 结果"),
+                        systemImage: "cpu",
+                        description: Text(model.localized("先在首页扫描。"))
+                    )
+                } else if filteredProducts.isEmpty {
                     ContentUnavailableView(
                         model.localized("没有匹配的 Agent"),
                         systemImage: "magnifyingglass",
                         description: Text(model.localized("换个关键词试试。"))
                     )
                 } else {
-                    agentCardGrid(homes: filteredHomes)
+                    agentCardGrid(products: filteredProducts)
                 }
             } else {
                 AgentCardGridSkeleton()
@@ -1011,8 +1059,6 @@ private struct AgentListView: View {
         .task(id: deriveKey) { await recomputeDerived() }
     }
 
-    /// 固定页头：身份区 + 搜索栏共享同一内容列（pageMaxWidth），
-    /// 与下方档案卡网格保持同一左右边界；背景仍铺满安全区。
     private var agentHeader: some View {
         VStack(alignment: .leading, spacing: DS.Space.x300) {
             agentIdentity
@@ -1025,8 +1071,6 @@ private struct AgentListView: View {
         .background(Color(nsColor: DS.Neutral.canvas))
     }
 
-    /// 搜索栏：与身份区信息行共用 content-inset 左缩进，宽度填满内容列，
-    /// 右侧与卡片网格边缘对齐，避免左侧堆叠、右侧留空。
     private var searchField: some View {
         HStack(spacing: DS.Space.x200) {
             Image(systemName: "magnifyingglass")
@@ -1037,7 +1081,7 @@ private struct AgentListView: View {
                 .textFieldStyle(.plain)
                 .font(DS.Typeface.body)
                 .frame(maxWidth: .infinity, alignment: .leading)
-            if !searchText.isEmpty {
+            if searchText.isEmpty == false {
                 Button {
                     searchText = ""
                 } label: {
@@ -1063,18 +1107,18 @@ private struct AgentListView: View {
         .padding(.leading, DS.Layout.pageIdentityContentInset)
     }
 
-    private func agentCardGrid(homes: [AgentHome]) -> some View {
+    private func agentCardGrid(products: [AgentProduct]) -> some View {
         ScrollView {
             LazyVGrid(
                 columns: [GridItem(.adaptive(minimum: DS.Layout.agentCardColumnMinWidth, maximum: DS.Layout.agentCardColumnMaxWidth), spacing: DS.Space.x300)],
                 alignment: .leading,
                 spacing: DS.Space.x300
             ) {
-                ForEach(homes) { home in
-                    AgentHomeCard(
+                ForEach(products) { product in
+                    AgentProductCard(
                         model: model,
-                        home: home,
-                        slices: derived?.slicesByHome[home.id] ?? []
+                        product: product,
+                        derived: derived?.productsByID[product.id]
                     )
                 }
             }
@@ -1098,7 +1142,6 @@ private struct AgentListView: View {
     }
 }
 
-/// 类别 → chart series 固定映射（档案卡与详情页共用，见 DESIGN.md §5.9）。
 private enum AgentCategoryPalette {
     static func color(for category: ArtifactCategory) -> Color {
         switch category {
@@ -1115,88 +1158,139 @@ private enum AgentCategoryPalette {
     }
 }
 
-/// 单类别占用切片（按 Home 聚合、按字节降序）。
 private struct AgentCategorySlice: Sendable {
     let category: ArtifactCategory
     let bytes: UInt64
     let itemCount: Int
 }
 
-/// 档案卡派生数据：Home → 类别占用切片（降序、仅 > 0）。
-private struct AgentCardDerived: Sendable {
-    let slicesByHome: [PhysicalResourceIdentity: [AgentCategorySlice]]
+private struct AgentProductDerived: Sendable {
+    let slices: [AgentCategorySlice]
+    let storage: StorageMeasurement
 }
 
-/// 纯数据派生（无 UI 依赖，后台执行）：一次遍历账本，按 homeIDs 聚合每个 Home 的类别物理占用与条目数。
+private struct AgentCardDerived: Sendable {
+    let slicesByHome: [PhysicalResourceIdentity: [AgentCategorySlice]]
+    let productsByID: [String: AgentProductDerived]
+}
+
+/// 纯数据派生（无 UI 依赖，后台执行）：Home 切片供详情页；
+/// 产品切片与产品唯一物理占用供 Agent 产品卡。多 Home 共享资源按 device/inode 只计一次。
 private func computeAgentCardDerived(snapshot: DeviceSnapshot) -> AgentCardDerived {
-    var accum: [PhysicalResourceIdentity: [ArtifactCategory: (bytes: UInt64, items: Int)]] = [:]
+    var homeAccum: [PhysicalResourceIdentity: [ArtifactCategory: (bytes: UInt64, items: Int)]] = [:]
+    var productAccum: [String: [ArtifactCategory: (bytes: UInt64, items: Int)]] = [:]
+    var productItemIDs: [String: Set<PhysicalResourceIdentity>] = [:]
+    var productStorage: [String: StorageMeasurement] = [:]
+    var homeProductIDs: [PhysicalResourceIdentity: String] = [:]
+    for home in snapshot.homes {
+        homeProductIDs[home.id] = home.productID
+    }
+
     for artifact in snapshot.storageLedger.artifacts {
+        var productIDs = Set<String>()
         for homeID in artifact.homeIDs {
-            var slot = accum[homeID, default: [:]][artifact.category] ?? (bytes: 0, items: 0)
-            slot.bytes &+= artifact.storage.physicalBytes
-            slot.items += 1
-            accum[homeID, default: [:]][artifact.category] = slot
+            var homeSlot = homeAccum[homeID, default: [:]][artifact.category] ?? (bytes: 0, items: 0)
+            homeSlot.bytes &+= artifact.storage.physicalBytes
+            homeSlot.items += 1
+            homeAccum[homeID, default: [:]][artifact.category] = homeSlot
+            if let productID = homeProductIDs[homeID] {
+                productIDs.insert(productID)
+            }
+        }
+        for productID in productIDs where productItemIDs[productID, default: []].insert(artifact.id).inserted {
+            var productSlot = productAccum[productID, default: [:]][artifact.category] ?? (bytes: 0, items: 0)
+            productSlot.bytes &+= artifact.storage.physicalBytes
+            productSlot.items += 1
+            productAccum[productID, default: [:]][artifact.category] = productSlot
+            let current = productStorage[productID] ?? StorageMeasurement()
+            productStorage[productID] = StorageMeasurement(
+                logicalBytes: current.logicalBytes &+ artifact.storage.logicalBytes,
+                physicalBytes: current.physicalBytes &+ artifact.storage.physicalBytes,
+                itemCount: current.itemCount + 1
+            )
         }
     }
+
     var slicesByHome: [PhysicalResourceIdentity: [AgentCategorySlice]] = [:]
-    for (homeID, byCategory) in accum {
+    for (homeID, byCategory) in homeAccum {
         slicesByHome[homeID] = byCategory
             .filter { $0.value.bytes > 0 }
             .map { AgentCategorySlice(category: $0.key, bytes: $0.value.bytes, itemCount: $0.value.items) }
             .sorted { $0.bytes > $1.bytes }
     }
-    return AgentCardDerived(slicesByHome: slicesByHome)
+
+    var productsByID: [String: AgentProductDerived] = [:]
+    for (productID, byCategory) in productAccum {
+        productsByID[productID] = AgentProductDerived(
+            slices: byCategory
+                .filter { $0.value.bytes > 0 }
+                .map { AgentCategorySlice(category: $0.key, bytes: $0.value.bytes, itemCount: $0.value.items) }
+                .sorted { $0.bytes > $1.bytes },
+            storage: productStorage[productID] ?? StorageMeasurement()
+        )
+    }
+    return AgentCardDerived(slicesByHome: slicesByHome, productsByID: productsByID)
 }
 
-/// Agent 档案卡：品牌图标砖 + 产品/名称 + 状态徽章 + 路径胶囊 + 四格仪表 +
-/// 容量构成 + 元信息底栏。整卡可点击进入详情；确认/忽略/撤销收敛到右键菜单，
-/// 卡片表面保持干净。hover 上浮 + accent 描边/柔光。
-private struct AgentHomeCard: View {
+/// Agent 产品卡：沿用原 Agent 档案卡视觉，但身份是生效产品/可执行文件，Home 只作配置计数。
+private struct AgentProductCard: View {
     let model: AppModel
-    let home: AgentHome
-    let slices: [AgentCategorySlice]
+    let product: AgentProduct
+    let derived: AgentProductDerived?
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.controlActiveState) private var controlActiveState
     @Environment(\.colorScheme) private var colorScheme
     @State private var isHovering = false
 
-    private var product: AgentProduct? {
-        model.snapshot?.products.first { $0.id == home.productID }
+    private var homes: [AgentHome] {
+        product.homes.sorted { $0.path.localizedStandardCompare($1.path) == .orderedAscending }
     }
 
-    private var productName: String { product?.displayName ?? home.productID }
-    private var displayedVersion: String? {
-        model.installedVersion(for: home.productID)
+    private var installation: AgentInstallation? {
+        model.effectiveInstallation(for: product.id)
     }
-    private var totalBytes: UInt64 { home.storage.physicalBytes }
+
+    private var isEffective: Bool { installation != nil }
+
+    private var productName: String { product.displayName }
+    private var displayedVersion: String? { model.installedVersion(for: product.id) }
+
+    private var slices: [AgentCategorySlice] { derived?.slices ?? [] }
+    private var totalBytes: UInt64 { derived?.storage.physicalBytes ?? 0 }
+    private var logicalBytes: UInt64 { derived?.storage.logicalBytes ?? 0 }
+    private var itemCount: Int { derived?.storage.itemCount ?? 0 }
     private var attributedBytes: UInt64 { slices.reduce(UInt64(0)) { $0 &+ $1.bytes } }
     private var remainderBytes: UInt64 { totalBytes > attributedBytes ? totalBytes - attributedBytes : 0 }
-    private var needsActions: Bool { home.confidence == .possible || home.source == .userConfirmed }
+    private var possibleCount: Int { homes.filter { $0.confidence == .possible }.count }
+    private var homeCountLine: String {
+        if possibleCount == 0 { return model.localized("%d 个 Home", homes.count) }
+        return model.localized("%d 个 Home · %d 个疑似", homes.count, possibleCount)
+    }
+    private var evidenceCount: Int {
+        (installation?.evidence.count ?? 0) + homes.reduce(0) { $0 + $1.evidence.count }
+    }
+    private var evidenceHelp: String {
+        var lines = installation?.evidence ?? []
+        lines.append(contentsOf: homes.flatMap(\.evidence))
+        if lines.isEmpty { return model.localized("暂无生效安装或 Home 证据。") }
+        return Array(Set(lines)).sorted().joined(separator: "\n")
+    }
 
     private var statusText: String {
-        model.localized(home.confidence == .confirmed ? "已确认" : "疑似")
+        isEffective ? model.localized("生效") : model.localized("未生效")
     }
 
     private var statusColor: Color {
-        home.confidence == .confirmed ? DS.Semantic.statusPositive : DS.Semantic.statusCaution
+        isEffective ? DS.Semantic.statusPositive : DS.Semantic.statusCaution
     }
 
     private var statusSymbol: String {
-        home.confidence == .confirmed ? "checkmark" : "exclamationmark"
-    }
-
-    private var sourceSymbol: String {
-        switch home.source {
-        case .defaultPath: "house"
-        case .environment: "terminal"
-        case .custom: "plus.square"
-        case .userConfirmed: "hand.tap"
-        }
+        isEffective ? "terminal.fill" : "exclamationmark.triangle"
     }
 
     private var brandTint: Color {
-        HomeProductStyle.brandColor(for: home.productID) ?? HomeProductStyle.color(for: home.productID)
+        HomeProductStyle.brandColor(for: product.id) ?? HomeProductStyle.color(for: product.id)
     }
 
     private var categoryAccent: Color {
@@ -1213,7 +1307,8 @@ private struct AgentHomeCard: View {
 
     var body: some View {
         Button {
-            model.selectedAgentHomeID = home.id
+            model.selectedAgentID = product.id
+            model.selectedAgentHomeID = nil
         } label: {
             cardSurface
         }
@@ -1227,7 +1322,7 @@ private struct AgentHomeCard: View {
         .offset(y: isActiveHovering ? -2.5 : 0)
         .animation(reduceMotion ? nil : .easeOut(duration: DS.Motion.hover), value: isActiveHovering)
         .contextMenu { cardMenu }
-        .accessibilityHint(model.localized("打开%@详情", home.displayName))
+        .accessibilityHint(model.localized("打开%@详情", product.displayName))
     }
 
     // MARK: 卡片表面
@@ -1299,12 +1394,12 @@ private struct AgentHomeCard: View {
         HStack(alignment: .center, spacing: DS.Space.x300) {
             iconTile
             VStack(alignment: .leading, spacing: DS.Space.x100) {
-                Text(productName)
+                Text(product.id)
                     .font(DS.Typeface.micro.weight(.semibold))
                     .tracking(0.6)
                     .foregroundStyle(categoryAccent)
                     .lineLimit(1)
-                Text(home.displayName)
+                Text(productName)
                     .font(.system(size: 17, weight: .semibold, design: .default))
                     .tracking(-0.15)
                     .lineLimit(1)
@@ -1345,7 +1440,7 @@ private struct AgentHomeCard: View {
                 )
             RoundedRectangle(cornerRadius: 11, style: .continuous)
                 .strokeBorder(brandTint.opacity(0.26), lineWidth: DS.Stroke.hairline)
-            HomeBrandIcon(productID: home.productID, size: 22)
+            HomeBrandIcon(productID: product.id, size: 22)
         }
         .frame(width: 42, height: 42)
         .shadow(color: brandTint.opacity(0.16), radius: 3, y: 1)
@@ -1358,6 +1453,7 @@ private struct AgentHomeCard: View {
                 .font(.system(size: 8, weight: .bold))
             Text(statusText)
                 .font(DS.Typeface.micro.weight(.semibold))
+                .lineLimit(1)
         }
         .foregroundStyle(statusColor)
         .padding(.horizontal, DS.Space.x200)
@@ -1373,17 +1469,17 @@ private struct AgentHomeCard: View {
 
     private var pathPill: some View {
         HStack(spacing: DS.Space.x200) {
-            Image(systemName: "folder")
+            Image(systemName: isEffective ? "terminal" : "exclamationmark.triangle")
                 .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(brandTint)
+                .foregroundStyle(isEffective ? brandTint : DS.Semantic.statusCaution)
                 .frame(width: 12)
-            Text(model.displayPath(home.path))
+            Text(installationPathText)
                 .font(DS.Typeface.caption)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
                 .truncationMode(.middle)
                 .privacySensitive()
-                .help(model.displayPath(home.path))
+                .help(installation?.path ?? "")
             Spacer(minLength: 0)
         }
         .padding(.horizontal, DS.Space.x250)
@@ -1396,6 +1492,11 @@ private struct AgentHomeCard: View {
             RoundedRectangle(cornerRadius: DS.Radius.controlCompact, style: .continuous)
                 .strokeBorder(Color.primary.opacity(DS.Opacity.borderQuiet), lineWidth: DS.Stroke.hairline)
         )
+    }
+
+    private var installationPathText: String {
+        guard let installation else { return model.localized("未检测到生效可执行文件") }
+        return model.displayPath(installation.path)
     }
 
     private var metricStrip: some View {
@@ -1411,22 +1512,20 @@ private struct AgentHomeCard: View {
             metricCell(
                 icon: "square.stack.3d.up",
                 label: model.localized("逻辑占用"),
-                value: model.formatBytes(home.storage.logicalBytes)
+                value: model.formatBytes(logicalBytes)
             )
             metricDivider
             metricCell(
                 icon: "doc.on.doc",
                 label: model.localized("条目数"),
-                value: "\(home.storage.itemCount)"
+                value: "\(itemCount)"
             )
             metricDivider
             metricCell(
                 icon: "checkmark.shield",
                 label: model.localized("证据数"),
-                value: "\(home.evidence.count)",
-                helpText: home.evidence.isEmpty
-                    ? model.localized("此 Home 没有证据记录。")
-                    : home.evidence.joined(separator: "\n")
+                value: "\(evidenceCount)",
+                helpText: evidenceHelp
             )
         }
         .padding(.vertical, DS.Space.x250)
@@ -1584,10 +1683,11 @@ private struct AgentHomeCard: View {
 
     private var footer: some View {
         HStack(spacing: DS.Space.x200) {
-            metadataChip(icon: sourceSymbol, text: model.discoverySourceTitle(home.source))
-            if let product, !product.installations.isEmpty {
-                metadataChip(icon: "shippingbox", text: model.localized("%d 个安装", product.installations.count))
-            }
+            metadataChip(
+                icon: isEffective ? "terminal" : "exclamationmark.triangle",
+                text: statusText
+            )
+            metadataChip(icon: "folder", text: homeCountLine)
             if let skillSlice {
                 metadataChip(
                     icon: "sparkles",
@@ -1628,27 +1728,11 @@ private struct AgentHomeCard: View {
         .opacity(isActiveHovering ? 1 : 0.70)
     }
 
-    // MARK: 右键菜单（替代原卡片内操作按钮）
-
     @ViewBuilder
     private var cardMenu: some View {
-        Button(model.localized("打开%@详情", home.displayName)) {
-            model.selectedAgentHomeID = home.id
-        }
-        if needsActions {
-            Divider()
-            if home.confidence == .possible {
-                Button(model.localized("确认为 %@", home.displayName)) {
-                    model.confirmCandidate(home)
-                }
-                Button(model.localized("忽略此位置"), role: .destructive) {
-                    model.ignoreCandidate(home)
-                }
-            } else if home.source == .userConfirmed {
-                Button(model.localized("撤销本机确认")) {
-                    model.revokeCandidateConfirmation(home)
-                }
-            }
+        Button(model.localized("打开%@详情", product.displayName)) {
+            model.selectedAgentID = product.id
+            model.selectedAgentHomeID = nil
         }
     }
 }
@@ -1665,7 +1749,7 @@ private struct AgentCardLegendItem: Identifiable {
     let color: Color
 }
 
-/// 卡片按压反馈：只负责 pressed 缩放；hover 上浮、描边与柔光由 AgentHomeCard 本体驱动。
+/// 卡片按压反馈：只负责 pressed 缩放；hover 上浮、描边与柔光由 AgentProductCard 本体驱动。
 private struct AgentCardPressButtonStyle: ButtonStyle {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -1827,11 +1911,216 @@ private struct AgentCardSkeleton: View {
 
 
 
+/// Agent 产品详情页：一层只回答「本机生效的是哪个可执行文件」，
+/// Home 配置列表是产品内部可选项；点击 Home 才进入该 Home 的存储/Skill/会话详情。
+private struct AgentProductDetailView: View {
+    @Bindable var model: AppModel
+    let productID: String
+
+    private var product: AgentProduct? { model.agentProduct(withID: productID) }
+    private var homes: [AgentHome] { model.agentHomes(for: productID) }
+    private var installation: AgentInstallation? { model.effectiveInstallation(for: productID) }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: DS.Space.x400) {
+                installationSection
+                homeConfigurationSection
+            }
+            .padding(.horizontal, DS.Layout.pageHorizontalInset)
+            .padding(.vertical, DS.Layout.pageVerticalInset)
+            .frame(maxWidth: DS.Layout.pageMaxWidth)
+            .frame(maxWidth: .infinity)
+        }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            detailHeader
+        }
+    }
+
+    private var detailHeader: some View {
+        detailIdentity
+            .padding(.horizontal, DS.Layout.pageHorizontalInset)
+            .padding(.vertical, DS.Space.x300)
+            .frame(maxWidth: DS.Layout.pageMaxWidth)
+            .frame(maxWidth: .infinity)
+            .background(Color(nsColor: DS.Neutral.canvas))
+    }
+
+    private var detailIdentity: some View {
+        DSPageIdentity(
+            title: product?.displayName ?? productID,
+            glyph: "cpu",
+            detail: detailLine
+        ) {
+            Button {
+                model.selectedAgentID = nil
+                model.selectedAgentHomeID = nil
+            } label: {
+                Label(model.localized("返回"), systemImage: "chevron.left")
+            }
+            .buttonStyle(.dsAction(size: .regular))
+        }
+    }
+
+    private var detailLine: String? {
+        var parts: [String] = []
+        if let installation {
+            parts.append(model.localized("生效：%@", model.displayPath(installation.path)))
+        } else {
+            parts.append(model.localized("未检测到生效可执行文件"))
+        }
+        if let version = model.installedVersion(for: productID) {
+            parts.append("v\(version)")
+        }
+        parts.append(model.localized("%d 个 Home", homes.count))
+        return parts.joined(separator: " · ")
+    }
+
+    // MARK: 生效安装
+
+    private var installationSection: some View {
+        VStack(alignment: .leading, spacing: DS.Space.x300) {
+            Text(model.localized("生效安装"))
+                .font(DS.Typeface.title)
+            DSCard(padding: DS.Space.x400) {
+                if let installation {
+                    VStack(alignment: .leading, spacing: DS.Space.x250) {
+                        HStack(spacing: DS.Space.x200) {
+                            Image(systemName: "terminal")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(DS.Semantic.statusPositive)
+                                .frame(width: 18)
+                            Text(model.displayPath(installation.path))
+                                .font(DS.Typeface.body.weight(.semibold))
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                                .privacySensitive()
+                                .help(installation.path)
+                            Spacer(minLength: DS.Space.x300)
+                            DSBadge(text: model.localized("生效"), color: DS.Semantic.statusPositive)
+                        }
+                        ForEach(Array(installation.evidence.enumerated()), id: \.offset) { _, item in
+                            Label(item, systemImage: "seal")
+                                .font(DS.Typeface.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                } else {
+                    HStack(spacing: DS.Space.x200) {
+                        Image(systemName: "questionmark.diamond")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(DS.Semantic.statusCaution)
+                        Text(model.localized("未检测到生效可执行文件。只有 Home 目录不足以证明 Agent 当前生效；请检查安装或 PATH。"))
+                            .font(DS.Typeface.body)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: Home 配置
+
+    private var homeConfigurationSection: some View {
+        VStack(alignment: .leading, spacing: DS.Space.x300) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(model.localized("Home 配置"))
+                    .font(DS.Typeface.title)
+                Spacer(minLength: DS.Space.x300)
+                Text(model.localized("%d 个", homes.count))
+                    .font(DS.Typeface.caption)
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+            }
+            if homes.isEmpty {
+                DSCard(padding: DS.Space.x400) {
+                    Text(model.localized("未发现此 Agent 的 Home。该产品可能不落盘配置，或 Home 不在当前扫描范围内。"))
+                        .font(DS.Typeface.caption)
+                        .foregroundStyle(.secondary)
+                }
+            } else {
+                DSCard(padding: DS.Space.x300) {
+                    VStack(alignment: .leading, spacing: DS.Space.x100) {
+                        ForEach(homes) { home in
+                            homeConfigurationRow(home)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func homeConfigurationRow(_ home: AgentHome) -> some View {
+        HStack(spacing: DS.Space.x250) {
+            HomeBrandIcon(productID: home.productID, size: 22)
+            VStack(alignment: .leading, spacing: DS.Space.x050) {
+                Text(model.displayPath(home.path))
+                    .font(DS.Typeface.body.weight(.semibold))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .privacySensitive()
+                HStack(spacing: DS.Space.x150) {
+                    Circle()
+                        .fill(home.confidence == .confirmed ? DS.Semantic.statusPositive : DS.Semantic.statusCaution)
+                        .frame(width: 6, height: 6)
+                    Text(model.discoverySourceTitle(home.source))
+                        .foregroundStyle(.secondary)
+                    if let version = home.version {
+                        Text("v\(version)")
+                            .foregroundStyle(.tertiary)
+                            .monospacedDigit()
+                    }
+                }
+                .font(DS.Typeface.caption)
+            }
+            Spacer(minLength: DS.Space.x300)
+            Text(model.formatBytes(home.storage.physicalBytes))
+                .font(DS.Typeface.caption.weight(.semibold))
+                .monospacedDigit()
+                .foregroundStyle(.secondary)
+            Button {
+                model.selectedAgentHomeID = home.id
+            } label: {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(model.localized("打开%@详情", home.displayName))
+        }
+        .padding(.horizontal, DS.Space.x150)
+        .padding(.vertical, DS.Space.x200)
+        .background(
+            RoundedRectangle(cornerRadius: DS.Radius.controlCompact, style: .continuous)
+                .fill(Color.primary.opacity(0.04))
+        )
+        .contentShape(Rectangle())
+        .contextMenu {
+            Button(model.localized("打开%@详情", home.displayName)) {
+                model.selectedAgentHomeID = home.id
+            }
+            if home.confidence == .possible {
+                Button(model.localized("确认为 %@", home.displayName)) {
+                    model.confirmCandidate(home)
+                }
+                Button(model.localized("忽略此位置"), role: .destructive) {
+                    model.ignoreCandidate(home)
+                }
+            } else if home.source == .userConfirmed {
+                Button(model.localized("撤销本机确认")) {
+                    model.revokeCandidateConfirmation(home)
+                }
+            }
+        }
+    }
+}
+
+
 // MARK: - Agent 详情页
 
-/// Agent 详情页：概览读数 + 容量分析 + 对话管理 + Skills + 证据。
-/// 由 Agent 档案卡点击进入；左上「返回」清空 selectedAgentHomeID 回到列表。
-private struct AgentDetailView: View {
+/// Agent Home 详情页：仅展示所选 Home 配置内的概览读数 + 容量分析 + 对话管理 + Skills + 证据。
+/// 由 Agent 产品详情页的 Home 配置行进入；左上「返回」清空 selectedAgentHomeID 回到产品详情。
+private struct AgentHomeDetailView: View {
     @Bindable var model: AppModel
     let home: AgentHome
     @State private var derived: AgentCardDerived?

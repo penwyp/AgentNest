@@ -3,10 +3,16 @@ import Foundation
 public struct ScanUseCase: Sendable {
     private let catalog: AgentDefinitionCatalog
     private let indexer: FileIndexer
+    private let installationProvider: @Sendable ([AgentDefinition]) -> [AgentInstallation]
 
-    public init(catalog: AgentDefinitionCatalog, indexer: FileIndexer = FileIndexer()) {
+    public init(
+        catalog: AgentDefinitionCatalog,
+        indexer: FileIndexer = FileIndexer(),
+        installationProvider: @escaping @Sendable ([AgentDefinition]) -> [AgentInstallation] = { _ in [] }
+    ) {
         self.catalog = catalog
         self.indexer = indexer
+        self.installationProvider = installationProvider
     }
 
     public func execute(
@@ -26,6 +32,7 @@ public struct ScanUseCase: Sendable {
         }
 
         let scanningDefinitions = catalog.definitions.filter(\.participatesInScanning)
+        let catalogDefinitions = catalog.definitions
         let candidateCount = scanningDefinitions.reduce(0) { count, definition in
             count + candidateHomes(
                 definition: definition,
@@ -112,7 +119,18 @@ public struct ScanUseCase: Sendable {
             return $0.path.localizedStandardCompare($1.path) == .orderedAscending
         }
 
-        let products = buildProducts(homes: homes, definitions: scanningDefinitions)
+        let installations = Dictionary(
+            grouping: installationProvider(catalogDefinitions),
+            by: \.productID
+        ).mapValues { values in
+            var seen: Set<PhysicalResourceIdentity> = []
+            return values.filter { seen.insert($0.id).inserted }
+        }
+        let products = buildProducts(
+            homes: homes,
+            definitions: catalogDefinitions,
+            installationsByProductID: installations
+        )
         let storageLedger = buildStorageLedger(
             homes: homes.filter { $0.confidence == .confirmed },
             definitions: scanningDefinitions,
@@ -379,17 +397,24 @@ public struct ScanUseCase: Sendable {
         return StorageMeasurement(logicalBytes: logical, physicalBytes: physical, itemCount: seen.count)
     }
 
-    private func buildProducts(homes: [AgentHome], definitions: [AgentDefinition]) -> [AgentProduct] {
+    private func buildProducts(
+        homes: [AgentHome],
+        definitions: [AgentDefinition],
+        installationsByProductID: [String: [AgentInstallation]]
+    ) -> [AgentProduct] {
         definitions.compactMap { definition in
             let productHomes = homes.filter { $0.productID == definition.id }
-            guard !productHomes.isEmpty else { return nil }
+            let installations = (installationsByProductID[definition.id] ?? []).sorted {
+                $0.path.localizedStandardCompare($1.path) == .orderedAscending
+            }
+            guard productHomes.isEmpty == false || installations.isEmpty == false else { return nil }
             return AgentProduct(
                 id: definition.id,
                 displayName: definition.displayName,
                 definitionVersion: definition.schemaVersion,
                 supportState: definition.capabilities.space ? .supported : .detectable,
                 capabilities: definition.capabilities,
-                installations: [],
+                installations: installations,
                 homes: productHomes,
                 profiles: []
             )
