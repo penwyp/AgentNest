@@ -38,8 +38,14 @@ public struct AgentDefinitionCatalog: Sendable {
     }
 
     public static func bundled() throws -> AgentDefinitionCatalog {
-        let nested = Bundle.module.urls(forResourcesWithExtension: "json", subdirectory: "AgentDefinitions") ?? []
-        let flattened = Bundle.module.urls(forResourcesWithExtension: "json", subdirectory: nil) ?? []
+        let nested = AgentNestCoreResourceBundle.bundle.urls(
+            forResourcesWithExtension: "json",
+            subdirectory: "AgentDefinitions"
+        ) ?? []
+        let flattened = AgentNestCoreResourceBundle.bundle.urls(
+            forResourcesWithExtension: "json",
+            subdirectory: nil
+        ) ?? []
         let urls = Array(Set(nested + flattened))
             .filter { !$0.lastPathComponent.hasPrefix("marketplace-") }
         guard !urls.isEmpty else {
