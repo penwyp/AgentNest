@@ -732,6 +732,19 @@ struct AgentNestCoreTestRunner {
             websiteUpdateURL: "https://api.github.com/repos/anomalyco/opencode/releases/latest"
         )
         try expect(githubReleaseVersion == "1.18.18", "GitHub release tag_name is accepted as an official update version")
+
+        let opencodeMethodVersion = try await service.latestVersion(
+            for: AgentInstallMethod(
+                kind: .brew,
+                formula: "opencode",
+                scriptURL: "https://opencode.ai/install",
+                websiteUpdateURL: "https://unit.test/repos/anomalyco/opencode/releases/latest"
+            )
+        )
+        try expect(
+            opencodeMethodVersion == "1.18.18",
+            "brew install method with an official script update URL uses the script release feed instead of Homebrew"
+        )
         let websiteMethodVersion = try await service.latestVersion(
             for: AgentInstallMethod(
                 kind: .website,
