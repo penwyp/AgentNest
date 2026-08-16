@@ -601,6 +601,22 @@ final class AppModel {
             .sorted { $0.path.localizedStandardCompare($1.path) == .orderedAscending } ?? []
     }
 
+    /// Agent 详情页使用的 Skill 安装副本，与 Skill 页共用同一 `skillIndex` 数据源。
+    func skillInstallations(for productID: String) -> [SkillInstallation] {
+        guard let skillIndex else { return [] }
+        let homeIDs = Set(agentHomes(for: productID).map(\.id))
+        return skillIndex.logicalSkills
+            .flatMap(\.variants)
+            .flatMap(\.installations)
+            .filter { homeIDs.contains($0.homeID) }
+    }
+
+    /// 如果启动加载尚未完成，进入详情时补一次 Skill 索引；已存在时保持零成本。
+    func refreshSkillIndexIfNeeded() async {
+        guard skillIndex == nil else { return }
+        await refreshSkillIndex()
+    }
+
     /// 当前真正生效的安装：后台解析结果优先；完整扫描结果作为快照内证据回退。
     func effectiveInstallation(for productID: String) -> AgentInstallation? {
         if let live = effectiveInstallations[productID] { return live }
