@@ -944,6 +944,8 @@ final class AppModel {
     // MARK: 版本缓存
 
     private func hydrateMarketVersionCache() {
+        // v1 缓存混用了 Homebrew formula 与官网脚本两个版本来源，不再复用到 v2。
+        UserDefaults.standard.removeObject(forKey: "marketVersionCache.v1")
         guard let data = UserDefaults.standard.data(forKey: Self.marketVersionCacheDefaultsKey),
               let entries = try? JSONDecoder().decode([String: MarketVersionCacheEntry].self, from: data) else {
             return
@@ -983,7 +985,7 @@ final class AppModel {
     }
 
     private static let installedVersionScanThrottle: TimeInterval = 5 * 60
-    private static let marketVersionCacheDefaultsKey = "marketVersionCache.v1"
+    private static let marketVersionCacheDefaultsKey = "marketVersionCache.v2"
 
     private func refreshCleanupInventory() {
         cleanupInventoryTask?.cancel()

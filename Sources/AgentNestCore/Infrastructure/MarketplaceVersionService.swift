@@ -49,7 +49,8 @@ public struct MarketplaceVersionService: Sendable {
               let rawVersion = object["version"] as? String
                 ?? (object["version"] as? NSNumber)?.stringValue
                 ?? object["productVersion"] as? String
-                ?? (object["productVersion"] as? NSNumber)?.stringValue else {
+                ?? (object["productVersion"] as? NSNumber)?.stringValue
+                ?? object["tag_name"] as? String else {
             throw MarketplaceVersionServiceError.missingVersion
         }
         let version = AgentVersion.normalizedVersion(rawVersion)

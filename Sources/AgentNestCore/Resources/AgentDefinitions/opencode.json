@@ -28,7 +28,8 @@
       "kind": "brew",
       "formula": "opencode",
       "scriptURL": "https://opencode.ai/install",
-      "requiresNode": true
+      "requiresNode": true,
+      "websiteUpdateURL": "https://api.github.com/repos/anomalyco/opencode/releases/latest"
     }
   }
 }

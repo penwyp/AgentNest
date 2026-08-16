@@ -86,6 +86,16 @@ struct AgentNestCoreTestRunner {
             "market install methods match the real Homebrew formula/cask tokens"
         )
         try expect(
+            install(for: "opencode.opencode") == AgentInstallMethod(
+                kind: .brew,
+                formula: "opencode",
+                scriptURL: "https://opencode.ai/install",
+                requiresNode: true,
+                websiteUpdateURL: "https://api.github.com/repos/anomalyco/opencode/releases/latest"
+            ),
+            "OpenCode latest version follows its official installer release feed instead of the lagging Homebrew formula"
+        )
+        try expect(
             catalog.definitions.first { $0.id == "inflection.pi" }?.marketplace?.homepageURL == "https://pi.dev",
             "Pi marketplace homepage points to pi.dev"
         )
@@ -166,7 +176,8 @@ struct AgentNestCoreTestRunner {
             _ = try AgentDefinitionCatalog.load(data: unsafeScriptURL)
         }
         try expect(
-            AgentVersion.isUpdate(latest: "2.0.0", installed: "1.9.9") &&
+            AgentVersion.normalizedVersion("v1.18.18, 1.18.19") == "1.18.18" &&
+                AgentVersion.isUpdate(latest: "2.0.0", installed: "1.9.9") &&
                 !AgentVersion.isUpdate(latest: "1.0.0", installed: "1.0.0") &&
                 !AgentVersion.isUpdate(latest: "latest", installed: "1.0.0") &&
                 AgentVersion.isUpdate(latest: "v2.0", installed: "1.10.0") &&
@@ -712,6 +723,15 @@ struct AgentNestCoreTestRunner {
             websiteUpdateURL: "https://www.workbuddy.ai/v2/update?platform=workbuddy-darwin-arm64"
         )
         try expect(websiteVersion == "5.3.13.35912340", "official website update JSON returns the latest version")
+
+        URLProtocolStub.register(
+            path: "/repos/anomalyco/opencode/releases/latest",
+            data: Data("{\"tag_name\":\"v1.18.18\"}".utf8)
+        )
+        let githubReleaseVersion = try await service.latestVersion(
+            websiteUpdateURL: "https://api.github.com/repos/anomalyco/opencode/releases/latest"
+        )
+        try expect(githubReleaseVersion == "1.18.18", "GitHub release tag_name is accepted as an official update version")
         let websiteMethodVersion = try await service.latestVersion(
             for: AgentInstallMethod(
                 kind: .website,
