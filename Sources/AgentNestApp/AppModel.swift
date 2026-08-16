@@ -458,6 +458,15 @@ final class AppModel {
         }.sorted { $0.rootPath.localizedStandardCompare($1.rootPath) == .orderedAscending }
     }
 
+    /// 全部具备 Skill 能力且已确认的 Home（矩阵列；不限于可写位置）。
+    var skillCapableHomes: [AgentHome] {
+        guard let snapshot, let catalog else { return [] }
+        let capable = Set(catalog.definitions.filter { $0.capabilities.skills }.map(\.id))
+        return snapshot.homes
+            .filter { $0.confidence == .confirmed && capable.contains($0.productID) }
+            .sorted { $0.path.localizedStandardCompare($1.path) == .orderedAscending }
+    }
+
     func executeCleanup(_ unit: CleanupUnit) {
         executeCleanup([unit])
     }
@@ -1047,10 +1056,19 @@ final class AppModel {
         }
     }
 
-    func patchSkillToMissingHomes(_ skill: LogicalSkill) {
-        guard allows(.patch), let generation = snapshot?.generation,
-              let source = skill.variants.flatMap(\.installations).first(where: { $0.state == .valid }) else {
-            skillOperationMessage = localized("当前 License 不包含补齐，或没有可用来源 Variant。")
+    /// 补齐（强制覆盖）：把 source 复制到 targetHomeIDs 指定的全部可写位置。
+    /// 目标已有同名 Skill 时走 planPatch(.replace)——旧目录移入系统废纸篓（失败自动回滚）。
+    func patchSkill(
+        _ skill: LogicalSkill,
+        source: SkillInstallation,
+        targetHomeIDs: Set<PhysicalResourceIdentity>
+    ) {
+        guard allows(.patch), let generation = snapshot?.generation else {
+            skillOperationMessage = localized("当前 License 不包含同步。")
+            return
+        }
+        guard source.state == .valid, source.isWritable else {
+            skillOperationMessage = localized("没有可用的有效来源 Variant。")
             return
         }
         guard !updateController.sessionInProgress else {
@@ -1061,8 +1079,12 @@ final class AppModel {
             skillOperationMessage = localized("另一个扫描或写操作正在进行。")
             return
         }
-        let targets = skillWriteTargets.filter { skill.missingHomeIDs.contains($0.homeID) }
+        let targets = skillWriteTargets.filter {
+            targetHomeIDs.contains($0.homeID) && $0.homeID != source.homeID
+        }
         guard !targets.isEmpty else { return }
+        let sourcePath = URL(fileURLWithPath: source.path)
+        let destinationName = sourcePath.lastPathComponent
         Task {
             isMutatingEnvironment = true
             defer { isMutatingEnvironment = false }
@@ -1078,9 +1100,9 @@ final class AppModel {
                     plans.append(try await writer.planPatch(
                         generation: generation,
                         skillRoot: root,
-                        destinationName: URL(fileURLWithPath: source.path).lastPathComponent,
-                        sourceSkill: URL(fileURLWithPath: source.path),
-                        conflictResolution: .skip
+                        destinationName: destinationName,
+                        sourceSkill: sourcePath,
+                        conflictResolution: .replace
                     ))
                 }
                 let results = await writer.executeSerial(plans, currentGeneration: generation)
@@ -1090,6 +1112,80 @@ final class AppModel {
                 await refreshSkillIndex()
             } catch {
                 skillOperationMessage = localized("Skill 补齐预检失败：%@", String(describing: error))
+            }
+        }
+    }
+
+    /// 删除整个逻辑 Skill：把每个可写安装目录移入废纸篓（含无效/不可读残留，仅排除远程只读来源）。
+    func deleteLogicalSkill(_ skill: LogicalSkill) {
+        guard allows(.skillWrite), let generation = snapshot?.generation else {
+            skillOperationMessage = localized("当前 License 不包含 Skill 写入。")
+            return
+        }
+        guard !updateController.sessionInProgress else {
+            skillOperationMessage = localized("更新进行中，暂不能修改 Agent 环境。")
+            return
+        }
+        guard !isMutatingEnvironment else {
+            skillOperationMessage = localized("另一个扫描或写操作正在进行。")
+            return
+        }
+        let installations = skill.variants.flatMap(\.installations)
+        guard !installations.isEmpty else {
+            skillOperationMessage = localized("此 Skill 没有可删除的安装副本。")
+            return
+        }
+        runDeletePlans(installations)
+    }
+
+    /// 删除指定安装副本集合（冲突解决时移除未保留版本）。
+    func deleteSkillInstallations(_ installations: [SkillInstallation]) {
+        guard allows(.skillWrite), let generation = snapshot?.generation else {
+            skillOperationMessage = localized("当前 License 不包含 Skill 写入。")
+            return
+        }
+        guard !updateController.sessionInProgress else {
+            skillOperationMessage = localized("更新进行中，暂不能修改 Agent 环境。")
+            return
+        }
+        guard !isMutatingEnvironment else {
+            skillOperationMessage = localized("另一个扫描或写操作正在进行。")
+            return
+        }
+        guard !installations.isEmpty else { return }
+        runDeletePlans(installations)
+    }
+
+    /// 公共删除执行器：逐目录 planDelete 串行移入废纸篓，结果汇总到横幅并重建 Skill 索引。
+    private func runDeletePlans(_ installations: [SkillInstallation]) {
+        let writable = installations.filter { $0.isWritable }
+        guard !writable.isEmpty else {
+            skillOperationMessage = localized("所选版本均不可移除。")
+            return
+        }
+        guard let generation = snapshot?.generation else { return }
+        Task {
+            isMutatingEnvironment = true
+            defer { isMutatingEnvironment = false }
+            let writer = SkillWriteUseCase()
+            do {
+                var plans: [SkillWritePlan] = []
+                for installation in writable {
+                    let skillURL = URL(fileURLWithPath: installation.path)
+                    plans.append(try await writer.planDelete(
+                        generation: generation,
+                        skillRoot: skillURL.deletingLastPathComponent(),
+                        skillName: skillURL.lastPathComponent,
+                        expectedIdentity: installation.id
+                    ))
+                }
+                let results = await writer.executeSerial(plans, currentGeneration: generation)
+                let succeeded = results.filter { $0.status == .succeeded }.count
+                let failed = results.filter { $0.status == .failed }.count
+                skillOperationMessage = localized("已删除 %d 个安装，失败 %d。", succeeded, failed)
+                await refreshSkillIndex()
+            } catch {
+                skillOperationMessage = localized("Skill 删除失败：%@", String(describing: error))
             }
         }
     }

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 	"time"
 
@@ -49,6 +50,9 @@ func Open(path string) (*FileStore, error) {
 	data, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		store.ensureSystemPolicies()
+		if err := store.persistLocked(); err != nil {
+			return nil, fmt.Errorf("persist initial state: %w", err)
+		}
 		return store, nil
 	}
 	if err != nil {
@@ -76,15 +80,25 @@ func Open(path string) (*FileStore, error) {
 		store.state.ProcessedWebhooks = make(map[string]time.Time)
 	}
 	store.ensureSystemPolicies()
+	// 持久化系统策略收敛结果（如历史 trial policy 缺新功能）。
+	if err := store.persistLocked(); err != nil {
+		return nil, fmt.Errorf("persist system policies: %w", err)
+	}
 	return store, nil
 }
 
 func (s *FileStore) ensureSystemPolicies() {
-	if _, ok := s.state.Policies["trial"]; ok {
+	trialFeatures := []string{"scan", "overview", "skill.write", "patch"}
+	if policy, ok := s.state.Policies["trial"]; ok {
+		// 幂等收敛：历史数据可能缺少新开放的试用功能，保持系统策略恒定。
+		if !slices.Equal(policy.Features, trialFeatures) {
+			policy.Features = trialFeatures
+			s.state.Policies["trial"] = policy
+		}
 		return
 	}
 	s.state.Policies["trial"] = domain.Policy{
-		ID: "trial", Plan: "trial", Features: []string{"scan", "overview"}, MaxMachines: 1,
+		ID: "trial", Plan: "trial", Features: trialFeatures, MaxMachines: 1,
 		RefreshAfterSeconds: int64((24 * time.Hour).Seconds()),
 		OfflineTTLSeconds:   int64(domain.TrialOfflineTTL.Seconds()),
 	}
