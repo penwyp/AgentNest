@@ -39,11 +39,14 @@ public extension MarketplaceCatalog {
     }
 
     private static func bundledData(resource: String, extension pathExtension: String) throws -> Data {
-        if let url = Bundle.module.url(
+        if let url = AgentNestCoreResourceBundle.bundle.url(
             forResource: resource,
             withExtension: pathExtension,
             subdirectory: "Marketplace"
-        ) ?? Bundle.module.url(forResource: resource, withExtension: pathExtension) {
+        ) ?? AgentNestCoreResourceBundle.bundle.url(
+            forResource: resource,
+            withExtension: pathExtension
+        ) {
             return try Data(contentsOf: url)
         }
         throw MarketplaceCatalogError.missingBundledResource(resource)
