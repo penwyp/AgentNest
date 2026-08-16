@@ -1949,12 +1949,8 @@ private struct AgentProductDetailView: View {
     private var homes: [AgentHome] { model.agentHomes(for: productID) }
     private var installation: AgentInstallation? { model.effectiveInstallation(for: productID) }
 
-    private var homeIDs: Set<PhysicalResourceIdentity> { Set(homes.map(\.id)) }
     private var skillInstallations: [SkillInstallation] {
-        model.skillIndex?.logicalSkills
-            .flatMap(\.variants)
-            .flatMap(\.installations)
-            .filter { homeIDs.contains($0.homeID) } ?? []
+        model.skillInstallations(for: productID)
     }
     private var insightKey: String? {
         guard let generation = model.snapshot?.generation else { return nil }
@@ -1981,7 +1977,10 @@ private struct AgentProductDetailView: View {
         .safeAreaInset(edge: .top, spacing: 0) {
             detailHeader
         }
-        .task(id: insightKey) { await recomputeInsight() }
+        .task(id: insightKey) {
+            await model.refreshSkillIndexIfNeeded()
+            await recomputeInsight()
+        }
     }
 
     @MainActor
@@ -2098,7 +2097,7 @@ private struct AgentProductDetailView: View {
             )
             AgentDetailStatCard(
                 title: model.localized("Skill"),
-                value: "\(skillInstallations.count)",
+                value: model.skillIndex == nil ? "—" : "\(skillInstallations.count)",
                 glyph: "hammer",
                 tint: DS.Chart.series06
             )
@@ -2305,7 +2304,17 @@ private struct AgentProductDetailView: View {
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
             }
-            if skillInstallations.isEmpty {
+            if model.skillIndex == nil {
+                DSCard(padding: DS.Space.x400) {
+                    HStack(spacing: DS.Space.x200) {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text(model.localized("正在加载 Skill…"))
+                            .font(DS.Typeface.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            } else if skillInstallations.isEmpty {
                 DSCard(padding: DS.Space.x400) {
                     Text(model.localized("此 Agent 没有已加载的 Skill。"))
                         .font(DS.Typeface.caption)
