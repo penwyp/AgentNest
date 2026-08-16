@@ -42,8 +42,10 @@
     "summary": "Anthropic's terminal coding agent.",
     "homepageURL": "https://claude.com/claude-code",
     "install": {
-      "kind": "brew",
-      "formula": "claude-code"
+      "kind": "cask",
+      "formula": "claude-code",
+      "scriptURL": "https://claude.ai/install.sh",
+      "requiresNode": true
     }
   }
 }

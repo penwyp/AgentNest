@@ -9,6 +9,8 @@ struct AgentNestCLI {
             switch arguments.first {
             case "scan":
                 try await scan(arguments: arguments)
+            case "install-agent":
+                try await installAgent(arguments: arguments)
             case "license-trial":
                 try await license(arguments: arguments, activation: false)
             case "license-activate":
@@ -51,6 +53,23 @@ struct AgentNestCLI {
             )
         )
         try writeJSON(snapshot)
+    }
+
+    private static func installAgent(arguments: [String]) async throws {
+        guard let productID = value(for: "--agent", in: arguments) else { throw CLIError.usage }
+        let catalog = try AgentDefinitionCatalog.bundled()
+        guard let definition = catalog.definitions.first(where: { $0.id == productID }),
+              let method = definition.marketplace?.install else {
+            throw CLIError.usage
+        }
+        let runner = InstallAgentRunner()
+        try await Task.detached(priority: .utility) {
+            try runner.install(productID: productID, method: method) { event in
+                let step = event.step.rawValue
+                let tail = event.outputTail.isEmpty ? "" : " | " + event.outputTail.joined(separator: " | ")
+                print("\(event.phase) [\(step)]\(tail)")
+            }
+        }.value
     }
 
     private static func license(arguments: [String], activation: Bool) async throws {

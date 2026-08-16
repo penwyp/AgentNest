@@ -96,6 +96,13 @@ final class AppModel {
     private(set) var installedMarketProductIDs: Set<String> = Set(
         UserDefaults.standard.stringArray(forKey: "installedMarketProductIDs") ?? []
     )
+    /// 后台轻量版本扫描得到的已安装版本（产品 ID → 版本）。完整扫描写入 Home 后，
+    /// 市场卡优先使用 Home 证据；此字典作为无扫描规则市场条目与 Homebrew 探测的补充。
+    private(set) var installedAgentVersions: [String: String] = [:]
+    /// 市场最新版本状态（产品 ID → 最新版本/阶段）。只在进入市场、缓存过期、网络恢复等
+    /// 明确触发点刷新，单飞 + 节流，不使用定时器循环。
+    private(set) var marketVersionStates: [String: MarketAgentVersionState] = [:]
+    private(set) var isRefreshingMarketVersions = false
     var historyEnabled = UserDefaults.standard.bool(forKey: "historyEnabled")
     var historyRetentionDays: Int
     var hideSensitivePaths = UserDefaults.standard.bool(forKey: "hideSensitivePaths")
@@ -116,6 +123,14 @@ final class AppModel {
     private var lastHistoryPersistedAt: Date?
     private var lastProgressPublishedAt = Date.distantPast
     private var didAutoStartInitialScan = false
+    private var installedVersionScanTask: Task<Void, Never>?
+    private var lastInstalledVersionScanAt: Date?
+    private var marketVersionTask: Task<Void, Never>?
+    private var marketVersionRequested = false
+    private var lastMarketVersionAttemptAt: Date?
+    private var marketVersionCache: [String: MarketVersionCacheEntry] = [:]
+    private let marketVersionRefreshPolicy = MarketVersionRefreshPolicy()
+    private let scanUseCase: ScanUseCase?
     private let catalog: AgentDefinitionCatalog?
     private let marketplaceCatalog: MarketplaceCatalog?
     private let coordinator: ScanCoordinator?
@@ -139,7 +154,9 @@ final class AppModel {
         let loadedCatalog = try? AgentDefinitionCatalog.bundled()
         catalog = loadedCatalog
         marketplaceCatalog = try? MarketplaceCatalog.bundled()
-        coordinator = loadedCatalog.map { ScanCoordinator(useCase: ScanUseCase(catalog: $0)) }
+        let useCase = loadedCatalog.map { ScanUseCase(catalog: $0) }
+        scanUseCase = useCase
+        coordinator = useCase.map { ScanCoordinator(useCase: $0) }
         snapshot = try? snapshotStore.load()
         refreshCleanupInventory()
         var urlString = Bundle.main.object(forInfoDictionaryKey: "AgentNestLicenseServerURL") as? String
@@ -166,6 +183,7 @@ final class AppModel {
             Task { await loadLicense() }
         }
         startNetworkMonitoring()
+        hydrateMarketVersionCache()
     }
 
     var menuStatus: String {
@@ -288,9 +306,14 @@ final class AppModel {
                 }
                 snapshot = result
                 try? snapshotStore.save(result)
+                for productID in marketInstallations.keys {
+                    marketInstallations[productID]?.needsRescanNotice = false
+                }
                 clearSelectedAgentHomeIfMissing()
                 refreshCleanupInventory()
                 await refreshSkillIndex()
+                // 完整扫描已把 Home 版本写入快照；这里仅补拉 Homebrew 等安装证据，不阻塞收尾。
+                startBackgroundInstalledVersionScanIfNeeded(force: true)
             } catch is CancellationError {
                 errorMessage = localized("扫描已停止；上一次完整快照仍保留。")
             } catch {
@@ -525,7 +548,9 @@ final class AppModel {
     /// 市场安装状态（随事件流更新；失败以结构化原因表达，文案由 installFailureTitle 翻译）。
     struct MarketInstallState: Equatable {
         var phase: InstallAgentPhase = .locatingBrew
+        var step: InstallAgentStep = .detectingEnvironment
         var outputTail: [String] = []
+        var needsRescanNotice = false
     }
 
     /// 市场面板列出的目录产品（按名称排序，含未参与扫描的产品）。
@@ -551,7 +576,22 @@ final class AppModel {
 
     /// 是否有安装任务进行中（brew 全局互斥，其余安装按钮据此禁用）。
     var isAnyMarketInstallRunning: Bool {
-        marketInstallations.values.contains { $0.phase == .locatingBrew || $0.phase == .running }
+        marketInstallations.values.contains {
+            $0.phase == .locatingBrew || $0.phase == .preparingDependencies || $0.phase == .running
+        }
+    }
+
+    /// 升级/安装入口：无安装权限时在卡片内直接显示原因，不进入安装状态，也不因 disabled 压暗按钮。
+    func requestMarketInstall(_ productID: String) {
+        guard allows(.install) else {
+            marketInstallations[productID] = MarketInstallState(
+                phase: .failed(.permissionDenied),
+                step: .detectingEnvironment,
+                outputTail: []
+            )
+            return
+        }
+        startMarketInstall(productID)
     }
 
     func startMarketInstall(_ productID: String) {
@@ -559,7 +599,11 @@ final class AppModel {
               let definition = catalog.definitions.first(where: { $0.id == productID }),
               let method = definition.marketplace?.install,
               !isAnyMarketInstallRunning else { return }
-        marketInstallations[productID] = MarketInstallState(phase: .locatingBrew, outputTail: [])
+        marketInstallations[productID] = MarketInstallState(
+            phase: .locatingBrew,
+            step: .detectingEnvironment,
+            outputTail: []
+        )
         let task = Task { [weak self] in
             guard let self else { return }
             // 安装为同步阻塞式（brew 可能持续数分钟），隔离到 utility 线程。
@@ -569,15 +613,19 @@ final class AppModel {
                         guard let self else { return }
                         self.marketInstallations[productID] = MarketInstallState(
                             phase: event.phase,
+                            step: event.step,
                             outputTail: event.outputTail
                         )
                         // 安装成功即持久化：市场条目（含无扫描规则的）重启后仍显示「已安装」。
                         if event.phase == .completed {
+                            self.marketInstallations[productID]?.needsRescanNotice = true
                             self.installedMarketProductIDs.insert(productID)
                             UserDefaults.standard.set(
                                 Array(self.installedMarketProductIDs),
                                 forKey: "installedMarketProductIDs"
                             )
+                            // 安装完成后立刻补一次后台版本扫描，供市场卡比较最新版本。
+                            self.startBackgroundInstalledVersionScanIfNeeded(force: true)
                         }
                     }
                 }
@@ -594,9 +642,271 @@ final class AppModel {
     func installFailureTitle(_ failure: InstallAgentFailure) -> String {
         switch failure {
         case .brewNotFound: return localized("未找到 Homebrew，无法安装。")
+        case .homebrewInstallFailed: return localized("Homebrew 安装失败，请重试或手动安装 Homebrew。")
+        case .nodeInstallFailed: return localized("Node.js/npm 安装失败，请检查网络后重试。")
+        case .scriptDownloadFailed: return localized("官方安装脚本下载失败，请检查网络后重试。")
+        case .authorizationRequired: return localized("安装需要管理员授权，请在系统弹窗中允许后重试。")
+        case .permissionDenied: return localized("当前授权不包含安装能力，可浏览目录。")
+        case .websiteInstallerClosed: return localized("安装镜像已关闭，未完成安装。请重新点击安装。")
+        case .websiteInstallerTimedOut: return localized("等待安装完成超时，请确认应用已安装后重试。")
         case let .exited(code): return localized("安装退出码 %d", code)
         }
     }
+
+    // MARK: 版本检测与市场最新版本
+
+    /// 聚合「已安装版本」。优先级：
+    /// 1. 后台探测的 Homebrew/可执行文件版本（最接近实际安装，且不会被 Home 中的陈旧缓存覆盖）；
+    /// 2. 完整扫描写入 Home 的版本证据（例如 Codex `models_cache.json`）。
+    func installedVersion(for productID: String) -> String? {
+        if let authoritative = installedAgentVersions[productID] {
+            let normalized = AgentVersion.normalizedVersion(authoritative)
+            if !normalized.isEmpty { return normalized }
+        }
+        let homeVersions = snapshot?.homes
+            .filter { $0.productID == productID && $0.confidence == .confirmed }
+            .compactMap(\.version) ?? []
+        return Self.newestVersion(in: homeVersions)
+    }
+
+    func latestMarketVersion(for productID: String) -> String? {
+        marketVersionStates[productID]?.latestVersion
+    }
+
+    func isFetchingMarketVersion(for productID: String) -> Bool {
+        marketVersionStates[productID]?.phase == .loading
+    }
+
+    func hasMarketVersionUpdate(for productID: String) -> Bool {
+        guard let installed = installedVersion(for: productID),
+              let latest = latestMarketVersion(for: productID) else { return false }
+        return AgentVersion.isUpdate(latest: latest, installed: installed)
+    }
+
+    /// 侧边栏市场角标数量：只统计「已安装版本」与「已成功获取的最新版本」都比较完成的 Agent。
+    var marketUpdateCount: Int {
+        marketDefinitions.reduce(0) { count, definition in
+            count + (hasMarketVersionUpdate(for: definition.id) ? 1 : 0)
+        }
+    }
+
+    /// App 启动后的后台轻量版本扫描：只验证候选 Home 与版本指纹，不递归索引。
+    /// 单飞 + 5 分钟节流；已加载快照时不会阻塞任何界面操作。
+    func startBackgroundInstalledVersionScanIfNeeded(force: Bool = false) {
+        guard hasCoreAccess, let catalog, let scanUseCase else { return }
+        if installedVersionScanTask != nil {
+            guard force else { return }
+            installedVersionScanTask?.cancel()
+        }
+        let now = Date()
+        if !force, let last = lastInstalledVersionScanAt, now.timeIntervalSince(last) < Self.installedVersionScanThrottle {
+            return
+        }
+        lastInstalledVersionScanAt = now
+
+        let root = FileManager.default.homeDirectoryForCurrentUser
+        let customLocations = customScanPaths.map { URL(fileURLWithPath: $0, isDirectory: true) }
+        let ignoredLocations = ignoredScanPaths.map { URL(fileURLWithPath: $0, isDirectory: true) }
+        let confirmed = userConfirmedHomes
+        let environment = ProcessInfo.processInfo.environment
+        let definitions = catalog.definitions
+
+        installedVersionScanTask = Task { [weak self] in
+            let request = ScanRequest(
+                homeDirectory: root,
+                customLocations: customLocations,
+                ignoredLocations: ignoredLocations,
+                userConfirmedHomes: confirmed,
+                environment: environment
+            )
+            var fileVersions: [String: String] = [:]
+            let discovered = await scanUseCase.discoverInstalledVersions(request: request)
+            for record in discovered {
+                fileVersions[record.productID] = Self.preferredVersion(
+                    existing: fileVersions[record.productID],
+                    candidate: record.version
+                )
+            }
+            guard let self, !Task.isCancelled else { return }
+            // Homebrew、桌面 App bundle 与可执行文件版本并行探测；
+            // 优先级：Homebrew > App bundle > 可执行文件 > Home 缓存。
+            async let brewVersions = HomebrewAgentVersionProbe().installedVersions(for: definitions)
+            async let appBundleVersions = InstalledAppBundleVersionProbe().installedVersions(for: definitions)
+            async let executableVersions = ExecutableAgentVersionProbe().installedVersions(for: definitions)
+            let (brew, appBundle, executable) = await (brewVersions, appBundleVersions, executableVersions)
+            var merged = brew
+            for (productID, version) in appBundle where merged[productID] == nil {
+                merged[productID] = version
+            }
+            for (productID, version) in executable where merged[productID] == nil {
+                merged[productID] = version
+            }
+            for (productID, version) in fileVersions where merged[productID] == nil {
+                merged[productID] = version
+            }
+            guard !Task.isCancelled else { return }
+            self.installedAgentVersions = merged
+            self.installedVersionScanTask = nil
+            // 已安装版本就绪后，再刷新一次过期的最新版本缓存，供侧边栏红点角标准确更新。
+            self.refreshMarketVersionsIfNeeded()
+        }
+    }
+
+    /// 市场最新版本触发规则：
+    /// - 进入市场且缓存不存在或超过 TTL 时拉取；
+    /// - 同一时刻只允许一个在飞任务，失败 2 分钟内不重试；
+    /// - 网络恢复且用户曾进入市场时，自动补一次；
+    /// - 成功结果缓存 30 分钟，视图反复 onAppear 不会反复请求。
+    func marketDidAppear() {
+        marketVersionRequested = true
+        refreshMarketVersionsIfNeeded()
+    }
+
+    func refreshMarketVersionsIfNeeded(force: Bool = false) {
+        guard hasCoreAccess, let catalog else { return }
+        // 触发时机：用户进过市场，或本地已有成功缓存。避免 App 启动即无条件联网。
+        guard marketVersionRequested || !marketVersionCache.isEmpty else { return }
+        guard marketVersionTask == nil else { return }
+
+        let definitions = catalog.definitions.filter {
+            $0.marketplace?.install != nil
+                || $0.marketplace?.appStoreID != nil
+                || $0.marketplace?.websiteUpdateURL != nil
+        }
+        guard !definitions.isEmpty else { return }
+        let now = Date()
+        let fetchedAtByProduct = marketVersionCache.mapValues(\.fetchedAt)
+        let staleDefinitions = marketVersionRefreshPolicy
+            .staleProductIDs(
+                allProductIDs: definitions.map(\.id),
+                fetchedAtByProduct: fetchedAtByProduct,
+                now: now
+            )
+            .compactMap { productID in definitions.first { $0.id == productID } }
+        let targets = force ? definitions : staleDefinitions
+        guard marketVersionRefreshPolicy.shouldRefresh(
+            force: force,
+            staleProductIDs: staleDefinitions.map(\.id),
+            lastAttemptAt: lastMarketVersionAttemptAt,
+            now: now
+        ) else { return }
+
+        lastMarketVersionAttemptAt = now
+        isRefreshingMarketVersions = true
+        for definition in targets {
+            marketVersionStates[definition.id, default: MarketAgentVersionState()].phase = .loading
+        }
+
+        let service = MarketplaceVersionService()
+        marketVersionTask = Task { [weak self] in
+            guard let self else { return }
+            let successfulIDs = await self.fetchMarketVersions(definitions: targets, service: service)
+            guard !Task.isCancelled else { return }
+            let completedAt = Date()
+            for definition in targets {
+                guard var state = self.marketVersionStates[definition.id] else { continue }
+                if successfulIDs.contains(definition.id) {
+                    state.phase = .loaded
+                    state.fetchedAt = completedAt
+                } else {
+                    state.phase = .unavailable
+                }
+                self.marketVersionStates[definition.id] = state
+            }
+            self.persistMarketVersionCache()
+            self.isRefreshingMarketVersions = false
+            self.marketVersionTask = nil
+        }
+    }
+
+    /// 网络恢复时只对曾进入过市场的用户补拉一次；失败退避仍生效。
+    private func refreshMarketVersionsAfterNetworkRestore() {
+        guard marketVersionRequested, marketVersionTask == nil else { return }
+        lastMarketVersionAttemptAt = nil
+        refreshMarketVersionsIfNeeded(force: false)
+    }
+
+    private func fetchMarketVersions(
+        definitions: [AgentDefinition],
+        service: MarketplaceVersionService
+    ) async -> Set<String> {
+        await withTaskGroup(of: (String, String?).self) { group in
+            for definition in definitions {
+                if let websiteUpdateURL = definition.marketplace?.websiteUpdateURL {
+                    group.addTask {
+                        let version = try? await service.latestVersion(websiteUpdateURL: websiteUpdateURL)
+                        return (definition.id, version)
+                    }
+                } else if let appStoreID = definition.marketplace?.appStoreID {
+                    group.addTask {
+                        let version = try? await service.latestVersion(appStoreID: appStoreID)
+                        return (definition.id, version)
+                    }
+                } else if let method = definition.marketplace?.install {
+                    group.addTask {
+                        let version = try? await service.latestVersion(for: method)
+                        return (definition.id, version)
+                    }
+                }
+            }
+            var successfulIDs: Set<String> = []
+            for await (productID, version) in group {
+                guard !Task.isCancelled else { continue }
+                guard let version else { continue }
+                successfulIDs.insert(productID)
+                self.marketVersionStates[productID, default: MarketAgentVersionState()].latestVersion = version
+                self.marketVersionCache[productID] = MarketVersionCacheEntry(
+                    latestVersion: version,
+                    fetchedAt: Date()
+                )
+            }
+            return successfulIDs
+        }
+    }
+
+    // MARK: 版本缓存
+
+    private func hydrateMarketVersionCache() {
+        guard let data = UserDefaults.standard.data(forKey: Self.marketVersionCacheDefaultsKey),
+              let entries = try? JSONDecoder().decode([String: MarketVersionCacheEntry].self, from: data) else {
+            return
+        }
+        marketVersionCache = entries
+        for (productID, entry) in entries {
+            marketVersionStates[productID] = MarketAgentVersionState(
+                phase: .loaded,
+                latestVersion: entry.latestVersion,
+                fetchedAt: entry.fetchedAt
+            )
+        }
+    }
+
+    private func persistMarketVersionCache() {
+        guard let data = try? JSONEncoder().encode(marketVersionCache) else { return }
+        UserDefaults.standard.set(data, forKey: Self.marketVersionCacheDefaultsKey)
+    }
+
+    private static func newestVersion(in versions: [String]) -> String? {
+        var newest: String?
+        for version in versions {
+            guard let current = newest else {
+                newest = version
+                continue
+            }
+            if AgentVersion.compare(version, to: current) == .newer {
+                newest = version
+            }
+        }
+        return newest
+    }
+
+    private static func preferredVersion(existing: String?, candidate: String) -> String {
+        guard let existing else { return candidate }
+        return AgentVersion.compare(candidate, to: existing) == .newer ? candidate : existing
+    }
+
+    private static let installedVersionScanThrottle: TimeInterval = 5 * 60
+    private static let marketVersionCacheDefaultsKey = "marketVersionCache.v1"
 
     private func refreshCleanupInventory() {
         cleanupInventoryTask?.cancel()
@@ -969,6 +1279,7 @@ final class AppModel {
                     if case .serviceUnavailable = licenseState {
                         await refreshLicenseNow(force: false)
                     }
+                    refreshMarketVersionsAfterNetworkRestore()
                 }
             }
         }
@@ -978,6 +1289,7 @@ final class AppModel {
     private func reconcileLicensedTasks() {
         if hasCoreAccess {
             startActivitySamplingIfNeeded()
+            startBackgroundInstalledVersionScanIfNeeded()
         } else {
             activityTask?.cancel()
             activityTask = nil
@@ -1093,6 +1405,17 @@ final class AppModel {
         activityTask = nil
         cleanupInventoryTask?.cancel()
         cleanupInventoryTask = nil
+        installedVersionScanTask?.cancel()
+        installedVersionScanTask = nil
+        installedAgentVersions = [:]
+        marketVersionTask?.cancel()
+        marketVersionTask = nil
+        isRefreshingMarketVersions = false
+        marketVersionStates = [:]
+        marketVersionCache = [:]
+        marketVersionRequested = false
+        lastMarketVersionAttemptAt = nil
+        UserDefaults.standard.removeObject(forKey: Self.marketVersionCacheDefaultsKey)
         snapshot = nil
         skillIndex = nil
         cleanupUnits = []
@@ -1131,6 +1454,16 @@ final class AppModel {
         activityTask = nil
         cleanupInventoryTask?.cancel()
         cleanupInventoryTask = nil
+        installedVersionScanTask?.cancel()
+        installedVersionScanTask = nil
+        installedAgentVersions = [:]
+        marketVersionTask?.cancel()
+        marketVersionTask = nil
+        isRefreshingMarketVersions = false
+        marketVersionStates = [:]
+        marketVersionCache = [:]
+        marketVersionRequested = false
+        lastMarketVersionAttemptAt = nil
         pathMonitor.cancel()
         Task {
             var failures: [String] = []

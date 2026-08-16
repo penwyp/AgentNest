@@ -99,6 +99,10 @@ public struct AgentHome: Identifiable, Codable, Equatable, Sendable {
     public let source: DiscoverySource
     public let confidence: AgentHomeConfidence
     public let evidence: [String]
+    /// 扫描中从 Definition 声明的版本指纹读取到的已安装版本；无证据时为 nil。
+    public let version: String?
+    /// 版本证据（如 `version:jsonFile:version.json`）。旧快照没有该字段，因此保持可选。
+    public let versionEvidence: [String]?
     public let storage: StorageMeasurement
 
     public init(
@@ -109,7 +113,9 @@ public struct AgentHome: Identifiable, Codable, Equatable, Sendable {
         source: DiscoverySource,
         confidence: AgentHomeConfidence,
         evidence: [String],
-        storage: StorageMeasurement
+        storage: StorageMeasurement,
+        version: String? = nil,
+        versionEvidence: [String]? = nil
     ) {
         self.id = id
         self.productID = productID
@@ -119,6 +125,8 @@ public struct AgentHome: Identifiable, Codable, Equatable, Sendable {
         self.confidence = confidence
         self.evidence = evidence
         self.storage = storage
+        self.version = version
+        self.versionEvidence = versionEvidence
     }
 }
 
@@ -126,6 +134,21 @@ public enum CoverageState: String, Codable, Sendable {
     case complete
     case partial
     case unavailable
+}
+
+/// 轻量版本扫描结果：只做候选浅验证和版本指纹读取，不递归索引文件系统。
+public struct InstalledAgentVersion: Identifiable, Codable, Equatable, Sendable {
+    public let productID: String
+    public let version: String
+    public let evidence: [String]
+
+    public var id: String { productID }
+
+    public init(productID: String, version: String, evidence: [String]) {
+        self.productID = productID
+        self.version = version
+        self.evidence = evidence
+    }
 }
 
 public struct SnapshotCoverage: Codable, Equatable, Sendable {

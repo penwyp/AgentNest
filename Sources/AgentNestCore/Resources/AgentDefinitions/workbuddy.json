@@ -20,7 +20,13 @@
     "cleanup": false
   },
   "marketplace": {
-    "summary": "AgentNest's built-in companion product.",
-    "homepageURL": "https://github.com/penwyp/AgentNest"
+    "summary": "WorkBuddy, the AI assistant built into your daily workflow.",
+    "homepageURL": "https://www.workbuddy.ai/",
+    "install": {
+      "kind": "website",
+      "formula": "WorkBuddy",
+      "websiteUpdateURL": "https://www.workbuddy.ai/v2/update?platform={platform}",
+      "installedAppName": "WorkBuddy AI"
+    }
   }
 }

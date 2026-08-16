@@ -21,6 +21,11 @@
   },
   "marketplace": {
     "summary": "Inflection's Pi agent.",
-    "homepageURL": "https://pi.com"
+    "homepageURL": "https://pi.dev",
+    "install": {
+      "kind": "npm",
+      "formula": "@earendil-works/pi-coding-agent",
+      "requiresNode": true
+    }
   }
 }

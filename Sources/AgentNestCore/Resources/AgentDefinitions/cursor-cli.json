@@ -23,8 +23,8 @@
     "summary": "Cursor's terminal coding agent.",
     "homepageURL": "https://cursor.com",
     "install": {
-      "kind": "brew",
-      "formula": "cursor"
+      "kind": "cask",
+      "formula": "cursor-cli"
     }
   }
 }

@@ -26,7 +26,8 @@
     "homepageURL": "https://claude.com/download",
     "install": {
       "kind": "cask",
-      "formula": "claude"
+      "formula": "claude",
+      "installedAppName": "Claude"
     }
   }
 }

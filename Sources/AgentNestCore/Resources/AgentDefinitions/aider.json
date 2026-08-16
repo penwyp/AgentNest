@@ -24,7 +24,8 @@
     "homepageURL": "https://aider.chat",
     "install": {
       "kind": "brew",
-      "formula": "aider"
+      "formula": "aider",
+      "scriptURL": "https://aider.chat/install.sh"
     }
   }
 }

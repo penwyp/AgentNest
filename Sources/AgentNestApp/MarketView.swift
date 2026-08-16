@@ -2,6 +2,12 @@ import AgentNestCore
 import AppKit
 import SwiftUI
 
+private extension InstallAgentStep {
+    var stepIndex: Int {
+        Self.allCases.firstIndex(of: self) ?? 0
+    }
+}
+
 // MARK: - 市场分区
 
 private enum MarketSection: String, CaseIterable, Identifiable {
@@ -56,6 +62,10 @@ struct MarketView: View {
         .safeAreaInset(edge: .top, spacing: 0) {
             marketHeader
         }
+        .onAppear {
+            // 触发规则在 AppModel 内：进入市场才拉取；缓存新鲜/在飞/失败退避时不会重复请求。
+            model.marketDidAppear()
+        }
     }
 
     @ViewBuilder
@@ -94,6 +104,17 @@ struct MarketView: View {
                 detail: summary
             ) {
                 EmptyView()
+            }
+            if model.isRefreshingMarketVersions {
+                HStack(spacing: DS.Space.x200) {
+                    DSLoadingDots()
+                    Text(model.localized("正在获取最新版本"))
+                        .font(DS.Typeface.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .transition(.opacity)
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel(model.localized("正在获取最新版本"))
             }
             HStack(alignment: .center, spacing: DS.Space.x300) {
                 marketSectionPicker
@@ -286,12 +307,14 @@ private struct AgentMarketCatalogView: View {
     }
 
     private var hasCompletedInstall: Bool {
-        model.marketInstallations.values.contains { $0.phase == .completed }
+        model.marketInstallations.values.contains { $0.phase == .completed && $0.needsRescanNotice }
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: DS.Space.x300) {
-            if hasCompletedInstall {
+            if model.isScanning {
+                scanningBanner
+            } else if hasCompletedInstall {
                 completedBanner
             }
             if filteredDefinitions.isEmpty {
@@ -306,6 +329,24 @@ private struct AgentMarketCatalogView: View {
                         AgentMarketCard(model: model, definition: definition)
                     }
                 }
+            }
+        }
+    }
+
+    private var scanningBanner: some View {
+        DSRecessed {
+            HStack(spacing: DS.Space.x300) {
+                ProgressView()
+                    .controlSize(.small)
+                Label(model.localized("正在重新扫描 Agent 环境"), systemImage: "magnifyingglass")
+                    .font(DS.Typeface.body)
+                    .foregroundStyle(DS.Semantic.accentPrimary)
+                Spacer(minLength: DS.Space.x300)
+                Button(model.localized("停止")) {
+                    model.stopScan()
+                }
+                .buttonStyle(.dsAction(size: .compact))
+                .disabled(model.isStoppingScan)
             }
         }
     }
@@ -348,12 +389,41 @@ private struct AgentMarketCard: View {
 
     private var installed: Bool {
         if state?.phase == .completed { return true }
+        // 后台版本探测或完整扫描已取得版本，即存在安装证据。
+        if model.installedVersion(for: definition.id) != nil { return true }
         if model.installedMarketProductIDs.contains(definition.id) { return true }
         return model.snapshot?.products.contains { $0.id == definition.id && !$0.homes.isEmpty } ?? false
     }
 
     private var isBusy: Bool {
-        state?.phase == .locatingBrew || state?.phase == .running
+        state?.phase == .locatingBrew
+            || state?.phase == .preparingDependencies
+            || state?.phase == .running
+    }
+
+    private var installedVersion: String? {
+        model.installedVersion(for: definition.id).map(AgentVersion.normalizedVersion)
+    }
+
+    private var latestVersion: String? {
+        model.latestMarketVersion(for: definition.id).map(AgentVersion.normalizedVersion)
+    }
+
+    private var isCheckingLatestVersion: Bool {
+        model.isFetchingMarketVersion(for: definition.id)
+    }
+
+    private var hasUpdate: Bool {
+        model.hasMarketVersionUpdate(for: definition.id)
+    }
+
+    private var isFailed: Bool {
+        if case .failed = state?.phase { return true }
+        return false
+    }
+
+    private var showsVersionRow: Bool {
+        hasUpdate || isCheckingLatestVersion || latestVersion != nil
     }
 
     var body: some View {
@@ -365,59 +435,209 @@ private struct AgentMarketCard: View {
                         Text(definition.displayName)
                             .font(DS.Typeface.section)
                             .lineLimit(1)
+                            .truncationMode(.tail)
                         if let summary = definition.marketplace?.summary {
                             Text(summary)
                                 .font(DS.Typeface.caption)
                                 .foregroundStyle(.secondary)
                                 .lineLimit(2)
+                                .truncationMode(.tail)
                         }
                     }
                     Spacer(minLength: DS.Space.x200)
-                    if installed {
-                        DSBadge(text: model.localized("已安装"), color: DS.Semantic.statusPositive)
-                    } else if definition.marketplace?.install == nil {
-                        Text(model.localized("暂无安装方式"))
-                            .font(DS.Typeface.caption)
-                            .foregroundStyle(.tertiary)
+                    statusControl
+                }
+
+                // 页脚吸底：安装中只保留进度；正常/失败态保留来源、版本或失败原因。
+                // 高度按最大状态内容计算，正常卡片中间仅保留最小间距。
+                Spacer(minLength: DS.Space.x100)
+
+                VStack(alignment: .leading, spacing: DS.Space.x300) {
+                    if isBusy {
+                        installProgress
                     } else {
-                        actionButton
-                    }
-                }
+                        HStack(spacing: DS.Space.x200) {
+                            if let method = definition.marketplace?.install {
+                                DSBadge(
+                                    text: method.kind == .brew
+                                        ? "brew"
+                                        : (method.kind == .cask ? "cask" : (method.kind == .npm ? "npm" : model.localized("官网"))),
+                                    color: .secondary
+                                )
+                            }
+                            if let url = definition.marketplace?.homepageURL, let link = URL(string: url) {
+                                Link(destination: link) {
+                                    Text(url)
+                                        .font(DS.Typeface.caption)
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(1)
+                                        .truncationMode(.middle)
+                                }
+                                Link(destination: link) {
+                                    Image(systemName: "arrow.up.right")
+                                        .font(.system(size: 12, weight: .semibold))
+                                        .foregroundStyle(DS.Semantic.accentPrimary)
+                                }
+                                .buttonStyle(.plain)
+                                .help(model.localized("打开主页"))
+                                .accessibilityLabel(model.localized("打开主页"))
+                            }
+                        }
 
-                HStack(spacing: DS.Space.x200) {
-                    if let method = definition.marketplace?.install {
-                        DSBadge(text: method.kind == .brew ? "brew" : "cask", color: .secondary)
-                    }
-                    if let url = definition.marketplace?.homepageURL, let link = URL(string: url) {
-                        Link(destination: link) {
-                            Text(url)
+                        if isFailed, case let .failed(failure) = state?.phase {
+                            Label(model.installFailureTitle(failure), systemImage: "exclamationmark.triangle")
                                 .font(DS.Typeface.caption)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(DS.Semantic.statusCritical)
                                 .lineLimit(1)
-                                .truncationMode(.middle)
+                                .truncationMode(.tail)
+                                .help((state?.outputTail ?? []).joined(separator: "\n"))
+                        } else if showsVersionRow {
+                            versionRow
                         }
-                        Link(destination: link) {
-                            Image(systemName: "arrow.up.right")
-                                .font(.system(size: 12, weight: .semibold))
-                                .foregroundStyle(DS.Semantic.accentPrimary)
-                        }
-                        .buttonStyle(.plain)
-                        .help(model.localized("打开主页"))
-                        .accessibilityLabel(model.localized("打开主页"))
                     }
-                }
-
-                if isBusy {
-                    installProgress
-                } else if case let .failed(failure) = state?.phase {
-                    Label(model.installFailureTitle(failure), systemImage: "exclamationmark.triangle")
-                        .font(DS.Typeface.caption)
-                        .foregroundStyle(DS.Semantic.statusCritical)
-                        .lineLimit(2)
                 }
             }
+            .frame(
+                maxWidth: .infinity,
+                minHeight: DS.Layout.marketAgentCardContentHeight,
+                maxHeight: DS.Layout.marketAgentCardContentHeight,
+                alignment: .topLeading
+            )
+            .clipped()
         }
         .accessibilityElement(children: .contain)
+    }
+
+    @ViewBuilder
+    private var statusControl: some View {
+        if hasUpdate {
+            upgradeButton
+        } else if installed {
+            installedBadge
+        } else if let downloadURLString = definition.marketplace?.websiteDownloadURL,
+                  let downloadURL = URL(string: downloadURLString) {
+            Link(destination: downloadURL) {
+                Label(model.localized("官网下载"), systemImage: "arrow.down.circle")
+                    .font(DS.Typeface.micro.weight(.semibold))
+                    .foregroundStyle(DS.Semantic.accentPrimary)
+            }
+            .buttonStyle(.plain)
+            .lineLimit(1)
+        } else if let appStoreID = definition.marketplace?.appStoreID,
+                  let appStoreURL = URL(string: "https://apps.apple.com/app/id\(appStoreID)") {
+            Link(destination: appStoreURL) {
+                Label(model.localized("App Store"), systemImage: "arrow.up.right")
+                    .font(DS.Typeface.micro.weight(.semibold))
+                    .foregroundStyle(DS.Semantic.accentPrimary)
+            }
+            .buttonStyle(.plain)
+            .lineLimit(1)
+        } else if definition.marketplace?.install == nil {
+            Text(model.localized("暂无安装方式"))
+                .font(DS.Typeface.caption)
+                .foregroundStyle(.tertiary)
+                .lineLimit(1)
+                .truncationMode(.tail)
+        } else {
+            actionButton
+        }
+    }
+
+    /// 有新版本时取代「已安装」：清透蓝色升级按钮 + 向上图标 + 目标版本号。
+    private var upgradeButton: some View {
+        Button {
+            model.requestMarketInstall(definition.id)
+        } label: {
+            HStack(spacing: DS.Space.x100) {
+                Image(systemName: "arrow.up.circle.fill")
+                    .font(.system(size: 10, weight: .heavy))
+                Text(model.localized("升级 %@", "v\(latestVersion ?? installedVersion ?? "")"))
+                    .font(DS.Typeface.micro.weight(.bold))
+                    .monospacedDigit()
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            .foregroundStyle(Color(red: 0.00, green: 0.65, blue: 1.00))
+            .padding(.horizontal, DS.Space.x200)
+            .padding(.vertical, DS.Space.x100 + 1)
+            .background(
+                Capsule(style: .continuous)
+                    .fill(Color(red: 0.70, green: 0.88, blue: 1.00).opacity(0.08))
+            )
+            .overlay(
+                Capsule(style: .continuous)
+                    .strokeBorder(Color(red: 0.00, green: 0.65, blue: 1.00), lineWidth: DS.Stroke.surface)
+            )
+            .shadow(
+                color: Color(red: 0.00, green: 0.65, blue: 1.00).opacity(0.20),
+                radius: 4,
+                y: 1
+            )
+            .contentShape(Capsule(style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .help(model.localized("可更新至 %@", latestVersion ?? ""))
+        .accessibilityLabel(model.localized("有可用的新版本 %@", latestVersion ?? ""))
+    }
+
+    private var installedBadge: some View {
+        let title = installedVersion.map { model.localized("已安装 %@", "v\($0)") } ?? model.localized("已安装")
+        return HStack(spacing: DS.Space.x100) {
+            Image(systemName: "checkmark.circle.fill")
+                .font(.system(size: 10, weight: .bold))
+            Text(title)
+                .font(DS.Typeface.micro.weight(.semibold))
+                .lineLimit(1)
+                .truncationMode(.middle)
+        }
+        .foregroundStyle(DS.Semantic.statusPositive)
+        .padding(.horizontal, DS.Space.x200)
+        .padding(.vertical, DS.Space.x100 + 1)
+        .background(Capsule(style: .continuous).fill(DS.Semantic.statusPositive.opacity(0.11)))
+        .overlay(
+            Capsule(style: .continuous)
+                .strokeBorder(DS.Semantic.statusPositive.opacity(0.28), lineWidth: DS.Stroke.hairline)
+        )
+        .accessibilityLabel(title)
+    }
+
+    /// 版本信息行：有更新时给出「当前版本 → 最新版本」；否则只展示最新版本或加载状态。
+    private var versionRow: some View {
+        HStack(spacing: DS.Space.x200) {
+            if hasUpdate, let installedVersion, let latestVersion {
+                Text("v\(installedVersion)")
+                    .font(DS.Typeface.data)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .accessibilityLabel(model.localized("已安装版本 %@", installedVersion))
+                Image(systemName: "arrow.right")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(DS.Semantic.accentPrimary)
+                    .accessibilityHidden(true)
+                Text("v\(latestVersion)")
+                    .font(DS.Typeface.data.weight(.semibold))
+                    .foregroundStyle(DS.Semantic.accentPrimary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .accessibilityLabel(model.localized("有可用的新版本 %@", latestVersion))
+            } else if isCheckingLatestVersion {
+                DSLoadingDots()
+                Text(model.localized("正在获取最新版本"))
+                    .font(DS.Typeface.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .accessibilityLabel(model.localized("正在获取最新版本"))
+            } else if let latestVersion {
+                Label(model.localized("最新 %@", latestVersion), systemImage: "checkmark.circle")
+                    .font(DS.Typeface.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .accessibilityLabel(model.localized("最新版本 %@", latestVersion))
+            }
+            Spacer(minLength: 0)
+        }
     }
 
     private var actionButton: some View {
@@ -426,45 +646,110 @@ private struct AgentMarketCard: View {
                 Button(model.localized("取消")) { model.cancelMarketInstall(definition.id) }
                     .buttonStyle(.dsAction(size: .compact))
             } else if case .failed = state?.phase {
-                Button(model.localized("重试")) { model.startMarketInstall(definition.id) }
-                    .buttonStyle(.dsAction(.accent, size: .compact))
-                    .disabled(model.isAnyMarketInstallRunning || !model.allows(.install))
+                Button { model.requestMarketInstall(definition.id) } label: {
+                    marketActionLabel(model.localized("重试"), systemImage: "arrow.clockwise")
+                }
+                .buttonStyle(.plain)
             } else {
-                Button { model.startMarketInstall(definition.id) } label: {
-                    Label(
+                Button { model.requestMarketInstall(definition.id) } label: {
+                    marketActionLabel(
                         model.localized("安装"),
-                        systemImage: model.allows(.install) ? "arrow.down.circle" : "lock.fill"
+                        systemImage: model.allows(.install) ? "arrow.down.circle.fill" : "lock.fill"
                     )
                 }
-                .buttonStyle(.dsAction(.accent, size: .compact))
-                .disabled(model.isAnyMarketInstallRunning || !model.allows(.install))
+                .buttonStyle(.plain)
             }
         }
+    }
+
+    private func marketActionLabel(_ title: String, systemImage: String) -> some View {
+        HStack(spacing: DS.Space.x100) {
+            Image(systemName: systemImage)
+                .font(.system(size: 10, weight: .bold))
+            Text(title)
+                .font(DS.Typeface.micro.weight(.bold))
+                .lineLimit(1)
+                .truncationMode(.middle)
+        }
+        .foregroundStyle(Color(red: 0.00, green: 0.65, blue: 1.00))
+        .padding(.horizontal, DS.Space.x200)
+        .padding(.vertical, DS.Space.x100 + 1)
+        .background(
+            Capsule(style: .continuous)
+                .fill(Color(red: 0.70, green: 0.88, blue: 1.00).opacity(0.08))
+        )
+        .overlay(
+            Capsule(style: .continuous)
+                .strokeBorder(Color(red: 0.00, green: 0.65, blue: 1.00), lineWidth: DS.Stroke.surface)
+        )
+        .shadow(
+            color: Color(red: 0.00, green: 0.65, blue: 1.00).opacity(0.20),
+            radius: 4,
+            y: 1
+        )
+        .contentShape(Capsule(style: .continuous))
     }
 
     private var installProgress: some View {
         DSRecessed {
             VStack(alignment: .leading, spacing: DS.Space.x100) {
-                HStack(spacing: DS.Space.x200) {
-                    ProgressView()
-                        .controlSize(.small)
-                        .accessibilityHidden(true)
-                    Text(state?.phase == .locatingBrew
-                        ? model.localized("正在定位 Homebrew")
-                        : model.localized("正在安装 %@", definition.displayName))
-                        .font(DS.Typeface.caption)
-                        .foregroundStyle(.secondary)
+                HStack(alignment: .center, spacing: DS.Space.x100) {
+                    ForEach(InstallAgentStep.allCases, id: \.self) { step in
+                        Text(installStepTitle(step))
+                            .font(DS.Typeface.micro.weight(installStepWeight(step)))
+                            .foregroundStyle(installStepForeground(step))
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
                 }
-                if let tail = state?.outputTail, !tail.isEmpty {
-                    Text(tail.joined(separator: "\n"))
-                        .font(DS.Typeface.data)
-                        .foregroundStyle(.tertiary)
-                        .lineLimit(3)
-                        .truncationMode(.tail)
-                        .textSelection(.enabled)
+                HStack(alignment: .center, spacing: DS.Space.x100) {
+                    ForEach(InstallAgentStep.allCases, id: \.self) { step in
+                        RoundedRectangle(cornerRadius: 2, style: .continuous)
+                            .fill(installStepTrackColor(step))
+                            .frame(height: 4)
+                            .frame(maxWidth: .infinity)
+                    }
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel(model.localized("安装步骤：%@", installStepTitle(state?.step ?? .detectingEnvironment)))
+        }
+        .help((state?.outputTail ?? []).joined(separator: "\n"))
+    }
+
+    private func installStepState(_ step: InstallAgentStep) -> (isCurrent: Bool, isCompleted: Bool) {
+        let currentIndex = (state?.step ?? .detectingEnvironment).stepIndex
+        let completed = state?.phase == .completed || step.stepIndex < currentIndex
+        return (step == state?.step, completed)
+    }
+
+    private func installStepWeight(_ step: InstallAgentStep) -> Font.Weight {
+        let state = installStepState(step)
+        return state.isCurrent || state.isCompleted ? .bold : .regular
+    }
+
+    private func installStepForeground(_ step: InstallAgentStep) -> Color {
+        let state = installStepState(step)
+        if state.isCurrent { return Color(red: 0.00, green: 0.60, blue: 1.00) }
+        if state.isCompleted { return DS.Semantic.statusPositive }
+        return .secondary
+    }
+
+    private func installStepTrackColor(_ step: InstallAgentStep) -> Color {
+        let state = installStepState(step)
+        if state.isCurrent { return Color(red: 0.00, green: 0.60, blue: 1.00) }
+        if state.isCompleted { return DS.Semantic.statusPositive }
+        return Color.primary.opacity(DS.Opacity.fillQuiet)
+    }
+
+    private func installStepTitle(_ step: InstallAgentStep) -> String {
+        switch step {
+        case .detectingEnvironment: return model.localized("检测环境")
+        case .preparingDependencies: return model.localized("准备依赖")
+        case .runningInstaller: return model.localized("执行安装")
+        case .verifyingInstallation: return model.localized("验证安装")
         }
     }
 }
