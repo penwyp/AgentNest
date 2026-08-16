@@ -668,3 +668,5 @@
 "暂无生效安装或 Home 证据。" = "No effective-installation or home evidence.";
 "未生效" = "Inactive";
 "官网脚本" = "Official Script";
+"未检测到生效的 Agent 可执行文件" = "No effective agent executable detected";
+"Agent 列表只显示本机可执行文件真实生效的产品。" = "Agent list only shows products whose executable is active on this Mac.";

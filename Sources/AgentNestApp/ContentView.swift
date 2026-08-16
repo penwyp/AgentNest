@@ -22,7 +22,7 @@ struct ContentView: View {
                     switch model.selection ?? .home {
                     case .home: HomeView(model: model)
                     case .agents:
-                        if let id = model.selectedAgentID, let product = model.agentProduct(withID: id) {
+                        if let id = model.selectedAgentID, let product = model.activeAgentProduct(withID: id) {
                             if let homeID = model.selectedAgentHomeID,
                                let home = model.agentHome(withID: homeID),
                                home.productID == product.id {
@@ -689,9 +689,7 @@ private struct HomeEnvironmentMap: View {
     let storageDerived: HomeStorageDerived?
 
     private var products: [AgentProduct] {
-        model.agentProducts.filter { product in
-            product.homes.isEmpty == false || model.effectiveInstallation(for: product.id) != nil
-        }
+        model.activeAgentProducts
     }
 
     var body: some View {
@@ -1012,8 +1010,8 @@ private struct AgentListView: View {
     private var filteredProducts: [AgentProduct] {
         guard model.snapshot != nil else { return [] }
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard query.isEmpty == false else { return model.agentProducts }
-        return model.agentProducts.filter { product in
+        guard query.isEmpty == false else { return model.activeAgentProducts }
+        return model.activeAgentProducts.filter { product in
             let installationPath = model.effectiveInstallation(for: product.id)?.path ?? ""
             let candidates = [product.displayName, product.id, installationPath]
                 + product.homes.map(\.path)
@@ -1032,23 +1030,23 @@ private struct AgentListView: View {
     }
 
     private var agentIdentityDetail: String? {
-        guard let snapshot = model.snapshot else { return nil }
+        guard model.snapshot != nil else { return nil }
         return model.localized(
             "%d 个生效 · %d 个 Agent 产品 · %d 个 Home",
             model.effectiveAgentCount,
-            model.agentProducts.count,
-            snapshot.homes.count
+            model.activeAgentProducts.count,
+            model.activeAgentProducts.reduce(0) { $0 + $1.homes.count }
         )
     }
 
     var body: some View {
         Group {
             if model.snapshot != nil {
-                if model.agentProducts.isEmpty {
+                if model.activeAgentProducts.isEmpty {
                     ContentUnavailableView(
-                        model.localized("尚无 Agent 结果"),
+                        model.localized("未检测到生效的 Agent 可执行文件"),
                         systemImage: "cpu",
-                        description: Text(model.localized("先在首页扫描。"))
+                        description: Text(model.localized("Agent 列表只显示本机可执行文件真实生效的产品。"))
                     )
                 } else if filteredProducts.isEmpty {
                     ContentUnavailableView(
