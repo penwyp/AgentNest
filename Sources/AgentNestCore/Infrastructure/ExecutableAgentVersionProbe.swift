@@ -13,7 +13,7 @@ public struct ExecutableAgentVersionProbe: Sendable {
         "openai.codex": Command(executable: "codex", arguments: ["--version"]),
         "anthropic.claude-code": Command(executable: "claude", arguments: ["--version"]),
         "cursor.cursor-cli": Command(executable: "cursor-agent", arguments: ["--version"]),
-        "google.gemini-cli": Command(executable: "gemini", arguments: ["--version"]),
+        "google.antigravity-cli": Command(executable: "agy", arguments: ["--version"]),
         "opencode.opencode": Command(executable: "opencode", arguments: ["--version"]),
         "aider.aider": Command(executable: "aider", arguments: ["--version"]),
         "inflection.pi": Command(executable: "pi", arguments: ["--version"]),

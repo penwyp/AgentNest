@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "id": "google.antigravity",
+  "displayName": "Antigravity (Desktop)",
+  "homeDiscovery": {
+    "defaultPaths": [
+      "~/.antigravity",
+      "~/.gemini/antigravity",
+      "~/Library/Application Support/Antigravity"
+    ],
+    "environmentVariables": []
+  },
+  "fingerprints": {
+    "required": [],
+    "optional": [],
+    "negative": []
+  },
+  "skills": [],
+  "artifacts": [],
+  "capabilities": {
+    "space": true,
+    "skills": false,
+    "activity": false,
+    "cleanup": false
+  },
+  "marketplace": {
+    "summary": "Google Antigravity desktop agent orchestration platform.",
+    "homepageURL": "https://antigravity.google/product/antigravity-2",
+    "install": {
+      "kind": "cask",
+      "formula": "antigravity",
+      "installedAppName": "Antigravity"
+    }
+  }
+}

@@ -39,8 +39,7 @@ struct AgentNestCoreTestRunner {
 
     private static func testDefinitionCatalog() throws {
         let catalog = try AgentDefinitionCatalog.bundled()
-        // 5 个完整定义 + 9 个市场条目（CLI/Desktop 变体与扩展目录）。
-        try expect(catalog.definitions.count == 14, "bundled definition count")
+        try expect(catalog.definitions.count == 15, "bundled definition count")
         let codex = try unwrap(catalog.definitions.first { $0.id == "openai.codex" }, "Codex definition")
         try expect(
             codex.capabilities.cleanup &&
@@ -53,7 +52,8 @@ struct AgentNestCoreTestRunner {
                 [
                     "anthropic.claude-code", "anthropic.claude-desktop",
                     "bytedance.trae", "cursor.cursor",
-                    "google.gemini-cli", "opencode.opencode", "openai.codex",
+                    "google.antigravity", "google.antigravity-cli",
+                    "opencode.opencode", "openai.codex",
                 ],
             "all supported agents participate in scanning"
         )
@@ -84,6 +84,19 @@ struct AgentNestCoreTestRunner {
                     requiresNode: true
                 ),
             "market install methods match the real Homebrew formula/cask tokens"
+        )
+        try expect(
+            install(for: "google.antigravity") == AgentInstallMethod(
+                kind: .cask,
+                formula: "antigravity",
+                installedAppName: "Antigravity"
+            ) &&
+                install(for: "google.antigravity-cli") == AgentInstallMethod(
+                    kind: .cask,
+                    formula: "antigravity-cli",
+                    scriptURL: "https://antigravity.google/cli/install.sh"
+                ),
+            "Antigravity desktop and CLI use the real Homebrew casks and official CLI installer"
         )
         try expect(
             install(for: "opencode.opencode") == AgentInstallMethod(
