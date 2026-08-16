@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 1,
+  "id": "google.antigravity-cli",
+  "displayName": "Antigravity CLI",
+  "homeDiscovery": {
+    "defaultPaths": [
+      "~/.gemini/antigravity-cli"
+    ],
+    "environmentVariables": []
+  },
+  "fingerprints": {
+    "required": [],
+    "optional": [
+      {
+        "kind": "jsonFile",
+        "relativePath": "settings.json"
+      }
+    ],
+    "negative": []
+  },
+  "skills": [],
+  "artifacts": [],
+  "capabilities": {
+    "space": true,
+    "skills": false,
+    "activity": false,
+    "cleanup": false
+  },
+  "marketplace": {
+    "summary": "The terminal-first surface for Google Antigravity agents.",
+    "homepageURL": "https://antigravity.google/product/antigravity-cli",
+    "install": {
+      "kind": "cask",
+      "formula": "antigravity-cli",
+      "scriptURL": "https://antigravity.google/cli/install.sh"
+    }
+  }
+}

@@ -28,7 +28,8 @@ enum HomeProductStyle {
         "cursor.cursor-cli": "cursorarrow.click",
         "xai.grok": "bolt.fill",
         "inflection.pi": "function",
-        "google.gemini-cli": "sparkle",
+        "google.antigravity": "square.grid.2x2",
+        "google.antigravity-cli": "terminal",
         "opencode.opencode": "command",
         "aider.aider": "wand.and.stars",
         "openai.chatgpt-desktop": "bubble.left.and.bubble.right",
@@ -48,8 +49,9 @@ enum HomeProductStyle {
         "anthropic.claude-desktop": "claude-code",
         "openai.codex-desktop": "codex",
         "cursor.cursor-cli": "cursor",
-        // 来自 lobe-icons / thesvg 的补充品牌图标。
-        "google.gemini-cli": "gemini-cli",
+        // 来自 lobe-icons / thesvg 与官方站点的补充品牌图标。
+        "google.antigravity": "antigravity",
+        "google.antigravity-cli": "antigravity",
         "xai.grok": "grok",
         "opencode.opencode": "opencode",
         "inflection.pi": "pi",
@@ -97,7 +99,8 @@ enum HomeProductStyle {
     private static let monograms: [String: String] = [
         "aider.aider": "A",
         "openai.chatgpt-desktop": "GPT",
-        "google.gemini-cli": "G",
+        "google.antigravity": "AG",
+        "google.antigravity-cli": "AGY",
         "xai.grok": "G",
         "opencode.opencode": "OC",
         "inflection.pi": "π",
@@ -127,9 +130,9 @@ enum HomeProductStyle {
         }
     }
 
-    /// 以原色渲染的品牌（应用图标样式，如 WorkBuddy / Gemini CLI），其余品牌用模板渲染。
+    /// 以原色渲染的品牌（应用图标样式，如 WorkBuddy / Antigravity），其余品牌用模板渲染。
     static func rendersOriginalColor(for productID: String) -> Bool {
-        productID == "workbuddy" || productID == "google.gemini-cli"
+        productID == "workbuddy" || productID.hasPrefix("google.antigravity")
     }
 
     static func symbol(for productID: String) -> String {
