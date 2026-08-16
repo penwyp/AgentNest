@@ -582,6 +582,16 @@ final class AppModel {
         agentProducts.first { $0.id == id }
     }
 
+    /// Agent 页只展示已解析到生效可执行文件的产品。
+    /// Home 目录只是 Agent 内部配置，不能单独作为“本机 Agent”出现在列表中。
+    var activeAgentProducts: [AgentProduct] {
+        agentProducts.filter { effectiveInstallation(for: $0.id) != nil }
+    }
+
+    func activeAgentProduct(withID id: String) -> AgentProduct? {
+        activeAgentProducts.first { $0.id == id }
+    }
+
     func agentHome(withID id: PhysicalResourceIdentity) -> AgentHome? {
         snapshot?.homes.first { $0.id == id }
     }
@@ -598,14 +608,12 @@ final class AppModel {
     }
 
     var effectiveAgentCount: Int {
-        agentProducts.filter { product in
-            effectiveInstallation(for: product.id) != nil
-        }.count
+        activeAgentProducts.count
     }
 
     private func clearSelectedAgentIfMissing() {
         if let selectedAgentID,
-           agentProducts.contains(where: { $0.id == selectedAgentID }) != true {
+           activeAgentProducts.contains(where: { $0.id == selectedAgentID }) != true {
             self.selectedAgentID = nil
             self.selectedAgentHomeID = nil
         }
