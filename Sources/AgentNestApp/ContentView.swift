@@ -1315,12 +1315,14 @@ private struct AgentProductCard: View {
         .buttonStyle(AgentCardPressButtonStyle())
         .contentShape(RoundedRectangle(cornerRadius: DS.Radius.panel, style: .continuous))
         .onHover { hovering in
-            withAnimation(reduceMotion ? nil : .easeOut(duration: DS.Motion.hover)) {
+            if reduceMotion {
                 isHovering = hovering
+            } else {
+                withAnimation(.easeOut(duration: DS.Motion.hover)) {
+                    isHovering = hovering
+                }
             }
         }
-        .offset(y: isActiveHovering ? -2.5 : 0)
-        .animation(reduceMotion ? nil : .easeOut(duration: DS.Motion.hover), value: isActiveHovering)
         .contextMenu { cardMenu }
         .accessibilityHint(model.localized("打开%@详情", product.displayName))
     }
@@ -1339,43 +1341,28 @@ private struct AgentProductCard: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background { cardBackground }
         .overlay { cardBorder }
-        .shadow(
-            color: isActiveHovering
-                ? DS.Semantic.accentPrimary.opacity(0.18)
-                : Color.black.opacity(0.06),
-            radius: isActiveHovering ? 11 : 4,
-            y: isActiveHovering ? 5 : 1
-        )
+        .compositingGroup()
+        .shadow(color: Color.black.opacity(0.05), radius: 3, y: 1)
     }
 
+    /// 与旧档案卡视觉一致的“基色 + 顶部高光”；accent 只通过描边和正文表达，
+    /// 不在每张卡上再叠加第二层全尺寸渐变，避免窗口拖动时整卡反复重绘。
     private var cardBackground: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: DS.Radius.panel, style: .continuous)
-                .fill(Color(nsColor: DS.Neutral.raised))
-            RoundedRectangle(cornerRadius: DS.Radius.panel, style: .continuous)
-                .fill(
-                    LinearGradient(
-                        colors: [
-                            Color.white.opacity(colorScheme == .dark ? 0.05 : 0.58),
-                            Color.clear,
-                            Color.black.opacity(0.02),
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
+        RoundedRectangle(cornerRadius: DS.Radius.panel, style: .continuous)
+            .fill(Color(nsColor: DS.Neutral.raised))
+            .overlay {
+                RoundedRectangle(cornerRadius: DS.Radius.panel, style: .continuous)
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                Color.white.opacity(colorScheme == .dark ? 0.05 : 0.42),
+                                Color.clear,
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
                     )
-                )
-            RoundedRectangle(cornerRadius: DS.Radius.panel, style: .continuous)
-                .fill(
-                    LinearGradient(
-                        colors: [
-                            categoryAccent.opacity(isActiveHovering ? 0.10 : 0.04),
-                            Color.clear,
-                        ],
-                        startPoint: .top,
-                        endPoint: .center
-                    )
-                )
-        }
+            }
     }
 
     private var cardBorder: some View {
