@@ -263,6 +263,30 @@ struct AgentNestCoreTestRunner {
             ExecutableAgentVersionProbe.parseVersionOutput("no version here") == nil,
             "non-version output is not fabricated"
         )
+
+        let root = FileManager.default.temporaryDirectory.appending(path: "AgentNestExecutableProbe-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let pathBin = root.appending(path: "path-bin")
+        let scriptBin = root.appending(path: ".opencode/bin")
+        for directory in [pathBin, scriptBin] {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        }
+        let pathExecutable = pathBin.appending(path: "opencode")
+        let scriptExecutable = scriptBin.appending(path: "opencode")
+        try Data("path".utf8).write(to: pathExecutable)
+        try Data("script".utf8).write(to: scriptExecutable)
+        for executable in [pathExecutable, scriptExecutable] {
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable.path)
+        }
+        let resolved = ExecutableAgentVersionProbe.resolveExecutable(
+            named: "opencode",
+            environment: ["PATH": pathBin.path],
+            homeDirectory: root
+        )
+        try expect(
+            resolved?.path == scriptExecutable.path,
+            "official script install locations win over a generic PATH executable after an in-app upgrade"
+        )
     }
 
     private static func testScan() async throws {

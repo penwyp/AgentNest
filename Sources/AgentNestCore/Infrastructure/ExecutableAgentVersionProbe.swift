@@ -100,8 +100,8 @@ public struct ExecutableAgentVersionProbe: Sendable {
         return parseVersionOutput(output)
     }
 
-    /// 已解析的生效可执行文件（不执行 `--version`，只做 PATH 解析与文件身份采集）。
-    /// PATH 按进程环境顺序生效；PATH 未覆盖时再回退到常见脚本安装目录。
+    /// 已解析的生效可执行文件（不执行 `--version`，只做可执行文件定位与文件身份采集）。
+    /// 官方脚本安装目录优先（升级后立即反映新版本），其余按当前进程 PATH 顺序解析。
     /// 用于扫描快照中填充 `AgentInstallation`；版本仍由 `installedVersions` 探测。
     func resolvedInstallations(for definitions: [AgentDefinition]) -> [String: AgentInstallation] {
         var installations: [String: AgentInstallation] = [:]
@@ -120,20 +120,24 @@ public struct ExecutableAgentVersionProbe: Sendable {
         return installations
     }
 
-    private static func resolveExecutable(named name: String) -> URL? {
-        let home = FileManager.default.homeDirectoryForCurrentUser
+    static func resolveExecutable(
+        named name: String,
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser
+    ) -> URL? {
+        let home = homeDirectory
         let scriptInstallLocations = [
             home.appending(path: ".opencode/bin/\(name)"),
             home.appending(path: ".local/bin/\(name)"),
             home.appending(path: ".claude/local/\(name)"),
             home.appending(path: ".codex/bin/\(name)"),
         ]
-        let pathValue = ProcessInfo.processInfo.environment["PATH"]
+        let pathValue = environment["PATH"]
             ?? "/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-        var candidates = pathValue.split(separator: ":").map {
+        var candidates = scriptInstallLocations
+        candidates.append(contentsOf: pathValue.split(separator: ":").map {
             URL(fileURLWithPath: String($0), isDirectory: true).appending(path: name)
-        }
-        candidates.append(contentsOf: scriptInstallLocations)
+        })
         for url in candidates {
             var isDirectory: ObjCBool = false
             if FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory),
