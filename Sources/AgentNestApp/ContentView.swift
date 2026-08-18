@@ -2957,6 +2957,7 @@ private struct StorageGroupData: Identifiable, Sendable {
     let key: String
     let ownerKind: OwnerKind
     let ownerProductName: String
+    let ownerProductID: String
     let ownerHomeIndex: Int?
     let ownerPath: String
     let category: ArtifactCategory
@@ -3008,24 +3009,28 @@ private func computeStorageDerived(
         let ownerKey: String
         let ownerKind: StorageGroupData.OwnerKind
         let ownerProductName: String
+        let ownerProductID: String
         let ownerHomeIndex: Int?
         let ownerPath: String
         if artifact.attribution == .shared {
             ownerKey = "shared"
             ownerKind = .shared
             ownerProductName = ""
+            ownerProductID = ""
             ownerHomeIndex = nil
             ownerPath = ""
         } else if let home = artifact.homeIDs.first.flatMap({ homesByID[$0] }) {
             ownerKey = "home:\(home.id.device):\(home.id.inode):\(home.id.kind.rawValue)"
             ownerKind = .home
             ownerProductName = productNamesByID[home.productID] ?? home.productID
+            ownerProductID = home.productID
             ownerHomeIndex = homeDisplayIndexesByID[home.id]
             ownerPath = home.path
         } else {
             ownerKey = "unattributed"
             ownerKind = .unattributed
             ownerProductName = ""
+            ownerProductID = ""
             ownerHomeIndex = nil
             ownerPath = ""
         }
@@ -3035,6 +3040,7 @@ private func computeStorageDerived(
             key: key,
             ownerKind: ownerKind,
             ownerProductName: ownerProductName,
+            ownerProductID: ownerProductID,
             ownerHomeIndex: ownerHomeIndex,
             ownerPath: ownerPath,
             category: artifact.category,
@@ -3233,8 +3239,13 @@ private struct StorageView: View {
                                             .font(DS.Typeface.label)
                                             .monospacedDigit()
                                     }
-                                    Text(owner.title)
-                                        .font(DS.Typeface.body)
+                                    HStack(spacing: DS.Space.x200) {
+                                        if group.ownerKind == .home {
+                                            HomeBrandIcon(productID: group.ownerProductID, size: 18)
+                                        }
+                                        Text(owner.title)
+                                            .font(DS.Typeface.body)
+                                    }
                                     if let detail = owner.detail {
                                         Text(detail)
                                             .font(DS.Typeface.caption)

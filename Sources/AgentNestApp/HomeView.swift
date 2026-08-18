@@ -33,6 +33,7 @@ enum HomeProductStyle {
         "opencode.opencode": "command",
         "aider.aider": "wand.and.stars",
         "openai.chatgpt-desktop": "bubble.left.and.bubble.right",
+        "deepseek.dsh": "sparkles",
     ]
 
     private static var brandImageCache: [String: NSImage] = [:]
@@ -55,7 +56,9 @@ enum HomeProductStyle {
         "xai.grok": "grok",
         "opencode.opencode": "opencode",
         "inflection.pi": "pi",
+        "aider.aider": "aider",
         "openai.chatgpt-desktop": "chatgpt-desktop",
+        "deepseek.dsh": "deepseek",
     ]
 
     /// AgentNestCore 资源包（裸可执行文件与 .app 两种布局都兼容）。
@@ -104,6 +107,7 @@ enum HomeProductStyle {
         "xai.grok": "G",
         "opencode.opencode": "OC",
         "inflection.pi": "π",
+        "deepseek.dsh": "DS",
     ]
 
     /// 无官方图标时的产品缩写，避免使用随机 SF Symbol 造成品牌误导。
@@ -126,6 +130,7 @@ enum HomeProductStyle {
         case "inflection.pi": return DS.Chroma.indigo
         case "opencode.opencode": return DS.Chroma.teal
         case "aider.aider": return DS.Chroma.amber
+        case "deepseek.dsh": return Color(red: 0x4D / 255, green: 0x6B / 255, blue: 0xFE / 255)
         default: return color(for: productID)
         }
     }

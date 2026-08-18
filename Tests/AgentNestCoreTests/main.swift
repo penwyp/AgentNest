@@ -41,7 +41,7 @@ struct AgentNestCoreTestRunner {
 
     private static func testDefinitionCatalog() throws {
         let catalog = try AgentDefinitionCatalog.bundled()
-        try expect(catalog.definitions.count == 15, "bundled definition count")
+        try expect(catalog.definitions.count == 16, "bundled definition count")
         let codex = try unwrap(catalog.definitions.first { $0.id == "openai.codex" }, "Codex definition")
         try expect(
             codex.capabilities.cleanup &&
@@ -54,7 +54,7 @@ struct AgentNestCoreTestRunner {
                 [
                     "anthropic.claude-code", "anthropic.claude-desktop",
                     "bytedance.trae", "cursor.cursor",
-                    "google.antigravity", "google.antigravity-cli",
+                    "deepseek.dsh", "google.antigravity", "google.antigravity-cli",
                     "opencode.opencode", "openai.codex",
                 ],
             "all supported agents participate in scanning"
@@ -123,6 +123,23 @@ struct AgentNestCoreTestRunner {
                     installedAppName: "WorkBuddy AI"
                 ),
             "WorkBuddy uses its official website for download and latest version detection"
+        )
+        let dsh = try unwrap(catalog.definitions.first { $0.id == "deepseek.dsh" }, "DeepSeek Harness definition")
+        try expect(
+            dsh.homeDiscovery.defaultPaths == ["~/.dsh"] &&
+                dsh.homeDiscovery.environmentVariables == ["DSH_HOME"] &&
+                dsh.capabilities.space && dsh.capabilities.skills &&
+                !dsh.capabilities.activity && !dsh.capabilities.cleanup &&
+                dsh.marketplace?.install == AgentInstallMethod(kind: .npm, formula: "@deepseek-ai/dsh"),
+            "DeepSeek Harness declares its DSH_HOME data root, writable skills, and npm install"
+        )
+        try expect(
+            dsh.fingerprints.optional.contains {
+                $0.kind == .jsonFile &&
+                    $0.relativePath == "profiles/node_modules/@deepseek-ai/dsh/package.json" &&
+                    $0.versionKeyPath == "version"
+            },
+            "DeepSeek Harness reads its installed version from the bundled dsh package manifest"
         )
 
         let unknown = Data("""
@@ -363,6 +380,22 @@ struct AgentNestCoreTestRunner {
             resolved?.path == scriptExecutable.path,
             "official script install locations win over a generic PATH executable after an in-app upgrade"
         )
+
+        // npx 安装的 CLI（GUI 进程 PATH 不含缓存 .bin）也能通过 `~/.npm/_npx/*/node_modules/.bin` 兜底解析。
+        let npxBin = root.appending(path: ".npm/_npx/cache-hash/node_modules/.bin")
+        try FileManager.default.createDirectory(at: npxBin, withIntermediateDirectories: true)
+        let npxDsh = npxBin.appending(path: "dsh")
+        try Data("shim".utf8).write(to: npxDsh)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: npxDsh.path)
+        let npxResolved = ExecutableAgentVersionProbe.resolveExecutable(
+            named: "dsh",
+            environment: ["PATH": "/usr/bin:/bin"],
+            homeDirectory: root
+        )
+        try expect(
+            npxResolved?.path.hasSuffix(".npm/_npx/cache-hash/node_modules/.bin/dsh") == true,
+            "npx cache shims resolve when the login PATH does not include them"
+        )
     }
 
     private static func testScan() async throws {
@@ -486,6 +519,10 @@ struct AgentNestCoreTestRunner {
         try FileManager.default.createDirectory(at: nestedSystemSkill, withIntermediateDirectories: true)
         try Data("---\nname: system-fixture\ndescription: nested\n---\n".utf8)
             .write(to: nestedSystemSkill.appending(path: "SKILL.md"))
+        let nestedRegularSkill = supportedRoot.appending(path: ".codex/skills/group/team-fixture")
+        try FileManager.default.createDirectory(at: nestedRegularSkill, withIntermediateDirectories: true)
+        try Data("---\nname: team-fixture\ndescription: nested\n---\n".utf8)
+            .write(to: nestedRegularSkill.appending(path: "SKILL.md"))
         let cursorManagedSkill = supportedRoot.appending(path: ".cursor/skills-cursor/managed-fixture")
         try FileManager.default.createDirectory(at: cursorManagedSkill, withIntermediateDirectories: true)
         try Data("---\nname: managed-fixture\ndescription: managed\n---\n".utf8)
@@ -514,8 +551,9 @@ struct AgentNestCoreTestRunner {
             .execute(homes: supportedSnapshot.homes)
         try expect(
             supportedSkillIndex.installationCount == supportedHomes.count + 2 &&
-                supportedSkillIndex.logicalSkills.contains(where: { $0.id == "system-fixture" }),
-            "bundled definitions recognize top-level and nested SKILL.md packages for every supported agent"
+                supportedSkillIndex.logicalSkills.contains(where: { $0.id == "team-fixture" }) &&
+                !supportedSkillIndex.logicalSkills.contains(where: { $0.id == "system-fixture" }),
+            "bundled definitions recognize top-level and nested SKILL.md packages while skipping system-owned roots"
         )
         try expect(
             supportedSkillIndex.logicalSkills.first(where: { $0.id == "managed-fixture" })?
@@ -537,6 +575,53 @@ struct AgentNestCoreTestRunner {
         try expect(
             arbitraryCustomSnapshot.homes.isEmpty,
             "fingerprintless agents do not claim arbitrary custom locations"
+        )
+
+        let dshRoot = root.appending(path: "dsh-fixture")
+        let dshHome = dshRoot.appending(path: ".dsh")
+        try FileManager.default.createDirectory(
+            at: dshHome.appending(path: "profiles/node_modules/@deepseek-ai/dsh"),
+            withIntermediateDirectories: true
+        )
+        try FileManager.default.createDirectory(at: dshHome.appending(path: "sessions/projects"), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: dshHome.appending(path: "storages"), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: dshHome.appending(path: "skills/.system/system-owned"), withIntermediateDirectories: true)
+        try Data("unit:\n  name: workspace\n".utf8).write(to: dshHome.appending(path: "settings.yaml"))
+        try Data("{\"name\":\"dsh\",\"version\":\"0.1.0-rc.7\"}".utf8)
+            .write(to: dshHome.appending(path: "profiles/node_modules/@deepseek-ai/dsh/package.json"))
+        try Data("{\"unit\":{\"name\":\"workspace\",\"version\":2}}".utf8).write(to: dshHome.appending(path: "storages/workspace.json"))
+        try Data("transcript".utf8).write(to: dshHome.appending(path: "sessions/projects/session.jsonl.zstd"))
+        try FileManager.default.createDirectory(at: dshHome.appending(path: "skills/my-bundle"), withIntermediateDirectories: true)
+        try Data("---\nname: my-bundle\ndescription: bundle\n---\n".utf8)
+            .write(to: dshHome.appending(path: "skills/my-bundle/SKILL.md"))
+        try Data("---\nname: flat-skill\ndescription: flat\n---\n".utf8)
+            .write(to: dshHome.appending(path: "skills/flat-skill.md"))
+        try Data("---\nname: system-owned\ndescription: system\n---\n".utf8)
+            .write(to: dshHome.appending(path: "skills/.system/system-owned/SKILL.md"))
+
+        let dshSnapshot = try await ScanUseCase(catalog: AgentDefinitionCatalog.bundled()).execute(request: ScanRequest(homeDirectory: dshRoot))
+        let dshConfirmed = dshSnapshot.homes.filter { $0.confidence == .confirmed }
+        try expect(
+            dshConfirmed.contains { $0.productID == "deepseek.dsh" && $0.path == dshHome.path && $0.version == "0.1.0-rc.7" },
+            "DeepSeek Harness home is confirmed with the version read from its bundled dsh package manifest"
+        )
+        try expect(
+            dshSnapshot.storageLedger.artifacts.contains { $0.category == .sessions && $0.path.hasPrefix(dshHome.path + "/sessions") } &&
+                dshSnapshot.storageLedger.artifacts.contains { $0.category == .database && $0.path.hasPrefix(dshHome.path + "/storages") } &&
+                dshSnapshot.storageLedger.artifacts.contains { $0.category == .configuration && $0.path == dshHome.appending(path: "settings.yaml").path },
+            "DSH session transcripts, storages, and settings are classified without cleanup exposure"
+        )
+        let dshSkillIndex = await SkillIndexUseCase(catalog: try AgentDefinitionCatalog.bundled()).execute(homes: dshSnapshot.homes)
+        try expect(
+            dshSkillIndex.logicalSkills.contains(where: { $0.id == "my-bundle" }) &&
+                dshSkillIndex.logicalSkills.contains(where: { $0.id == "flat-skill" }) &&
+                !dshSkillIndex.logicalSkills.contains(where: { $0.id == "system-owned" }),
+            "DSH bundle and flat Markdown skills are indexed while skipping .system"
+        )
+        try expect(
+            dshSkillIndex.logicalSkills.first(where: { $0.id == "flat-skill" })?
+                .variants.first?.installations.first?.isWritable == false,
+            "flat Markdown skills are indexed read-only"
         )
 
         let incrementalFile = defaultHome.appending(path: "incremental.fixture")
@@ -1572,15 +1657,35 @@ struct AgentNestCoreTestRunner {
         try expect(release.variants.count == 2, "same-name content becomes separate variants")
         try expect(release.missingHomeIDs.count == 1, "coverage reports missing home")
 
-        let nestedSkill = homes[0].appending(path: "skills/.system/nested-fixture")
+        let nestedSkill = homes[0].appending(path: "skills/group/nested-fixture")
         try FileManager.default.createDirectory(at: nestedSkill, withIntermediateDirectories: true)
         try Data("---\nname: nested-fixture\ndescription: nested\n---\n".utf8)
             .write(to: nestedSkill.appending(path: "SKILL.md"))
+        let systemOwnedSkill = homes[0].appending(path: "skills/.system/system-owned")
+        try FileManager.default.createDirectory(at: systemOwnedSkill, withIntermediateDirectories: true)
+        try Data("---\nname: system-owned\ndescription: system\n---\n".utf8)
+            .write(to: systemOwnedSkill.appending(path: "SKILL.md"))
+        let flatSkill = homes[0].appending(path: "skills/flat-skill.md")
+        try Data("---\nname: flat-skill\ndescription: flat\n---\n".utf8).write(to: flatSkill)
         let nestedIndex = await indexer.execute(homes: snapshot.homes)
         try expect(
             nestedIndex.logicalSkills.contains(where: { $0.id == "nested-fixture" }) &&
                 nestedIndex.logicalSkills.first(where: { $0.id == "nested-fixture" })?.variants.first?.installations.first?.isWritable == false,
             "nested directory SKILL.md packages are indexed without inheriting direct-child write access"
+        )
+        try expect(
+            !nestedIndex.logicalSkills.contains(where: { $0.id == "system-owned" }),
+            "system-owned .system roots are skipped by skill discovery"
+        )
+        let flatInstallation = nestedIndex.logicalSkills.first(where: { $0.id == "flat-skill" })?
+            .variants.first?.installations.first
+        try expect(
+            flatInstallation != nil &&
+                flatInstallation?.isWritable == false &&
+                flatInstallation?.fileCount == 1 &&
+                flatInstallation?.state == .valid &&
+                URL(fileURLWithPath: flatInstallation!.path).lastPathComponent == "flat-skill.md",
+            "flat Markdown skill files are indexed read-only as single-file packages"
         )
 
         let writer = SkillWriteUseCase()

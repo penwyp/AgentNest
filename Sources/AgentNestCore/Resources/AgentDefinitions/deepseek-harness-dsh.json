@@ -1,0 +1,83 @@
+{
+  "schemaVersion": 1,
+  "id": "deepseek.dsh",
+  "displayName": "DeepSeek Harness",
+  "homeDiscovery": {
+    "defaultPaths": [
+      "~/.dsh"
+    ],
+    "environmentVariables": [
+      "DSH_HOME"
+    ]
+  },
+  "fingerprints": {
+    "required": [],
+    "optional": [
+      {
+        "kind": "directory",
+        "relativePath": "profiles"
+      },
+      {
+        "kind": "file",
+        "relativePath": "settings.yaml"
+      },
+      {
+        "kind": "directory",
+        "relativePath": "sessions"
+      },
+      {
+        "kind": "directory",
+        "relativePath": "storages"
+      },
+      {
+        "kind": "jsonFile",
+        "relativePath": "profiles/node_modules/@deepseek-ai/dsh/package.json",
+        "versionKeyPath": "version"
+      }
+    ],
+    "negative": []
+  },
+  "skills": [
+    {
+      "relativePath": "skills",
+      "format": "dsh-skill-md",
+      "writable": true
+    }
+  ],
+  "artifacts": [
+    {
+      "relativePath": "sessions",
+      "category": "sessions"
+    },
+    {
+      "relativePath": "storages",
+      "category": "database"
+    },
+    {
+      "relativePath": "profiles",
+      "category": "configuration"
+    },
+    {
+      "relativePath": "skills",
+      "category": "skill"
+    },
+    {
+      "relativePath": "settings.yaml",
+      "category": "configuration"
+    }
+  ],
+  "capabilities": {
+    "space": true,
+    "skills": true,
+    "activity": false,
+    "cleanup": false
+  },
+  "marketplace": {
+    "summary": "DeepSeek Harness — profile-based agent runtime by DeepSeek.",
+    "homepageURL": "https://github.com/deepseek-ai/deepseek-harness",
+    "install": {
+      "kind": "npm",
+      "formula": "@deepseek-ai/dsh"
+    }
+  }
+}

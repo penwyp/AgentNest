@@ -67,18 +67,38 @@ public struct SkillIndexUseCase: Sendable {
     }
 
     private func discoverSkillRoots(in root: URL) -> [URL] {
+        var roots: [URL] = []
+        // 平铺 Markdown skill（DSH `<name>.md` 格式）：只有 root 一级的 `*.md` 文件；
+        // bundle 目录内嵌套的 `*.md` 属于资源，不构成独立 skill。
+        if let children = try? FileManager.default.contentsOfDirectory(
+            at: root,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        ) {
+            for candidate in children {
+                guard let metadata = try? FileMetadata.read(candidate).node,
+                      !metadata.isSymbolicLink,
+                      metadata.identity.kind == .file,
+                      candidate.pathExtension.lowercased() == "md" else { continue }
+                roots.append(candidate)
+            }
+        }
         guard let enumerator = FileManager.default.enumerator(
             at: root,
             includingPropertiesForKeys: nil,
             options: [.skipsPackageDescendants]
-        ) else { return [] }
-        var roots: [URL] = []
+        ) else { return roots }
         while let candidate = enumerator.nextObject() as? URL {
             guard let metadata = try? FileMetadata.read(candidate).node else {
                 enumerator.skipDescendants()
                 continue
             }
             if metadata.isSymbolicLink || metadata.identity.kind == .other {
+                enumerator.skipDescendants()
+                continue
+            }
+            // `.system` 目录归系统所有（DSH 用户根约定），不作为普通用户 skill 索引。
+            if candidate.lastPathComponent == ".system" {
                 enumerator.skipDescendants()
                 continue
             }
@@ -97,9 +117,10 @@ public struct SkillIndexUseCase: Sendable {
 
     private func indexSkill(at root: URL, home: AgentHome, format: String, isWritable: Bool) -> SkillInstallation? {
         guard let rootMetadata = try? FileMetadata.read(root).node,
-              rootMetadata.identity.kind == .directory,
               !rootMetadata.isSymbolicLink else { return nil }
-        let mainFile = root.appending(path: "SKILL.md")
+        let isFlatFile = rootMetadata.identity.kind == .file
+        guard isFlatFile || rootMetadata.identity.kind == .directory else { return nil }
+        let mainFile = isFlatFile ? root : root.appending(path: "SKILL.md")
         var isDirectory: ObjCBool = false
         guard FileManager.default.fileExists(atPath: mainFile.path, isDirectory: &isDirectory), !isDirectory.boolValue else {
             return invalidInstallation(
@@ -116,28 +137,40 @@ public struct SkillIndexUseCase: Sendable {
         var diagnostics: [String] = []
         var totalBytes = 0
         var latestModification: Date?
-        let indexer = FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil, options: [])
-        while let file = indexer?.nextObject() as? URL {
-            guard let metadata = try? FileMetadata.read(file).node else { diagnostics.append("skill.unreadable"); continue }
-            if metadata.isSymbolicLink || metadata.identity.kind == .other {
-                diagnostics.append("skill.unsupportedFileType")
-                indexer?.skipDescendants()
-                continue
-            }
-            guard metadata.identity.kind == .file else { continue }
-            let relative = String(file.path.dropFirst(root.path.count + 1))
-            guard isSafeRelativePath(relative) else { diagnostics.append("skill.pathOutsideRoot"); continue }
-            guard metadata.logicalBytes <= policy.maximumFileBytes,
-                  files.count < policy.maximumFilesPerSkill,
-                  totalBytes + Int(metadata.logicalBytes) <= policy.maximumSkillBytes,
-                  let data = try? Data(contentsOf: file, options: [.mappedIfSafe]) else {
+        if isFlatFile {
+            if rootMetadata.logicalBytes <= policy.maximumFileBytes,
+               rootMetadata.logicalBytes <= UInt64(policy.maximumSkillBytes),
+               let data = try? Data(contentsOf: root, options: [.mappedIfSafe]) {
+                files.append(("SKILL.md", normalizeTextIfPossible(data)))
+                totalBytes += data.count
+                latestModification = try? root.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
+            } else {
                 diagnostics.append("skill.budgetExceeded")
-                continue
             }
-            files.append((relative, normalizeTextIfPossible(data)))
-            totalBytes += data.count
-            if let date = try? file.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate,
-               latestModification == nil || date > latestModification! { latestModification = date }
+        } else {
+            let indexer = FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil, options: [])
+            while let file = indexer?.nextObject() as? URL {
+                guard let metadata = try? FileMetadata.read(file).node else { diagnostics.append("skill.unreadable"); continue }
+                if metadata.isSymbolicLink || metadata.identity.kind == .other {
+                    diagnostics.append("skill.unsupportedFileType")
+                    indexer?.skipDescendants()
+                    continue
+                }
+                guard metadata.identity.kind == .file else { continue }
+                let relative = String(file.path.dropFirst(root.path.count + 1))
+                guard isSafeRelativePath(relative) else { diagnostics.append("skill.pathOutsideRoot"); continue }
+                guard metadata.logicalBytes <= policy.maximumFileBytes,
+                      files.count < policy.maximumFilesPerSkill,
+                      totalBytes + Int(metadata.logicalBytes) <= policy.maximumSkillBytes,
+                      let data = try? Data(contentsOf: file, options: [.mappedIfSafe]) else {
+                    diagnostics.append("skill.budgetExceeded")
+                    continue
+                }
+                files.append((relative, normalizeTextIfPossible(data)))
+                totalBytes += data.count
+                if let date = try? file.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate,
+                   latestModification == nil || date > latestModification! { latestModification = date }
+            }
         }
         guard let mainData = files.first(where: { $0.0 == "SKILL.md" })?.1,
               let mainText = String(data: mainData, encoding: .utf8) else {
@@ -152,20 +185,21 @@ public struct SkillIndexUseCase: Sendable {
             )
         }
         let manifest = parseFrontmatter(mainText)
-        let name = manifest["name"] ?? root.lastPathComponent
+        let fallbackName = isFlatFile ? root.deletingPathExtension().lastPathComponent : root.lastPathComponent
+        let name = manifest["name"] ?? fallbackName
         let logicalID = normalizeIdentifier(manifest["id"] ?? name)
         if logicalID.isEmpty { diagnostics.append("skill.invalidName") }
         let contentHash = structuredHash(files)
         return SkillInstallation(
             id: rootMetadata.identity,
-            logicalID: logicalID.isEmpty ? normalizeIdentifier(root.lastPathComponent) : logicalID,
+            logicalID: logicalID.isEmpty ? normalizeIdentifier(fallbackName) : logicalID,
             name: name,
             description: manifest["description"],
             path: root.path,
             homeID: home.id,
             scope: .global,
             format: format,
-            isWritable: isWritable,
+            isWritable: isWritable && !isFlatFile,
             contentHash: contentHash,
             totalBytes: UInt64(totalBytes),
             fileCount: files.count,

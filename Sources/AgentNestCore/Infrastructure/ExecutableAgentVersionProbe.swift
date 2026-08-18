@@ -17,6 +17,7 @@ public struct ExecutableAgentVersionProbe: Sendable {
         "opencode.opencode": Command(executable: "opencode", arguments: ["--version"]),
         "aider.aider": Command(executable: "aider", arguments: ["--version"]),
         "inflection.pi": Command(executable: "pi", arguments: ["--version"]),
+        "deepseek.dsh": Command(executable: "dsh", arguments: ["--version"]),
     ]
 
     public init() {}
@@ -144,6 +145,33 @@ public struct ExecutableAgentVersionProbe: Sendable {
                isDirectory.boolValue == false,
                FileManager.default.isExecutableFile(atPath: url.path) {
                 return url.resolvingSymlinksInPath().standardizedFileURL
+            }
+        }
+        // `npx <pkg>` 安装的 CLI（如 `npx @deepseek-ai/dsh`）只落在临时缓存 `.bin`，
+        // 不在稳定 PATH，GUI 进程的登录 PATH 也不含该缓存；按 `~/.npm/_npx/*/node_modules/.bin/<name>` 兜底。
+        if let shim = resolveNPXShim(named: name, homeDirectory: home) {
+            return shim
+        }
+        return nil
+    }
+
+    /// 在 `~/.npm/_npx/*/node_modules/.bin/<name>` 中查找 npx 安装的 CLI shim（确定性顺序，命中即返回）。
+    private static func resolveNPXShim(named name: String, homeDirectory: URL) -> URL? {
+        let npxRoot = homeDirectory.appending(path: ".npm/_npx")
+        guard let children = try? FileManager.default.contentsOfDirectory(
+            at: npxRoot,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        ) else { return nil }
+        let shims = children
+            .sorted { $0.lastPathComponent > $1.lastPathComponent }
+            .map { $0.appending(path: "node_modules/.bin/\(name)") }
+        for shim in shims {
+            var isDirectory: ObjCBool = false
+            if FileManager.default.fileExists(atPath: shim.path, isDirectory: &isDirectory),
+               isDirectory.boolValue == false,
+               FileManager.default.isExecutableFile(atPath: shim.path) {
+                return shim.resolvingSymlinksInPath().standardizedFileURL
             }
         }
         return nil
