@@ -3,6 +3,7 @@ import SwiftUI
 
 struct ContentView: View {
     @Bindable var model: AppModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         if model.hasCoreAccess {
@@ -46,6 +47,14 @@ struct ContentView: View {
             }
         }
         .navigationSplitViewStyle(.balanced)
+        .overlay {
+            // Skill 同步/冲突解决：全窗口完整 Dialog（遮罩覆盖含侧边栏的整个窗口，点击外部关闭）。
+            if let dialog = model.skillDialog {
+                SkillDialogOverlay(model: model, dialog: dialog)
+                    .transition(.opacity)
+            }
+        }
+        .animation(reduceMotion ? nil : .easeOut(duration: DS.Motion.state), value: model.skillDialog)
         .task {
             // 打开程序后后台轻量扫描已安装 Agent 版本；不阻塞窗口与首次完整扫描。
             model.startBackgroundInstalledVersionScanIfNeeded()

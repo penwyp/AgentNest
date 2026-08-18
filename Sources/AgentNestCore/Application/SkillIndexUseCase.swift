@@ -222,15 +222,183 @@ public struct SkillIndexUseCase: Sendable {
         return Data(text.utf8)
     }
 
+    /// 极简 frontmatter 解析：覆盖 Agent 生态 SKILL.md 的常见写法——
+    /// 单行键值、单/双引号标量（含跨行）、多行普通标量（缩进续接折叠为空格）、
+    /// 块标量（`>` / `>-` / `|` / `|-` 等，内容按缩进收集）。
+    /// 无法识别的行安全跳过；所有取值统一去除首尾空白。
     private func parseFrontmatter(_ text: String) -> [String: String] {
-        let lines = text.split(separator: "\n", omittingEmptySubsequences: false)
+        let lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
         guard lines.first == "---", let end = lines.dropFirst().firstIndex(of: "---") else { return [:] }
         var result: [String: String] = [:]
-        for line in lines[1..<end] {
-            let parts = line.split(separator: ":", maxSplits: 1).map(String.init)
-            if parts.count == 2 { result[parts[0].trimmingCharacters(in: .whitespaces)] = parts[1].trimmingCharacters(in: .whitespacesAndNewlines) }
+        var index = 1
+        while index < end {
+            let line = lines[index]
+            index += 1
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed.isEmpty || trimmed.hasPrefix("#") { continue }
+            guard let colon = line.firstIndex(of: ":") else { continue }
+            let key = line[..<colon].trimmingCharacters(in: .whitespaces)
+            guard !key.isEmpty else { continue }
+            let indent = line.prefix(while: { $0 == " " || $0 == "\t" }).count
+            let rest = String(line[line.index(after: colon)...])
+
+            // 块标量：`description: >-` 等指示符后按缩进收集内容。
+            if let style = blockScalarStyle(rest) {
+                var content: [String] = []
+                while index < end {
+                    let next = lines[index]
+                    let nextTrimmed = next.trimmingCharacters(in: .whitespaces)
+                    if nextTrimmed.isEmpty {
+                        content.append("")
+                        index += 1
+                        continue
+                    }
+                    let nextIndent = next.prefix(while: { $0 == " " || $0 == "\t" }).count
+                    guard nextIndent > indent else { break }
+                    content.append(String(next.dropFirst(nextIndent)))
+                    index += 1
+                }
+                result[key] = foldBlockScalar(content, style: style).trimmingCharacters(in: .whitespacesAndNewlines)
+                continue
+            }
+
+            result[key] = parseScalar(rest, lines: lines, index: &index, end: end, indent: indent)
         }
         return result
+    }
+
+    private enum BlockScalarStyle: Equatable {
+        case folded
+        case literal
+    }
+
+    /// 识别块标量指示符：`>`、`>-`、`>+`、`|`、`|-`、`|+`（可带行尾注释）。
+    private func blockScalarStyle(_ raw: String) -> BlockScalarStyle? {
+        let token = raw.split(separator: "#", maxSplits: 1).first?.trimmingCharacters(in: .whitespaces) ?? ""
+        guard let first = token.first, first == ">" || first == "|" else { return nil }
+        let tail = token.dropFirst()
+        guard tail.isEmpty || tail == "-" || tail == "+" else { return nil }
+        return first == ">" ? .folded : .literal
+    }
+
+    /// `>` 折叠换行为空格（空行保留为段落分隔）；`|` 保留字面换行。
+    private func foldBlockScalar(_ content: [String], style: BlockScalarStyle) -> String {
+        switch style {
+        case .literal:
+            return content.joined(separator: "\n")
+        case .folded:
+            var paragraphs: [[String]] = [[]]
+            for line in content {
+                if line.isEmpty {
+                    paragraphs.append([])
+                } else {
+                    paragraphs[paragraphs.count - 1].append(line)
+                }
+            }
+            return paragraphs
+                .filter { !$0.isEmpty }
+                .map { $0.joined(separator: " ") }
+                .joined(separator: "\n")
+        }
+    }
+
+    /// 解析普通 / 引号标量；引号或普通多行内容按 YAML 规则折叠，并去掉行内注释。
+    private func parseScalar(_ rest: String, lines: [String], index: inout Int, end: Int, indent: Int) -> String {
+        let trimmed = rest.trimmingCharacters(in: .whitespaces)
+        if trimmed.first == "\"" || trimmed.first == "'" {
+            var text = rest
+            while index < end, !quotedScalarIsClosed(text) {
+                let next = lines[index]
+                let nextTrimmed = next.trimmingCharacters(in: .whitespaces)
+                guard !nextTrimmed.isEmpty else { break }
+                let nextIndent = next.prefix(while: { $0 == " " || $0 == "\t" }).count
+                guard nextIndent > indent else { break }
+                // 引号标量跨行时换行折叠为空格（YAML 规则）。
+                text += " " + String(next.dropFirst(nextIndent))
+                index += 1
+            }
+            return unquote(text.trimmingCharacters(in: .whitespacesAndNewlines))
+        }
+        var value = stripInlineComment(rest).trimmingCharacters(in: .whitespacesAndNewlines)
+        while index < end {
+            let next = lines[index]
+            let nextTrimmed = next.trimmingCharacters(in: .whitespaces)
+            if nextTrimmed.isEmpty || nextTrimmed.hasPrefix("#") { break }
+            let nextIndent = next.prefix(while: { $0 == " " || $0 == "\t" }).count
+            guard nextIndent > indent else { break }
+            value += " " + stripInlineComment(String(next.dropFirst(nextIndent))).trimmingCharacters(in: .whitespaces)
+            index += 1
+        }
+        return value
+    }
+
+    private func quotedScalarIsClosed(_ text: String) -> Bool {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let quote = trimmed.first, quote == "\"" || quote == "'", trimmed.count >= 2, trimmed.last == quote else {
+            return false
+        }
+        let before = trimmed[trimmed.index(before: trimmed.endIndex)]
+        if quote == "\"" { return before != "\\" }
+        return before != "'"
+    }
+
+    /// 去掉首尾配对引号；双引号按 YAML 转义规则解码，单引号中 `''` 还原为 `'`。
+    private func unquote(_ text: String) -> String {
+        guard text.count >= 2,
+              let first = text.first, let last = text.last,
+              (first == "\"" && last == "\"") || (first == "'" && last == "'") else { return text }
+        let inner = String(text.dropFirst().dropLast())
+        if first == "\"" { return unescapeDoubleQuoted(inner) }
+        return inner.replacingOccurrences(of: "''", with: "'")
+    }
+
+    private func unescapeDoubleQuoted(_ value: String) -> String {
+        var result = ""
+        result.reserveCapacity(value.count)
+        var position = value.startIndex
+        while position < value.endIndex {
+            let char = value[position]
+            if char == "\\", value.index(after: position) < value.endIndex {
+                let nextPosition = value.index(after: position)
+                let next = value[nextPosition]
+                switch next {
+                case "n": result.append("\n")
+                case "r": result.append("\r")
+                case "t": result.append("\t")
+                case "\\": result.append("\\")
+                case "\"": result.append("\"")
+                case "u":
+                    let hexStart = value.index(nextPosition, offsetBy: 1)
+                    if let hexEnd = value.index(hexStart, offsetBy: 4, limitedBy: value.endIndex),
+                       let scalar = UInt32(value[hexStart..<hexEnd], radix: 16),
+                       let unicode = UnicodeScalar(scalar) {
+                        result.unicodeScalars.append(unicode)
+                        position = hexEnd
+                        continue
+                    }
+                    result.append("u")
+                default: result.append(next)
+                }
+                position = value.index(after: nextPosition)
+            } else {
+                result.append(char)
+                position = value.index(after: position)
+            }
+        }
+        return result
+    }
+
+    /// YAML 普通标量：前面带空格的 `#` 开始行尾注释。
+    private func stripInlineComment(_ value: String) -> String {
+        var previousWasWhitespace = false
+        for (offset, char) in value.enumerated() {
+            if char == "#", previousWasWhitespace {
+                let cut = value.index(value.startIndex, offsetBy: offset)
+                return String(value[..<cut])
+            }
+            previousWasWhitespace = char == " " || char == "\t"
+        }
+        return value
     }
 
     private func normalizeIdentifier(_ value: String) -> String {

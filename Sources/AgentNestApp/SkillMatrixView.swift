@@ -6,12 +6,8 @@ import SwiftUI
 struct SkillView: View {
     @Bindable var model: AppModel
 
-    @State private var patchSkill: LogicalSkill?
-    @State private var patchPreselectedHomeIDs: Set<PhysicalResourceIdentity> = []
     @State private var detailSkill: LogicalSkill?
     @State private var detailHome: AgentHome?
-    @State private var resolveSkill: LogicalSkill?
-    @State private var resolveHome: AgentHome?
     @State private var deletingSkill: LogicalSkill?
     @State private var localError: String?
     @State private var hoveredRowID: String?
@@ -64,21 +60,9 @@ struct SkillView: View {
             }
         }
         .safeAreaInset(edge: .top, spacing: 0) { identity }
-        .sheet(item: $patchSkill) { skill in
-            SkillPatchSheet(
-                model: model,
-                skill: skill,
-                initialTargetHomeIDs: patchPreselectedHomeIDs
-            )
-        }
         .sheet(item: $detailSkill) { skill in
             if let home = detailHome {
                 SkillInstallationDetailSheet(model: model, skill: skill, home: home)
-            }
-        }
-        .sheet(item: $resolveSkill) { skill in
-            if let home = resolveHome {
-                SkillConflictResolutionSheet(model: model, skill: skill, home: home)
             }
         }
         .alert(
@@ -314,8 +298,7 @@ struct SkillView: View {
                 .accessibilityHint(skillDescription(row.skill) ?? model.localized("此 Skill 没有描述。"))
             if row.skill.variants.count > 1 {
                 Button {
-                    patchPreselectedHomeIDs = Set(model.skillWriteTargets.map(\.homeID))
-                    patchSkill = row.skill
+                    model.skillDialog = .sync(skill: row.skill, initialTargetHomeIDs: [])
                 } label: {
                     DSBadge(
                         text: model.localized("冲突"),
@@ -323,8 +306,8 @@ struct SkillView: View {
                     )
                 }
                 .buttonStyle(.plain)
-                .help(model.localized("存在 %d 个内容不同的版本，点击选择权威版本并同步。", row.skill.variants.count))
-                .accessibilityLabel(model.localized("冲突：%@ 有 %d 个内容不同的版本。点击选择权威版本。", row.skill.name, row.skill.variants.count))
+                .help(model.localized("存在 %d 个内容不同的版本，点击解决冲突。", row.skill.variants.count))
+                .accessibilityLabel(model.localized("冲突：%@ 有 %d 个内容不同的版本。点击解决冲突。", row.skill.name, row.skill.variants.count))
             }
             Spacer(minLength: DS.Space.x100)
             Menu {
@@ -336,8 +319,7 @@ struct SkillView: View {
                 }
                 if row.skill.variants.count > 1 {
                     Button {
-                        patchPreselectedHomeIDs = Set(model.skillWriteTargets.map(\.homeID))
-                        patchSkill = row.skill
+                        model.skillDialog = .sync(skill: row.skill, initialTargetHomeIDs: [])
                     } label: {
                         Label(model.localized("解决冲突…"), systemImage: "exclamationmark.triangle")
                     }
@@ -346,8 +328,7 @@ struct SkillView: View {
                 }
                 let missing = Set(row.skill.missingHomeIDs)
                 Button {
-                    patchPreselectedHomeIDs = missing
-                    patchSkill = row.skill
+                    model.skillDialog = .sync(skill: row.skill, initialTargetHomeIDs: missing)
                 } label: {
                     Label(
                         model.localized("同步到缺失的 Home（%d 个）", missing.count),
@@ -356,15 +337,16 @@ struct SkillView: View {
                 }
                 .disabled(missing.isEmpty || !model.allows(.patch))
                 Button {
-                    patchPreselectedHomeIDs = Set(model.skillWriteTargets.map(\.homeID))
-                    patchSkill = row.skill
+                    model.skillDialog = .sync(skill: row.skill, initialTargetHomeIDs: Set(model.skillWriteTargets.map(\.homeID)))
                 } label: {
                     Label(model.localized("同步到全部 Home"), systemImage: "square.and.arrow.down.fill")
                 }
                 .disabled(!model.allows(.patch) || model.skillWriteTargets.isEmpty)
                 Divider()
-                Button(model.localized("删除整个 Skill"), role: .destructive) {
+                Button(role: .destructive) {
                     deletingSkill = row.skill
+                } label: {
+                    Label(model.localized("删除整个 Skill"), systemImage: "trash")
                 }
                 .disabled(!model.allows(.skillWrite))
                 if !model.allows(.skillWrite) {
@@ -396,11 +378,20 @@ struct SkillView: View {
     }
 
     /// 首个非空描述（各 Variant 的 SKILL.md frontmatter）。
+    /// 归一化：去除首尾空白；丢弃仅剩 YAML 指示符之类的占位值（如旧索引残留的 ">-"）。
     private func skillDescription(_ skill: LogicalSkill) -> String? {
         skill.variants
             .flatMap(\.installations)
             .compactMap(\.description)
-            .first(where: { !$0.isEmpty })
+            .map(Self.normalizeSkillDescription)
+            .first { $0 != nil } ?? nil
+    }
+
+    /// 展示前归一化 Skill 描述：去除首尾空白；过滤纯指示符/占位内容。
+    fileprivate static func normalizeSkillDescription(_ description: String) -> String? {
+        let trimmed = description.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !trimmed.allSatisfy({ ">|-+ ".contains($0) }) else { return nil }
+        return trimmed
     }
 
     /// 描述预览浮层：标题 + 描述（最多 4 行，超长省略），固定在滚动视口右下角，不随内容滚动。
@@ -441,11 +432,9 @@ struct SkillView: View {
         Button {
             switch cell.kind {
             case .missing:
-                patchPreselectedHomeIDs = [home.id]
-                patchSkill = skill
+                model.skillDialog = .sync(skill: skill, initialTargetHomeIDs: [home.id])
             case .conflict:
-                resolveSkill = skill
-                resolveHome = home
+                model.skillDialog = .homeConflict(skill: skill, home: home)
             default:
                 detailSkill = skill
                 detailHome = home
@@ -565,21 +554,27 @@ private enum SkillMatrixLayout {
     static let rowHeight: CGFloat = 44
 }
 
-// MARK: - 补齐向导（目标可选 ALL 或指定 Agent/Home，强制覆盖）
+// MARK: - 同步 / 解决冲突 Dialog（统一一个视图，按进入场景切换模式）
 
+/// 统一 Dialog 内容：无冲突 = 同步模式（选源 + 目标）；有冲突 = 冲突解决模式（版本对比 + 影响范围）。
+/// 由 SkillDialogOverlay 容器承载（完整 Dialog，点遮罩 / Esc / × / 取消关闭）。
 struct SkillPatchSheet: View {
     @Bindable var model: AppModel
     let skill: LogicalSkill
     var initialTargetHomeIDs: Set<PhysicalResourceIdentity>
+    var onClose: () -> Void
 
-    @Environment(\.dismiss) private var dismiss
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var selectedSourcePath: String?
     @State private var selectedTargetIDs: Set<PhysicalResourceIdentity> = []
+    /// 正在展开差异对比的版本路径（与所选版本对比 SKILL.md，仅冲突模式）。
+    @State private var comparingPath: String?
 
+    /// 有效来源候选：只要求内容有效（可读）。源目录是否可写不影响「复制」，只读来源同样可作为源。
     private var sourceCandidates: [SkillInstallation] {
         skill.variants
             .flatMap(\.installations)
-            .filter { $0.state == .valid && $0.isWritable }
+            .filter { $0.state == .valid }
             .sorted { ($0.modifiedAt ?? .distantPast) > ($1.modifiedAt ?? .distantPast) }
     }
 
@@ -621,9 +616,30 @@ struct SkillPatchSheet: View {
         selectedTargetIDs.intersection(coveredHomeIDs).count
     }
 
+    /// 与所选版本内容不同的 Home（冲突模式下需要被替换才能一致）。
+    private var conflictingHomeIDs: Set<PhysicalResourceIdentity> {
+        guard let source = selectedSource else { return [] }
+        return Set(skill.variants.flatMap(\.installations).filter { $0.contentHash != source.contentHash }.map(\.homeID))
+    }
+
+    /// 该 Skill 涉及的全部 Home 数（冲突概况用）。
+    private var involvedHomeCount: Int {
+        Set(skill.variants.flatMap(\.installations).map(\.homeID)).count
+    }
+
     var body: some View {
-        NavigationStack {
+        VStack(spacing: 0) {
             Form {
+                if isConflict {
+                    Section {
+                        Text(model.localized(
+                            "「%@」共有 %d 个内容不同的版本，分布于 %d 个 Home。",
+                            skill.name, variantGroups.count, involvedHomeCount
+                        ))
+                        .font(DS.Typeface.body)
+                    }
+                }
+
                 if isConflict {
                     Section {
                         if sourceCandidates.isEmpty {
@@ -632,13 +648,39 @@ struct SkillPatchSheet: View {
                                 .foregroundStyle(DS.Semantic.statusCaution)
                         } else {
                             ForEach(variantGroups, id: \.first?.contentHash) { group in
-                                conflictSourceRow(group)
+                                let representative = group[0]
+                                VStack(alignment: .leading, spacing: DS.Space.x150) {
+                                    SkillVersionCard(
+                                        title: sourceHomeTitle(for: representative),
+                                        subtitle: group.count > 1 ? model.localized("此版本在 %d 个 Home 有副本", group.count) : nil,
+                                        installation: representative,
+                                        showBadge: false,
+                                        isSelected: selectedSourcePath == representative.path,
+                                        model: model,
+                                        onSelect: { selectedSourcePath = representative.path }
+                                    ) {
+                                        if selectedSourcePath != representative.path, selectedSource != nil {
+                                            Button {
+                                                withAnimation(reduceMotion ? nil : .easeOut(duration: DS.Motion.state)) {
+                                                    comparingPath = (comparingPath == representative.path) ? nil : representative.path
+                                                }
+                                            } label: {
+                                                Text(model.localized("查看内容差异"))
+                                                    .font(DS.Typeface.caption)
+                                            }
+                                            .buttonStyle(.plain)
+                                            .foregroundStyle(DS.Semantic.accentPrimary)
+                                        }
+                                    }
+                                    if comparingPath == representative.path, let selected = selectedSource, selected.path != representative.path {
+                                        SkillDiffPanel(model: model, selected: selected, other: representative)
+                                    }
+                                }
+                                .padding(.vertical, DS.Space.x100)
                             }
                         }
                     } header: {
                         Text(model.localized("选择权威版本（%d 个版本内容不同）", variantGroups.count))
-                    } footer: {
-                        Text(model.localized("不同版本来自不同 Home 且内容不一致；选择权威版本后，其余 Home 的旧版本将被替换并移入系统废纸篓。"))
                     }
                 } else {
                     Section(model.localized("来源 Variant")) {
@@ -659,8 +701,12 @@ struct SkillPatchSheet: View {
 
                 Section {
                     HStack {
-                        Button(model.localized("仅缺失")) {
-                            selectedTargetIDs = missingHomeIDs.intersection(Set(targetHomes.map(\.id)))
+                        Button(model.localized(isConflict ? "仅冲突" : "仅缺失")) {
+                            if isConflict {
+                                selectedTargetIDs = conflictingHomeIDs.intersection(Set(targetHomes.map(\.id)))
+                            } else {
+                                selectedTargetIDs = missingHomeIDs.intersection(Set(targetHomes.map(\.id)))
+                            }
                         }
                         .buttonStyle(.dsAction(size: .compact))
                         Button(model.localized("全部")) {
@@ -694,32 +740,43 @@ struct SkillPatchSheet: View {
                         }
                     }
                 } header: {
-                    Text(model.localized("选择目标（Agent / Home）"))
+                    Text(model.localized(isConflict ? "影响范围" : "选择目标"))
                 } footer: {
-                    if let source = selectedSource {
-                        Text(model.localized(
-                            "源与目标在同一 Home 会被排除；已有同名 Skill 的目标将被替换，旧版本移入系统废纸篓。将写入 %d 个文件 · %@。",
-                            source.fileCount,
-                            model.formatBytes(source.totalBytes)
-                        ))
+                    if isConflict {
+                        if !selectedTargetIDs.isEmpty {
+                            Text(model.localized("将替换 %d 个 Home 的旧版本，并移入系统废纸篓（可恢复）。", selectedTargetIDs.count))
+                        }
+                    } else if selectedSource != nil {
+                        Text(model.localized("源与目标在同一 Home 会被排除；目标已有同名 Skill 时将被替换，旧版本移入废纸篓。"))
                     }
                 }
 
                 if !selectedTargetIDs.isEmpty, let source = selectedSource {
                     Section {
-                        LabeledContent(model.localized("来源")) {
-                            Text(sourceLabel(source))
-                                .lineLimit(1)
-                        }
-                        LabeledContent(model.localized("目标")) {
-                            Text(model.localized("%d 个 Home", selectedTargetIDs.count))
-                                .monospacedDigit()
+                        if isConflict {
+                            LabeledContent(model.localized("保留")) {
+                                Text(sourceHomeTitle(for: source))
+                                    .lineLimit(1)
+                            }
+                            LabeledContent(model.localized("将替换")) {
+                                Text(model.localized("%d 个 Home", selectedTargetIDs.count))
+                                    .monospacedDigit()
+                            }
+                        } else {
+                            LabeledContent(model.localized("来源")) {
+                                Text(sourceLabel(source))
+                                    .lineLimit(1)
+                            }
+                            LabeledContent(model.localized("目标")) {
+                                Text(model.localized("%d 个 Home", selectedTargetIDs.count))
+                                    .monospacedDigit()
+                            }
                         }
                         LabeledContent(model.localized("将写入")) {
                             Text(model.localized("%d 个文件 · %@", source.fileCount, model.formatBytes(source.totalBytes)))
                                 .monospacedDigit()
                         }
-                        if willOverwriteCount > 0 {
+                        if !isConflict, willOverwriteCount > 0 {
                             LabeledContent(model.localized("覆盖")) {
                                 Text(model.localized("%d 个已有同名安装", willOverwriteCount))
                                     .foregroundStyle(DS.Semantic.statusCaution)
@@ -731,25 +788,11 @@ struct SkillPatchSheet: View {
                 }
             }
             .formStyle(.grouped)
-            .navigationTitle(model.localized(isConflict ? "解决冲突 · %@" : "同步 %@", skill.name))
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button(model.localized("取消")) { dismiss() }
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button(model.localized(
-                        isConflict ? "以所选版本同步到 %d 个 Home" : "同步到 %d 个 Home",
-                        selectedTargetIDs.count
-                    )) {
-                        guard let source = selectedSource else { return }
-                        model.patchSkill(skill, source: source, targetHomeIDs: selectedTargetIDs)
-                        dismiss()
-                    }
-                    .disabled(sourceCandidates.isEmpty || selectedTargetIDs.isEmpty || !model.allows(.patch))
-                }
-            }
+            .dsInstrumentList()
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            Divider()
+            footer
         }
-        .frame(minWidth: 620, minHeight: 520)
         .onAppear {
             if selectedSourcePath == nil {
                 selectedSourcePath = sourceCandidates.first?.path
@@ -760,10 +803,39 @@ struct SkillPatchSheet: View {
                     selectedTargetIDs = initialTargetHomeIDs.intersection(writableIDs)
                 }
                 if selectedTargetIDs.isEmpty {
-                    selectedTargetIDs = missingHomeIDs.intersection(writableIDs)
+                    if isConflict {
+                        selectedTargetIDs = conflictingHomeIDs.intersection(writableIDs)
+                    } else {
+                        selectedTargetIDs = missingHomeIDs.intersection(writableIDs)
+                    }
                 }
             }
         }
+        .onChange(of: selectedSourcePath) { _, _ in
+            comparingPath = nil
+        }
+    }
+
+    /// 底部操作条：取消 / 确认（文案随模式切换）。
+    private var footer: some View {
+        HStack(spacing: DS.Space.x200) {
+            Spacer(minLength: DS.Space.x200)
+            Button(model.localized("取消")) { onClose() }
+                .buttonStyle(.dsAction(size: .regular))
+            Button {
+                guard let source = selectedSource else { return }
+                model.patchSkill(skill, source: source, targetHomeIDs: selectedTargetIDs)
+                onClose()
+            } label: {
+                Text(isConflict
+                    ? model.localized("以所选版本解决冲突")
+                    : model.localized("同步到 %d 个 Home", selectedTargetIDs.count))
+            }
+            .buttonStyle(.dsAction(.accent, size: .regular))
+            .disabled(sourceCandidates.isEmpty || selectedTargetIDs.isEmpty || !model.allows(.patch))
+        }
+        .padding(.horizontal, DS.Space.x400)
+        .padding(.vertical, DS.Space.x300)
     }
 
     private func targetBinding(for home: AgentHome) -> Binding<Bool> {
@@ -788,60 +860,14 @@ struct SkillPatchSheet: View {
         return model.localized("%@ · %@", homeName, modified)
     }
 
-    /// 冲突版本选择行：来源 Home + 副本数 + 文件信息 + 内容哈希，供用户对比判断。
-    private func conflictSourceRow(_ group: [SkillInstallation]) -> some View {
-        let representative = group[0]
-        let selected = selectedSourcePath == representative.path
-        return Button {
-            selectedSourcePath = representative.path
-        } label: {
-            HStack(alignment: .top, spacing: DS.Space.x200) {
-                Image(systemName: selected ? "largecircle.fill.circle" : "circle")
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundStyle(selected ? DS.Semantic.accentPrimary : Color.secondary)
-                    .padding(.top, 1)
-                VStack(alignment: .leading, spacing: DS.Space.x050) {
-                    Text(sourceLabel(representative))
-                        .font(DS.Typeface.body)
-                    if group.count > 1 {
-                        Text(model.localized("此版本在 %d 个 Home 有副本", group.count))
-                            .font(DS.Typeface.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    Text(model.localized(
-                        "%d 个文件 · %@ · 最后修改：%@",
-                        representative.fileCount,
-                        model.formatBytes(representative.totalBytes),
-                        representative.modifiedAt?.formatted(.dateTime.month().day().hour().minute().locale(model.appLocale))
-                            ?? model.localized("时间不可用")
-                    ))
-                    .font(DS.Typeface.caption)
-                    .foregroundStyle(.secondary)
-                    .monospacedDigit()
-                    Text(model.displayPath(representative.path))
-                        .font(DS.Typeface.caption)
-                        .foregroundStyle(.tertiary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                        .privacySensitive()
-                }
-                Spacer()
-                VStack(alignment: .trailing, spacing: DS.Space.x100) {
-                    skillStateBadge(representative, model: model)
-                    Button {
-                        NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString(representative.contentHash, forType: .string)
-                    } label: {
-                        Text(model.localized("复制内容哈希"))
-                            .font(DS.Typeface.caption)
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(DS.Semantic.accentPrimary)
-                }
-            }
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
+    /// 来源安装所在 Home 的展示名（隐藏敏感路径时按序编号）。
+    private func sourceHomeTitle(for installation: SkillInstallation) -> String {
+        let home = model.skillCapableHomes.first { $0.id == installation.homeID }
+        return model.homeDisplayTitle(
+            productID: home?.productID ?? "",
+            homeIdentity: installation.homeID,
+            homePath: home?.path ?? installation.path
+        )
     }
 
     private func targetHomeTitle(_ home: AgentHome) -> String {
@@ -857,6 +883,15 @@ struct SkillPatchSheet: View {
     }
 
     private func targetHomeSubtitle(_ home: AgentHome) -> String {
+        if isConflict {
+            if conflictingHomeIDs.contains(home.id) {
+                return model.localized("将替换旧版本")
+            }
+            if missingHomeIDs.contains(home.id) {
+                return model.localized("缺失此 Skill")
+            }
+            return model.localized("内容一致")
+        }
         let hasSameName = coveredHomeIDs.contains(home.id)
         if hasSameName {
             return model.localized("已有同名 Skill，将被替换并移入废纸篓")
@@ -868,14 +903,392 @@ struct SkillPatchSheet: View {
     }
 }
 
-// MARK: - 冲突解决（同 Home 多个同名版本，选择保留一个并移除其它）
+// MARK: - 全窗口 Dialog 容器（同步 / 冲突解决共用）
 
-struct SkillConflictResolutionSheet: View {
+/// 自定义全窗口 Dialog：半透明遮罩 + 居中完整卡片（680×600）。
+/// 点击遮罩、Esc、右上角 ×、取消按钮均可关闭；视觉语言与 sheet 一致（raised 底 + 细描边 + 顶部高光 + 单层阴影）。
+struct SkillDialogOverlay: View {
+    @Bindable var model: AppModel
+    let dialog: SkillDialog
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.30)
+                .ignoresSafeArea()
+                .onTapGesture { model.skillDialog = nil }
+            dialogCard
+                .frame(width: 680, height: 600)
+        }
+        .onExitCommand { model.skillDialog = nil }
+    }
+
+    private var dialogCard: some View {
+        VStack(spacing: 0) {
+            header
+            Divider()
+            content
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .background(
+            RoundedRectangle(cornerRadius: DS.Radius.panel, style: .continuous)
+                .fill(Color(nsColor: DS.Neutral.raised))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: DS.Radius.panel, style: .continuous)
+                .strokeBorder(Color.primary.opacity(DS.Opacity.borderStandard), lineWidth: DS.Stroke.surface)
+        )
+        .overlay(alignment: .top) {
+            RoundedRectangle(cornerRadius: DS.Radius.panel, style: .continuous)
+                .strokeBorder(
+                    LinearGradient(
+                        colors: [Color.white.opacity(0.30), Color.clear, Color.black.opacity(0.03)],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    ),
+                    lineWidth: DS.Stroke.hairline
+                )
+                .padding(1.25)
+                .allowsHitTesting(false)
+        }
+        .shadow(color: Color.black.opacity(0.16), radius: 12, y: 4)
+    }
+
+    private var header: some View {
+        HStack(spacing: DS.Space.x200) {
+            Image(systemName: glyph)
+                .font(.system(size: DS.IconSize.page, weight: .medium))
+                .foregroundStyle(DS.Semantic.accentPrimary)
+                .accessibilityHidden(true)
+            Text(title)
+                .font(DS.Typeface.title)
+            Spacer(minLength: DS.Space.x200)
+            Button {
+                model.skillDialog = nil
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+            .frame(width: 26, height: 26)
+            .contentShape(Rectangle())
+            .help(model.localized("关闭"))
+            .accessibilityLabel(model.localized("关闭"))
+        }
+        .padding(.horizontal, DS.Space.x400)
+        .padding(.vertical, DS.Space.x300)
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        switch dialog {
+        case .sync(let skill, let initialTargetHomeIDs):
+            SkillPatchSheet(
+                model: model,
+                skill: skill,
+                initialTargetHomeIDs: initialTargetHomeIDs,
+                onClose: { model.skillDialog = nil }
+            )
+        case .homeConflict(let skill, let home):
+            SkillHomeConflictResolver(
+                model: model,
+                skill: skill,
+                home: home,
+                onClose: { model.skillDialog = nil }
+            )
+        }
+    }
+
+    private var title: String {
+        switch dialog {
+        case .sync(let skill, _):
+            return model.localized(skill.variants.count > 1 ? "解决冲突 · %@" : "同步 %@", skill.name)
+        case .homeConflict(let skill, _):
+            return model.localized("解决冲突 · %@", skill.name)
+        }
+    }
+
+    private var glyph: String {
+        switch dialog {
+        case .sync(let skill, _):
+            return skill.variants.count > 1 ? "exclamationmark.triangle" : "square.and.arrow.down"
+        case .homeConflict:
+            return "exclamationmark.triangle"
+        }
+    }
+}
+
+// MARK: - 版本选择卡（冲突解决共用）
+
+/// 冲突版本选择卡：radio 选中 + 名称/来源 + 描述预览 + 元数据 + 状态 + 哈希复制 + 扩展尾部。
+/// 卡片整体可点（选中该版本）；尾部小按钮（复制哈希 / 查看差异）优先于外层命中。
+private struct SkillVersionCard<Trailing: View>: View {
+    let title: String
+    var subtitle: String? = nil
+    var pathLine: String? = nil
+    let installation: SkillInstallation
+    /// 是否显示状态徽标（候选已保证有效时可关闭，避免无信息量的重复装饰）。
+    var showBadge: Bool = true
+    var isEnabled: Bool = true
+    var help: String = ""
+    let isSelected: Bool
+    let model: AppModel
+    var onSelect: () -> Void
+    @ViewBuilder var trailing: () -> Trailing
+
+    var body: some View {
+        Button(action: onSelect) {
+            HStack(alignment: .top, spacing: DS.Space.x200) {
+                Image(systemName: isSelected ? "largecircle.fill.circle" : "circle")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(isSelected ? DS.Semantic.accentPrimary : Color.secondary)
+                    .padding(.top, 1)
+                VStack(alignment: .leading, spacing: DS.Space.x050) {
+                    Text(title)
+                        .font(DS.Typeface.body)
+                        .foregroundStyle(isSelected ? DS.Semantic.accentPrimary : Color.primary)
+                    if let subtitle {
+                        Text(subtitle)
+                            .font(DS.Typeface.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .privacySensitive()
+                    }
+                    if let description = SkillView.normalizeSkillDescription(installation.description ?? "") {
+                        Text(description)
+                            .font(DS.Typeface.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                    }
+                    Text(model.localized(
+                        "%d 个文件 · %@ · 最后修改：%@",
+                        installation.fileCount,
+                        model.formatBytes(installation.totalBytes),
+                        installation.modifiedAt?.formatted(.dateTime.month().day().hour().minute().locale(model.appLocale))
+                            ?? model.localized("时间不可用")
+                    ))
+                    .font(DS.Typeface.caption)
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+                    if let pathLine {
+                        Text(pathLine)
+                            .font(DS.Typeface.caption)
+                            .foregroundStyle(.tertiary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .privacySensitive()
+                    }
+                }
+                Spacer(minLength: DS.Space.x200)
+                VStack(alignment: .trailing, spacing: DS.Space.x100) {
+                    if showBadge {
+                        skillStateBadge(installation, model: model)
+                    }
+                    Button {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(installation.contentHash, forType: .string)
+                    } label: {
+                        Text(model.localized("复制内容哈希"))
+                            .font(DS.Typeface.caption)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(DS.Semantic.accentPrimary)
+                    trailing()
+                }
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(!isEnabled)
+        .opacity(isEnabled ? 1 : DS.Opacity.unavailable)
+        .help(help)
+    }
+}
+
+// MARK: - 版本内容差异（SKILL.md 行级对比）
+
+private enum SkillDiffLineKind: Sendable {
+    case context
+    case added
+    case removed
+}
+
+private struct SkillDiffLine: Identifiable, Sendable {
+    let id: Int
+    let kind: SkillDiffLineKind
+    let text: String
+}
+
+private enum SkillDiffLoadState: Sendable {
+    case loading
+    case ready([SkillDiffLine])
+    case tooLarge
+    case unreadable
+}
+
+/// 后台读取两个安装的 SKILL.md 并做行级 LCS 差异；文件过大或不可读时返回对应状态。
+/// 纯函数、Sendable，可在 utility 线程执行（交互回调不承载文件 I/O）。
+@Sendable
+private func loadSkillDiff(_ aPath: String, _ bPath: String) -> SkillDiffLoadState {
+    func readMain(_ path: String) -> String? {
+        let url = URL(fileURLWithPath: path).appending(path: "SKILL.md")
+        guard let data = try? Data(contentsOf: url, options: [.mappedIfSafe]),
+              data.count <= 1_048_576,
+              let text = String(data: data, encoding: .utf8) else { return nil }
+        return text
+    }
+    guard let aText = readMain(aPath), let bText = readMain(bPath) else { return .unreadable }
+    let aLines = aText.components(separatedBy: .newlines)
+    let bLines = bText.components(separatedBy: .newlines)
+    guard aLines.count * bLines.count <= 2_000_000 else { return .tooLarge }
+    return .ready(computeLineDiff(aLines, bLines))
+}
+
+@Sendable
+private func computeLineDiff(_ a: [String], _ b: [String]) -> [SkillDiffLine] {
+    let n = a.count
+    let m = b.count
+    var dp = [[Int]](repeating: [Int](repeating: 0, count: m + 1), count: n + 1)
+    for i in stride(from: n - 1, through: 0, by: -1) {
+        let ai = a[i]
+        var row = dp[i]
+        let next = dp[i + 1]
+        for j in stride(from: m - 1, through: 0, by: -1) {
+            row[j] = ai == b[j] ? next[j + 1] + 1 : max(next[j], row[j + 1])
+        }
+        dp[i] = row
+    }
+    var lines: [SkillDiffLine] = []
+    var id = 0
+    var i = 0
+    var j = 0
+    while i < n && j < m {
+        if a[i] == b[j] {
+            lines.append(SkillDiffLine(id: id, kind: .context, text: a[i])); id += 1
+            i += 1; j += 1
+        } else if dp[i + 1][j] >= dp[i][j + 1] {
+            lines.append(SkillDiffLine(id: id, kind: .removed, text: a[i])); id += 1
+            i += 1
+        } else {
+            lines.append(SkillDiffLine(id: id, kind: .added, text: b[j])); id += 1
+            j += 1
+        }
+    }
+    while i < n { lines.append(SkillDiffLine(id: id, kind: .removed, text: a[i])); id += 1; i += 1 }
+    while j < m { lines.append(SkillDiffLine(id: id, kind: .added, text: b[j])); id += 1; j += 1 }
+    return lines
+}
+
+/// 差异面板：对比「所选版本」与「另一个版本」的 SKILL.md，沉入表面展示（最多 120 行）。
+private struct SkillDiffPanel: View {
+    let model: AppModel
+    let selected: SkillInstallation
+    let other: SkillInstallation
+
+    @State private var state: SkillDiffLoadState = .loading
+
+    var body: some View {
+        DSRecessed {
+            switch state {
+            case .loading:
+                HStack(spacing: DS.Space.x200) {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text(model.localized("正在读取内容…"))
+                        .font(DS.Typeface.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.vertical, DS.Space.x100)
+            case .tooLarge:
+                Text(model.localized("内容过大，无法对比。"))
+                    .font(DS.Typeface.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.vertical, DS.Space.x100)
+            case .unreadable:
+                Text(model.localized("无法读取内容。"))
+                    .font(DS.Typeface.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.vertical, DS.Space.x100)
+            case .ready(let lines):
+                diffContent(lines)
+            }
+        }
+        .task(id: "\(selected.path)|\(other.path)") {
+            state = .loading
+            let result = await Task.detached(priority: .utility) {
+                loadSkillDiff(selected.path, other.path)
+            }.value
+            state = result
+        }
+    }
+
+    private var diffLineLimit: Int { 120 }
+
+    @ViewBuilder
+    private func diffContent(_ lines: [SkillDiffLine]) -> some View {
+        VStack(alignment: .leading, spacing: DS.Space.x100) {
+            if lines.allSatisfy({ $0.kind == .context }) {
+                Text(model.localized("与所选版本内容一致。"))
+                    .font(DS.Typeface.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                ScrollView([.horizontal, .vertical]) {
+                    VStack(alignment: .leading, spacing: 0) {
+                        ForEach(lines.prefix(diffLineLimit)) { line in
+                            HStack(alignment: .top, spacing: DS.Space.x150) {
+                                Text(sign(for: line.kind))
+                                    .font(.system(.caption, design: .monospaced))
+                                    .foregroundStyle(color(for: line.kind))
+                                    .frame(width: 12, alignment: .trailing)
+                                Text(line.text.isEmpty ? " " : line.text)
+                                    .font(.system(.caption, design: .monospaced))
+                                    .foregroundStyle(line.kind == .context ? Color.secondary : color(for: line.kind))
+                                    .lineLimit(1)
+                                    .textSelection(.enabled)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    }
+                    .padding(DS.Space.x200)
+                }
+                .frame(maxHeight: 220)
+                if lines.count > diffLineLimit {
+                    Text(model.localized("差异较多，仅显示前 %d 行，共 %d 行差异。", diffLineLimit, lines.count))
+                        .font(DS.Typeface.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+
+    private func sign(for kind: SkillDiffLineKind) -> String {
+        switch kind {
+        case .context: return " "
+        case .added: return "+"
+        case .removed: return "−"
+        }
+    }
+
+    private func color(for kind: SkillDiffLineKind) -> Color {
+        switch kind {
+        case .context: return .secondary
+        case .added: return DS.Semantic.statusPositive
+        case .removed: return DS.Semantic.statusCritical
+        }
+    }
+}
+
+// MARK: - 单元格冲突解决（同 Home 多个同名版本，选择保留一个并移除其它）
+
+/// 同 Home 冲突解决内容：选择保留的版本，未选择的可写版本移入废纸篓。
+/// 由 SkillDialogOverlay 容器承载（完整 Dialog，点遮罩 / Esc / × / 取消关闭）。
+struct SkillHomeConflictResolver: View {
     @Bindable var model: AppModel
     let skill: LogicalSkill
     let home: AgentHome
+    var onClose: () -> Void
 
-    @Environment(\.dismiss) private var dismiss
     @State private var selectedPath: String?
 
     private var versions: [SkillInstallation] {
@@ -898,7 +1311,7 @@ struct SkillConflictResolutionSheet: View {
     }
 
     var body: some View {
-        NavigationStack {
+        VStack(spacing: 0) {
             Form {
                 Section {
                     Text(model.localized("此 Home 有 %d 个同名版本，内容不同。", versions.count))
@@ -910,54 +1323,18 @@ struct SkillConflictResolutionSheet: View {
 
                 Section(model.localized("选择要保留的版本")) {
                     ForEach(versions) { version in
-                        Button {
-                            selectedPath = version.path
-                        } label: {
-                            HStack(alignment: .top, spacing: DS.Space.x200) {
-                                Image(systemName: selectedPath == version.path ? "largecircle.fill.circle" : "circle")
-                                    .font(.system(size: 14, weight: .medium))
-                                    .foregroundStyle(selectedPath == version.path ? DS.Semantic.accentPrimary : Color.secondary)
-                                    .padding(.top, 1)
-                                VStack(alignment: .leading, spacing: DS.Space.x050) {
-                                    Text(version.name)
-                                        .font(DS.Typeface.body)
-                                    Text(model.displayPath(version.path))
-                                        .font(DS.Typeface.caption)
-                                        .foregroundStyle(.secondary)
-                                        .lineLimit(1)
-                                        .truncationMode(.middle)
-                                        .privacySensitive()
-                                    Text(model.localized(
-                                        "%d 个文件 · %@ · 最后修改：%@",
-                                        version.fileCount,
-                                        model.formatBytes(version.totalBytes),
-                                        version.modifiedAt?.formatted(.dateTime.month().day().hour().minute().locale(model.appLocale))
-                                            ?? model.localized("时间不可用")
-                                    ))
-                                    .font(DS.Typeface.caption)
-                                    .foregroundStyle(.secondary)
-                                    .monospacedDigit()
-                                }
-                                Spacer()
-                                VStack(alignment: .trailing, spacing: DS.Space.x100) {
-                                    skillStateBadge(version, model: model)
-                                    Button {
-                                        NSPasteboard.general.clearContents()
-                                        NSPasteboard.general.setString(version.contentHash, forType: .string)
-                                    } label: {
-                                        Text(model.localized("复制内容哈希"))
-                                            .font(DS.Typeface.caption)
-                                    }
-                                    .buttonStyle(.plain)
-                                    .foregroundStyle(DS.Semantic.accentPrimary)
-                                }
-                            }
-                            .contentShape(Rectangle())
+                        SkillVersionCard(
+                            title: version.name,
+                            subtitle: model.displayPath(version.path),
+                            installation: version,
+                            isEnabled: version.isWritable,
+                            help: version.isWritable ? "" : model.localized("远程只读来源不可移除。"),
+                            isSelected: selectedPath == version.path,
+                            model: model,
+                            onSelect: { selectedPath = version.path }
+                        ) {
+                            EmptyView()
                         }
-                        .buttonStyle(.plain)
-                        .disabled(!version.isWritable)
-                        .opacity(version.isWritable ? 1 : DS.Opacity.unavailable)
-                        .help(version.isWritable ? "" : model.localized("远程只读来源不可移除。"))
                     }
                 }
 
@@ -987,27 +1364,34 @@ struct SkillConflictResolutionSheet: View {
                 }
             }
             .formStyle(.grouped)
-            .navigationTitle(model.localized("解决冲突 · %@", skill.name))
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button(model.localized("取消")) { dismiss() }
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button(model.localized("保留所选，移除其它"), role: .destructive) {
-                        guard let selected else { return }
-                        model.deleteSkillInstallations(versions.filter { $0.path != selected.path })
-                        dismiss()
-                    }
-                    .disabled(removableOthers.isEmpty || !model.allows(.skillWrite))
-                }
-            }
+            .dsInstrumentList()
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            Divider()
+            footer
         }
-        .frame(minWidth: 600, minHeight: 440)
         .onAppear {
             if selectedPath == nil {
                 selectedPath = versions.first?.path
             }
         }
+    }
+
+    /// 底部操作条：取消 / 保留所选并移除其它（destructive）。
+    private var footer: some View {
+        HStack(spacing: DS.Space.x200) {
+            Spacer(minLength: DS.Space.x200)
+            Button(model.localized("取消")) { onClose() }
+                .buttonStyle(.dsAction(size: .regular))
+            Button(model.localized("保留所选，移除其它"), role: .destructive) {
+                guard let selected else { return }
+                model.deleteSkillInstallations(versions.filter { $0.path != selected.path })
+                onClose()
+            }
+            .buttonStyle(.dsAction(.destructive, size: .regular))
+            .disabled(removableOthers.isEmpty || !model.allows(.skillWrite))
+        }
+        .padding(.horizontal, DS.Space.x400)
+        .padding(.vertical, DS.Space.x300)
     }
 }
 

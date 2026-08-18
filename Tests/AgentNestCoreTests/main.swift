@@ -19,6 +19,7 @@ struct AgentNestCoreTestRunner {
             try testInstalledAppBundleVersionProbe()
             try await testMarketplaceVersionService()
             try await testSkills()
+            try await testSkillFrontmatterVariants()
             try await testCleanupPolicy()
             try testStorageOwnershipScope()
             try await testCleanupInventory()
@@ -1727,8 +1728,102 @@ struct AgentNestCoreTestRunner {
         )
     }
 
-    private static func makePayload(machineHash: String, issuedAt: Date, offlineUntil: Date) -> EntitlementPayload {
-        EntitlementPayload(
+    /// SKILL.md frontmatter 解析：块标量（>- / |-）、单/双引号、多行普通标量、行内注释。
+    /// 覆盖 Cursor（babysit 等 `description: >-`）与 Claude 生态的常见写法。
+    private static func testSkillFrontmatterVariants() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "AgentNestFrontmatterTests-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let home = root.appending(path: ".codex")
+        let skillsRoot = home.appending(path: "skills")
+        try FileManager.default.createDirectory(at: skillsRoot, withIntermediateDirectories: true)
+        try Data("{\"version\":\"fixture\"}".utf8).write(to: home.appending(path: "version.json"))
+
+        func writeSkill(_ name: String, _ main: String) throws {
+            let directory = skillsRoot.appending(path: name)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+            try Data(main.utf8).write(to: directory.appending(path: "SKILL.md"))
+        }
+
+        try writeSkill("folded", """
+        ---
+        name: folded
+        description: >-
+          Keep a PR merge-ready by triaging comments, resolving clear conflicts, and
+          fixing CI in a loop.
+        ---
+        """)
+        try writeSkill("literal", """
+        ---
+        name: literal
+        description: |-
+          支持 A
+          支持 B
+        ---
+        """)
+        try writeSkill("quoted-single", """
+        ---
+        name: quoted-single
+        description: '她说："先开发再自审两轮"。'
+        ---
+        """)
+        try writeSkill("quoted-double", """
+        ---
+        name: quoted-double
+        description: "行一\\n行二 \\"引号\\""
+        ---
+        """)
+        try writeSkill("plain-multiline", """
+        ---
+        name: plain-multiline
+        description: 第一行内容
+          第二行续接内容
+        ---
+        """)
+        try writeSkill("inline-comment", """
+        ---
+        name: inline-comment
+        description: 保留内容 # 这是注释
+        ---
+        """)
+
+        let snapshot = try await ScanUseCase(catalog: AgentDefinitionCatalog.bundled()).execute(request: ScanRequest(homeDirectory: root))
+        try expect(
+            snapshot.homes.contains { $0.confidence == .confirmed && $0.productID == "openai.codex" },
+            "codex home confirmed for frontmatter fixtures"
+        )
+        let index = await SkillIndexUseCase(catalog: try AgentDefinitionCatalog.bundled()).execute(homes: snapshot.homes)
+
+        func description(of logicalID: String) -> String? {
+            index.logicalSkills.first { $0.id == logicalID }?.variants.first?.installations.first?.description
+        }
+
+        try expect(
+            description(of: "folded") == "Keep a PR merge-ready by triaging comments, resolving clear conflicts, and fixing CI in a loop.",
+            "folded block scalar (>-) folds lines into one description instead of exposing the indicator"
+        )
+        try expect(
+            description(of: "literal") == "支持 A\n支持 B",
+            "literal block scalar (|-) keeps line breaks"
+        )
+        try expect(
+            description(of: "quoted-single") == "她说：\"先开发再自审两轮\"。",
+            "single-quoted scalar strips the quotes and keeps inner double quotes"
+        )
+        try expect(
+            description(of: "quoted-double") == "行一\n行二 \"引号\"",
+            "double-quoted scalar decodes escape sequences"
+        )
+        try expect(
+            description(of: "plain-multiline") == "第一行内容 第二行续接内容",
+            "multi-line plain scalar folds the indented continuation with a space"
+        )
+        try expect(
+            description(of: "inline-comment") == "保留内容",
+            "plain scalar strips the trailing inline comment"
+        )
+    }
+
+    private static func makePayload(machineHash: String, issuedAt: Date, offlineUntil: Date) -> EntitlementPayload {        EntitlementPayload(
             schemaVersion: 1, provider: "agentnest-local", licenseId: "lic_fixture", machineIdHash: machineHash,
             productId: "com.agentnest.macos", plan: "developer", features: LicenseFeature.allCases.map(\.rawValue),
             issuedAt: issuedAt, refreshAfter: issuedAt.addingTimeInterval(3600), offlineUntil: offlineUntil,

@@ -25,6 +25,14 @@ struct CleanupResultRow: Identifiable {
     let code: String
 }
 
+/// Skill 同步/冲突解决的完整 Dialog 呈现（由 ContentView 顶层全窗口 overlay 消费）。
+enum SkillDialog: Equatable {
+    /// 同步 / 跨 Home 冲突解决（统一一个 Dialog，按进入场景切换模式）。
+    case sync(skill: LogicalSkill, initialTargetHomeIDs: Set<PhysicalResourceIdentity>)
+    /// 同 Home 冲突解决（选择保留一个版本，移除其它）。
+    case homeConflict(skill: LogicalSkill, home: AgentHome)
+}
+
 @MainActor
 @Observable
 final class AppModel {
@@ -81,6 +89,8 @@ final class AppModel {
     private(set) var cleanupUnits: [CleanupUnit] = []
     private(set) var skillOperationMessage: String?
     private(set) var cleanupOperationMessage: String?
+    /// Skill 同步/冲突解决的完整 Dialog 呈现（ContentView 顶层 overlay 消费；nil = 未呈现）。
+    var skillDialog: SkillDialog?
     private(set) var cleanupResults: [CleanupResultRow] = []
     private(set) var isMutatingEnvironment = false
     private(set) var isCleaning = false
@@ -1159,6 +1169,7 @@ final class AppModel {
 
     /// 补齐（强制覆盖）：把 source 复制到 targetHomeIDs 指定的全部可写位置。
     /// 目标已有同名 Skill 时走 planPatch(.replace)——旧目录移入系统废纸篓（失败自动回滚）。
+    /// 源只要求内容有效（可读）；源目录是否可写不影响「复制」这一动作，只读来源同样可作为源。
     func patchSkill(
         _ skill: LogicalSkill,
         source: SkillInstallation,
@@ -1168,7 +1179,7 @@ final class AppModel {
             skillOperationMessage = localized("当前 License 不包含同步。")
             return
         }
-        guard source.state == .valid, source.isWritable else {
+        guard source.state == .valid else {
             skillOperationMessage = localized("没有可用的有效来源 Variant。")
             return
         }
